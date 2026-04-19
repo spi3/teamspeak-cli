@@ -41,6 +41,33 @@ int main() {
     tests::expect_contains(
         help, "It is not ServerQuery, WebQuery", "top-level help should reinforce the product scope"
     );
+    tests::expect_contains(
+        help, "Run `ts <command> --help`", "top-level help should point users at command-specific help"
+    );
+
+    const std::string channel_help = router.render_help({"channel"});
+    tests::expect_contains(channel_help, "ts channel <subcommand>", "channel help usage");
+    tests::expect_contains(channel_help, "Subcommands:", "channel help should list subcommands");
+    tests::expect_contains(channel_help, "ts channel list", "channel help should include examples");
+
+    const std::vector<std::string> grouped_commands = {
+        "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "events"
+    };
+    for (const auto& grouped_command : grouped_commands) {
+        auto grouped = parse_command(router, {grouped_command});
+        tests::expect(grouped.ok(), grouped_command + " parse should succeed");
+        tests::expect_eq(grouped.value().path.size(), std::size_t(1), grouped_command + " path size");
+        tests::expect_eq(grouped.value().path[0], grouped_command, grouped_command + " path name");
+        tests::expect(grouped.value().show_help, grouped_command + " should show contextual help");
+    }
+
+    auto invalid_group_subcommand = parse_command(router, {"channel", "missing"});
+    tests::expect(!invalid_group_subcommand.ok(), "unknown channel subcommand should fail");
+    tests::expect_contains(
+        invalid_group_subcommand.error().message,
+        "unknown command: channel missing",
+        "unknown group subcommand message"
+    );
 
     auto parsed = parse_command(
         router,

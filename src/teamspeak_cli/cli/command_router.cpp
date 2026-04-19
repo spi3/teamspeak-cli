@@ -23,26 +23,88 @@ struct CommandDoc {
 const std::vector<CommandDoc>& command_docs() {
     static const std::vector<CommandDoc> docs = {
         {{"version"}, "ts version", "Show CLI version information", {}},
+        {{"plugin"}, "ts plugin <subcommand>", "Inspect TeamSpeak client plugin helpers", {}},
         {{"plugin", "info"}, "ts plugin info", "Show TeamSpeak client plugin backend information", {}},
+        {{"sdk"}, "ts sdk <subcommand>", "Use the deprecated SDK compatibility helpers", {}},
         {{"sdk", "info"}, "ts sdk info", "Deprecated alias for plugin info", {}},
+        {{"config"}, "ts config <subcommand>", "Manage CLI config files", {}},
         {{"config", "init"}, "ts config init [--force]", "Write a starter config file", {"--force"}},
         {{"config", "view"}, "ts config view", "Render the current config", {}},
+        {{"profile"}, "ts profile <subcommand>", "Manage config profiles", {}},
         {{"profile", "list"}, "ts profile list", "List config profiles", {}},
         {{"profile", "use"}, "ts profile use <name>", "Set the active profile", {}},
         {{"connect"}, "ts connect", "Ask the TeamSpeak client plugin to open a server connection", {}},
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"status"}, "ts status", "Show current TeamSpeak client connection status", {}},
+        {{"server"}, "ts server <subcommand>", "Inspect the current server session", {}},
         {{"server", "info"}, "ts server info", "Show server details", {}},
+        {{"channel"}, "ts channel <subcommand>", "Inspect and join channels", {}},
         {{"channel", "list"}, "ts channel list", "List channels", {}},
         {{"channel", "get"}, "ts channel get <id-or-name>", "Show one channel", {}},
         {{"channel", "join"}, "ts channel join <id-or-name>", "Join a channel if supported", {}},
+        {{"client"}, "ts client <subcommand>", "Inspect connected clients", {}},
         {{"client", "list"}, "ts client list", "List connected clients", {}},
         {{"client", "get"}, "ts client get <id-or-name>", "Show one client", {}},
+        {{"message"}, "ts message <subcommand>", "Send TeamSpeak text messages", {}},
         {{"message", "send"}, "ts message send --target <client|channel> --id <id-or-name> --text <message>", "Send a text message if supported", {"--target", "--id", "--text"}},
+        {{"events"}, "ts events <subcommand>", "Watch translated async events", {}},
         {{"events", "watch"}, "ts events watch [--count N] [--timeout-ms N]", "Watch translated async events", {"--count", "--timeout-ms"}},
         {{"completion"}, "ts completion bash|zsh|fish|powershell", "Emit a shell completion script", {}},
     };
     return docs;
+}
+
+auto path_is_prefix(const std::vector<std::string>& prefix, const std::vector<std::string>& path) -> bool {
+    if (prefix.size() > path.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < prefix.size(); ++index) {
+        if (prefix[index] != path[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto find_command_doc(const std::vector<std::string>& path) -> const CommandDoc* {
+    for (const auto& doc : command_docs()) {
+        if (doc.path == path) {
+            return &doc;
+        }
+    }
+    return nullptr;
+}
+
+auto has_command_prefix(const std::vector<std::string>& path) -> bool {
+    for (const auto& doc : command_docs()) {
+        if (path_is_prefix(path, doc.path)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto has_subcommands(const std::vector<std::string>& path) -> bool {
+    for (const auto& doc : command_docs()) {
+        if (doc.path.size() == path.size() + 1 && path_is_prefix(path, doc.path)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto immediate_subcommands(const std::vector<std::string>& path) -> std::vector<const CommandDoc*> {
+    std::vector<const CommandDoc*> children;
+    for (const auto& doc : command_docs()) {
+        if (doc.path.size() == path.size() + 1 && path_is_prefix(path, doc.path)) {
+            children.push_back(&doc);
+        }
+    }
+    return children;
+}
+
+auto format_command_path(const std::vector<std::string>& path) -> std::string {
+    return util::join(path, " ");
 }
 
 auto cli_error(std::string code, std::string message) -> domain::Error {
@@ -233,8 +295,12 @@ auto top_level_help() -> std::string {
     out << "  --help\n\n";
     out << "Commands:\n";
     for (const auto& doc : command_docs()) {
-        out << "  " << util::join(doc.path, " ") << "  " << doc.summary << '\n';
+        if (doc.path.size() != 1) {
+            continue;
+        }
+        out << "  " << doc.path.front() << "  " << doc.summary << '\n';
     }
+    out << "\nRun `ts <command> --help` for command-specific help.\n";
     out << "\nThis CLI talks to a TeamSpeak 3 client plugin over a local control socket.\n";
     out << "It is not ServerQuery, WebQuery, or a standalone TeamSpeak SDK ClientLib client.\n";
     return out.str();
@@ -353,19 +419,15 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
 
     std::vector<std::string> remaining(args.begin() + static_cast<long>(index), args.end());
     std::size_t longest_match = 0;
-    for (const auto& doc : command_docs()) {
-        if (remaining.size() < doc.path.size()) {
-            continue;
+    for (std::size_t candidate_size = 1; candidate_size <= remaining.size(); ++candidate_size) {
+        const std::vector<std::string> candidate(
+            remaining.begin(), remaining.begin() + static_cast<long>(candidate_size)
+        );
+        if (!has_command_prefix(candidate)) {
+            break;
         }
-        bool match = true;
-        for (std::size_t i = 0; i < doc.path.size(); ++i) {
-            if (remaining[i] != doc.path[i]) {
-                match = false;
-                break;
-            }
-        }
-        if (match) {
-            longest_match = std::max(longest_match, doc.path.size());
+        if (find_command_doc(candidate) != nullptr) {
+            longest_match = candidate_size;
         }
     }
 
@@ -377,6 +439,18 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
 
     parsed.path.assign(remaining.begin(), remaining.begin() + static_cast<long>(longest_match));
     std::vector<std::string> tail(remaining.begin() + static_cast<long>(longest_match), remaining.end());
+    const bool group_command = has_subcommands(parsed.path);
+
+    if (group_command && !tail.empty()) {
+        const auto& next = tail.front();
+        if (next != "--help" && next != "-h" && next.rfind("--", 0) != 0) {
+            std::vector<std::string> attempted = parsed.path;
+            attempted.push_back(next);
+            return domain::fail<ParsedCommand>(cli_error(
+                "unknown_command", "unknown command: " + format_command_path(attempted)
+            ));
+        }
+    }
 
     for (std::size_t tail_index = 0; tail_index < tail.size(); ++tail_index) {
         const auto& token = tail[tail_index];
@@ -439,6 +513,10 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
         parsed.positionals.push_back(token);
     }
 
+    if (group_command) {
+        parsed.show_help = true;
+    }
+
     return domain::ok(parsed);
 }
 
@@ -447,24 +525,37 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
         return top_level_help();
     }
 
-    for (const auto& doc : command_docs()) {
-        if (doc.path == path) {
-            std::ostringstream out;
-            out << doc.summary << "\n\n";
-            out << "Usage:\n";
-            out << "  " << doc.usage << '\n';
-            if (!doc.options.empty()) {
-                out << "\nOptions:\n";
-                for (const auto& option : doc.options) {
-                    out << "  " << option << '\n';
-                }
-            }
-            out << "\nGlobal options: --output --json --profile --server --nickname --identity --config --verbose --debug --help\n";
-            return out.str();
+    const auto* doc = find_command_doc(path);
+    if (doc == nullptr) {
+        return top_level_help();
+    }
+
+    std::ostringstream out;
+    out << doc->summary << "\n\n";
+    out << "Usage:\n";
+    out << "  " << doc->usage << '\n';
+    if (!doc->options.empty()) {
+        out << "\nOptions:\n";
+        for (const auto& option : doc->options) {
+            out << "  " << option << '\n';
         }
     }
 
-    return top_level_help();
+    const auto children = immediate_subcommands(path);
+    if (!children.empty()) {
+        out << "\nSubcommands:\n";
+        for (const auto* child : children) {
+            out << "  " << child->path.back() << "  " << child->summary << '\n';
+        }
+
+        out << "\nExamples:\n";
+        for (const auto* child : children) {
+            out << "  " << child->usage << '\n';
+        }
+    }
+
+    out << "\nGlobal options: --output --json --profile --server --nickname --identity --config --verbose --debug --help\n";
+    return out.str();
 }
 
 auto CommandRouter::dispatch(const ParsedCommand& command) -> domain::Result<output::CommandOutput> {
