@@ -77,6 +77,39 @@ define require_plugin_sdk
 	fi
 endef
 
+define bootstrap_real_runtime_deps
+	@mkdir -p "$(TS3_REAL_E2E_CACHE_DIR)"
+	@TS3_REAL_E2E_CACHE_DIR="$(TS3_REAL_E2E_CACHE_DIR)" \
+	TS3_REAL_E2E_DEPS_MK="$(TS3_REAL_E2E_DEPS_MK)" \
+	TS3_REAL_E2E_DEPS_ENV="$(TS3_REAL_E2E_DEPS_ENV)" \
+	TS3_PLUGIN_SDK_DIR="$(TS3_PLUGIN_SDK_DIR)" \
+	TS3_PLUGIN_SDK_INCLUDE_DIR="$(TS3_PLUGIN_SDK_INCLUDE_DIR)" \
+	TS3_PLUGIN_SDK_URL="$(TS3_PLUGIN_SDK_URL)" \
+	TS3_PLUGIN_SDK_REF="$(TS3_PLUGIN_SDK_REF)" \
+	TS3_REAL_E2E_CLIENT_DIR="$(TS3_REAL_E2E_CLIENT_DIR)" \
+	TS3_REAL_E2E_CLIENT_VERSION="$(TS3_REAL_E2E_CLIENT_VERSION)" \
+	TS3_REAL_E2E_CLIENT_URL="$(TS3_REAL_E2E_CLIENT_URL)" \
+	TS3_REAL_E2E_CLIENT_SHA256="$(TS3_REAL_E2E_CLIENT_SHA256)" \
+	TS3_REAL_E2E_XDOTOOL="$(TS3_REAL_E2E_XDOTOOL)" \
+	TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH="$(TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH)" \
+	./tests/e2e/bootstrap_real_runtime_deps.sh
+endef
+
+define load_real_runtime_deps_env
+	set -euo pipefail; \
+	if [[ -f "$(TS3_REAL_E2E_DEPS_ENV)" ]]; then \
+		source "$(TS3_REAL_E2E_DEPS_ENV)"; \
+	fi; \
+	if [[ -n "$(TS3_PLUGIN_SDK_DIR)" ]]; then export TS3_PLUGIN_SDK_DIR="$(TS3_PLUGIN_SDK_DIR)"; fi; \
+	if [[ -n "$(TS3_PLUGIN_SDK_INCLUDE_DIR)" ]]; then export TS3_PLUGIN_SDK_INCLUDE_DIR="$(TS3_PLUGIN_SDK_INCLUDE_DIR)"; fi; \
+	if [[ -n "$(TS3_REAL_E2E_CLIENT_DIR)" ]]; then export TS3_REAL_E2E_CLIENT_DIR="$(TS3_REAL_E2E_CLIENT_DIR)"; fi; \
+	if [[ -n "$(TS3_REAL_E2E_CLIENT_VERSION)" ]]; then export TS3_REAL_E2E_CLIENT_VERSION="$(TS3_REAL_E2E_CLIENT_VERSION)"; fi; \
+	if [[ -n "$(TS3_REAL_E2E_CLIENT_URL)" ]]; then export TS3_REAL_E2E_CLIENT_URL="$(TS3_REAL_E2E_CLIENT_URL)"; fi; \
+	if [[ -n "$(TS3_REAL_E2E_CLIENT_SHA256)" ]]; then export TS3_REAL_E2E_CLIENT_SHA256="$(TS3_REAL_E2E_CLIENT_SHA256)"; fi; \
+	if [[ -n "$(TS3_REAL_E2E_XDOTOOL)" ]]; then export TS3_REAL_E2E_XDOTOOL="$(TS3_REAL_E2E_XDOTOOL)"; fi; \
+	if [[ -n "$(TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH)" ]]; then export TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH="$(TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH)"; fi
+endef
+
 define require_real_env_state
 	@if [[ ! -f "$(REAL_ENV_STATE_REF)" ]]; then \
 		echo "No tracked real test environment. Run 'make env-up' first."; \
@@ -115,21 +148,7 @@ clean: ## Remove generated build directories and tracked env pointers
 	rm -f $(REAL_ENV_STATE_REF) $(REAL_ENV_OUTPUT_REF)
 
 deps-real: ## Download/cache the real runtime dependencies without starting the environment
-	@mkdir -p "$(TS3_REAL_E2E_CACHE_DIR)"
-	@TS3_REAL_E2E_CACHE_DIR="$(TS3_REAL_E2E_CACHE_DIR)" \
-	TS3_REAL_E2E_DEPS_MK="$(TS3_REAL_E2E_DEPS_MK)" \
-	TS3_REAL_E2E_DEPS_ENV="$(TS3_REAL_E2E_DEPS_ENV)" \
-	TS3_PLUGIN_SDK_DIR="$(TS3_PLUGIN_SDK_DIR)" \
-	TS3_PLUGIN_SDK_INCLUDE_DIR="$(TS3_PLUGIN_SDK_INCLUDE_DIR)" \
-	TS3_PLUGIN_SDK_URL="$(TS3_PLUGIN_SDK_URL)" \
-	TS3_PLUGIN_SDK_REF="$(TS3_PLUGIN_SDK_REF)" \
-	TS3_REAL_E2E_CLIENT_DIR="$(TS3_REAL_E2E_CLIENT_DIR)" \
-	TS3_REAL_E2E_CLIENT_VERSION="$(TS3_REAL_E2E_CLIENT_VERSION)" \
-	TS3_REAL_E2E_CLIENT_URL="$(TS3_REAL_E2E_CLIENT_URL)" \
-	TS3_REAL_E2E_CLIENT_SHA256="$(TS3_REAL_E2E_CLIENT_SHA256)" \
-	TS3_REAL_E2E_XDOTOOL="$(TS3_REAL_E2E_XDOTOOL)" \
-	TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH="$(TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH)" \
-	./tests/e2e/bootstrap_real_runtime_deps.sh
+	$(bootstrap_real_runtime_deps)
 
 configure-plugin: ## Configure the plugin build in ./build-plugin
 	$(require_plugin_sdk)
@@ -138,9 +157,20 @@ configure-plugin: ## Configure the plugin build in ./build-plugin
 build-plugin: configure-plugin ## Build ts3cli_plugin in ./build-plugin
 	$(CMAKE) --build $(PLUGIN_BUILD_DIR) --target ts3cli_plugin
 
-configure-real: ## Configure the live plugin+server build in ./build-real
-	$(require_plugin_sdk)
-	$(CMAKE) -S . -B $(REAL_BUILD_DIR) $(CMAKE_BASE_ARGS) $(REAL_CMAKE_ARGS)
+configure-real: deps-real ## Configure the live plugin+server build in ./build-real
+	@$(load_real_runtime_deps_env); \
+	"$(CMAKE)" -S . -B "$(REAL_BUILD_DIR)" $(CMAKE_BASE_ARGS) \
+		-DTS_ENABLE_TS3_PLUGIN=ON \
+		-DTS_ENABLE_REAL_TS3_E2E=ON \
+		-DTS3_REAL_E2E_CACHE_DIR="$(TS3_REAL_E2E_CACHE_DIR)" \
+		$${TS3_PLUGIN_SDK_DIR:+-DTS3_PLUGIN_SDK_DIR=$${TS3_PLUGIN_SDK_DIR}} \
+		$${TS3_PLUGIN_SDK_INCLUDE_DIR:+-DTS3_PLUGIN_SDK_INCLUDE_DIR=$${TS3_PLUGIN_SDK_INCLUDE_DIR}} \
+		$${TS3_REAL_E2E_CLIENT_DIR:+-DTS3_REAL_E2E_CLIENT_DIR=$${TS3_REAL_E2E_CLIENT_DIR}} \
+		$${TS3_REAL_E2E_CLIENT_VERSION:+-DTS3_REAL_E2E_CLIENT_VERSION=$${TS3_REAL_E2E_CLIENT_VERSION}} \
+		$${TS3_REAL_E2E_CLIENT_URL:+-DTS3_REAL_E2E_CLIENT_URL=$${TS3_REAL_E2E_CLIENT_URL}} \
+		$${TS3_REAL_E2E_CLIENT_SHA256:+-DTS3_REAL_E2E_CLIENT_SHA256=$${TS3_REAL_E2E_CLIENT_SHA256}} \
+		$${TS3_REAL_E2E_XDOTOOL:+-DTS3_REAL_E2E_XDOTOOL=$${TS3_REAL_E2E_XDOTOOL}} \
+		$${TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH:+-DTS3_REAL_E2E_XDOTOOL_LIBRARY_PATH=$${TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH}}
 
 build-real: configure-real ## Build the live plugin+server tree in ./build-real
 	$(CMAKE) --build $(REAL_BUILD_DIR)

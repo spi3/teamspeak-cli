@@ -227,9 +227,10 @@ ctest --test-dir build-real --output-on-failure -R ts_real_plugin_server_e2e_tes
 Equivalent Make target:
 
 ```bash
-make deps-real
 make test-real
 ```
+
+`make build-real`, `make test-real`, and `make env-up` automatically verify the managed TeamSpeak runtime dependencies and bootstrap them into `.cache/ts3-real-e2e` when they are missing.
 
 If you want to pre-download the TeamSpeak client bundle, the TeamSpeak 3 Client Plugin SDK, and `xdotool` first:
 
@@ -270,7 +271,6 @@ For manual verification, bring the real runtime up and leave it running:
 Equivalent Make targets:
 
 ```bash
-make deps-real
 make env-up
 make env-info
 make env-ts ARGS='plugin info'

@@ -108,6 +108,8 @@ That writes reusable defaults to:
 
 After `make deps-real`, `make build-real` and `make test-real` can use the cached default paths without extra environment variables.
 
+Even without a separate `make deps-real` step, `make build-real`, `make test-real`, and `make env-up` now verify those managed dependencies and bootstrap them automatically when needed.
+
 The harness validates:
 
 - plugin availability
@@ -135,7 +137,7 @@ It starts:
 - `Xvfb`
 - the TeamSpeak client with `ts3cli_plugin`
 
-Like the self-cleaning E2E harness, it auto-downloads the TeamSpeak client bundle and xdotool into the local cache if they are missing.
+Like the self-cleaning E2E harness, it auto-downloads the TeamSpeak client bundle, the TeamSpeak 3 Client Plugin SDK, and xdotool into the local cache if they are missing.
 
 It then prints:
 
