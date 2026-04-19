@@ -13,8 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and test mock path
-        run: make test-mock
+      - name: Build and test TeamSpeak-backed path
+        run: make test
 
   publish-linux-x86_64:
     needs: verify
@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Package release archive
+      - name: Package TeamSpeak-backed release archive
         env:
           PACKAGE_VERSION: ${{ github.ref_name }}
         run: make package-release
