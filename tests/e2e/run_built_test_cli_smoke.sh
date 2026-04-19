@@ -18,7 +18,7 @@ profile_output="$("${ts_bin}" profile list --config "${config_path}")"
 printf '%s\n' "${profile_output}" | grep -q 'built-test'
 
 status_json="$("${ts_bin}" --json status --config "${config_path}")"
-printf '%s\n' "${status_json}" | grep -q '"backend":"fake"'
+printf '%s\n' "${status_json}" | grep -q '"backend":"mock"'
 printf '%s\n' "${status_json}" | grep -q '"phase":"connected"'
 
 channel_json="$("${ts_bin}" --json channel list --config "${config_path}")"

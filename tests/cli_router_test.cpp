@@ -429,7 +429,7 @@ int main() {
         "channel clients selector json should not include clients from other channels"
     );
 
-    const fs::path launcher_path = temp_dir / "fake-client.sh";
+    const fs::path launcher_path = temp_dir / "mock-client.sh";
     const fs::path socket_env_path = temp_dir / "client-socket.txt";
     {
         std::ofstream launcher(launcher_path, std::ios::trunc);

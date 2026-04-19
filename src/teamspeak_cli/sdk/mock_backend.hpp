@@ -9,10 +9,10 @@
 
 namespace teamspeak_cli::sdk {
 
-class FakeBackend final : public Backend {
+class MockBackend final : public Backend {
   public:
-    FakeBackend();
-    ~FakeBackend() override;
+    MockBackend();
+    ~MockBackend() override;
 
     [[nodiscard]] auto kind() const -> std::string override;
     auto initialize(const InitOptions& options) -> domain::Result<void> override;

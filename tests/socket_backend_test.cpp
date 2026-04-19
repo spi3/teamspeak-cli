@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #include "teamspeak_cli/bridge/socket_server.hpp"
-#include "teamspeak_cli/sdk/fake_backend.hpp"
+#include "teamspeak_cli/sdk/mock_backend.hpp"
 #include "teamspeak_cli/sdk/socket_backend.hpp"
 #include "test_support.hpp"
 
@@ -123,7 +123,7 @@ int main() {
     fs::create_directories(root);
     const fs::path socket_path = root / "plugin.sock";
 
-    bridge::SocketBridgeServer server(std::make_unique<sdk::FakeBackend>());
+    bridge::SocketBridgeServer server(std::make_unique<sdk::MockBackend>());
     auto started = server.start(sdk::InitOptions{.socket_path = socket_path.string()});
     tests::expect(started.ok(), "socket bridge server should start");
 
@@ -239,7 +239,7 @@ int main() {
     );
 
     const fs::path stalled_socket_path = root / "stalled.sock";
-    bridge::SocketBridgeServer stalled_server(std::make_unique<sdk::FakeBackend>());
+    bridge::SocketBridgeServer stalled_server(std::make_unique<sdk::MockBackend>());
     auto stalled_started = stalled_server.start(sdk::InitOptions{
         .socket_path = stalled_socket_path.string(),
         .command_timeout = std::chrono::milliseconds(100),

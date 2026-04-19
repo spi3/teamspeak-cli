@@ -38,7 +38,7 @@ enum class MessageTargetKind {
 
 struct Profile {
     std::string name = "default";
-    std::string backend = "fake";
+    std::string backend = "mock";
     std::string host = "127.0.0.1";
     std::uint16_t port = 9987;
     std::string nickname = "terminal";

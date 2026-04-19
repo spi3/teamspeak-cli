@@ -8,7 +8,7 @@ This project is not ServerQuery, not WebQuery, and not a standalone TeamSpeak `C
 
 - `ts`: the CLI users run
 - `ts3cli_plugin.so`: the optional TeamSpeak 3 client plugin used for live integration
-- `ts_built_test_plugin_host`: a local fake plugin host used by tests and CI
+- `ts_built_test_plugin_host`: a local mock plugin host used by tests and CI
 - a fully local `built-test` profile for development without TeamSpeak installed
 - install and uninstall scripts for a user-level Linux `x86_64` setup
 
@@ -41,7 +41,7 @@ make test-built-test
 ./build-built-test/ts channel list
 ```
 
-The `built-test` profile uses the in-process fake backend. It is the fastest path for normal development and the path exercised in CI.
+The `built-test` profile uses the in-process mock backend. It is the fastest path for normal development and the path exercised in CI.
 
 ### TeamSpeak-backed Development
 
@@ -138,7 +138,7 @@ If `cmake` or `ninja` are not on `PATH`, prefer the top-level `make` targets ins
 
 The starter config ships with two profiles:
 
-- `built-test`: fully local fake backend
+- `built-test`: fully local mock backend
 - `plugin-local`: local socket backend for a real TeamSpeak client plugin
 
 Useful profile commands:

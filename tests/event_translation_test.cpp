@@ -1,10 +1,10 @@
-#include "teamspeak_cli/sdk/fake_backend.hpp"
+#include "teamspeak_cli/sdk/mock_backend.hpp"
 #include "test_support.hpp"
 
 int main() {
     using namespace teamspeak_cli;
 
-    sdk::FakeBackend backend;
+    sdk::MockBackend backend;
     tests::expect(backend.initialize(sdk::InitOptions{}).ok(), "init");
     tests::expect(
         backend.connect(sdk::ConnectRequest{

@@ -1,7 +1,7 @@
 #include <thread>
 #include <vector>
 
-#include "teamspeak_cli/sdk/fake_backend.hpp"
+#include "teamspeak_cli/sdk/mock_backend.hpp"
 #include "teamspeak_cli/session/session_service.hpp"
 #include "test_support.hpp"
 
@@ -282,7 +282,7 @@ class FailedConnectionBackend final : public teamspeak_cli::sdk::Backend {
 int main() {
     using namespace teamspeak_cli;
 
-    session::SessionService session(std::make_unique<sdk::FakeBackend>());
+    session::SessionService session(std::make_unique<sdk::MockBackend>());
 
     auto initialized = session.initialize(sdk::InitOptions{});
     tests::expect(initialized.ok(), "session initialize should succeed");
@@ -300,12 +300,12 @@ int main() {
                                            std::chrono::milliseconds(250));
     tests::expect(connected.ok(), "session connect should succeed");
     tests::expect(connected.value().connected, "connect_and_wait should report a connected result");
-    tests::expect(!connected.value().timed_out, "connect_and_wait should not time out for the fake backend");
+    tests::expect(!connected.value().timed_out, "connect_and_wait should not time out for the mock backend");
     tests::expect_eq(
         connected.value().state.nickname, std::string("tester"), "connect_and_wait should propagate the nickname"
     );
     tests::expect_eq(
-        connected.value().lifecycle.size(), std::size_t(3), "fake backend should emit a complete connection lifecycle"
+        connected.value().lifecycle.size(), std::size_t(3), "mock backend should emit a complete connection lifecycle"
     );
     tests::expect_eq(
         connected.value().lifecycle[0].type, std::string("connection.requested"), "first lifecycle event type"
@@ -327,7 +327,7 @@ int main() {
     auto disconnected = session.disconnect_and_wait("done", std::chrono::milliseconds(250));
     tests::expect(disconnected.ok(), "disconnect should succeed");
     tests::expect(disconnected.value().disconnected, "disconnect_and_wait should report a disconnected result");
-    tests::expect(!disconnected.value().timed_out, "disconnect_and_wait should not time out for the fake backend");
+    tests::expect(!disconnected.value().timed_out, "disconnect_and_wait should not time out for the mock backend");
     tests::expect_eq(
         disconnected.value().state.phase,
         domain::ConnectionPhase::disconnected,

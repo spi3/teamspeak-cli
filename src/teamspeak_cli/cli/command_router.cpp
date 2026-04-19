@@ -2163,7 +2163,7 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
 
     const auto result = [&]() -> domain::Result<output::CommandOutput> {
         if (path == "version") {
-            const std::vector<std::string> backends = {"fake", "plugin"};
+            const std::vector<std::string> backends = {"mock", "plugin"};
             std::vector<output::ValueHolder> backend_values;
             for (const auto& backend : backends) {
                 backend_values.push_back(output::make_string(backend));

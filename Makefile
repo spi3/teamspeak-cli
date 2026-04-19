@@ -129,13 +129,13 @@ package-release: ## Build a release tarball under ./dist (set PACKAGE_VERSION=vX
 ts: build ## Run the CLI from ./build with ARGS='...'
 	"$(TS_BIN)" $(ARGS)
 
-configure-built-test: ## Configure the fake/offline built-test tree in ./build-built-test
+configure-built-test: ## Configure the mock/offline built-test tree in ./build-built-test
 	$(CMAKE) -S . -B $(BUILT_TEST_BUILD_DIR) $(CMAKE_BASE_ARGS)
 
-build-built-test: configure-built-test ## Build the fake/offline built-test tree
+build-built-test: configure-built-test ## Build the mock/offline built-test tree
 	$(CMAKE) --build $(BUILT_TEST_BUILD_DIR)
 
-test-built-test: build-built-test ## Run the fake/offline built-test suite
+test-built-test: build-built-test ## Run the mock/offline built-test suite
 	$(CTEST) --test-dir $(BUILT_TEST_BUILD_DIR) --output-on-failure
 
 ts-built-test: build-built-test ## Run the CLI from ./build-built-test with ARGS='...'

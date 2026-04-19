@@ -4,7 +4,7 @@
 #include <thread>
 
 #include "teamspeak_cli/bridge/socket_server.hpp"
-#include "teamspeak_cli/sdk/fake_backend.hpp"
+#include "teamspeak_cli/sdk/mock_backend.hpp"
 
 namespace {
 
@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
-    teamspeak_cli::bridge::SocketBridgeServer server(std::make_unique<teamspeak_cli::sdk::FakeBackend>());
+    teamspeak_cli::bridge::SocketBridgeServer server(std::make_unique<teamspeak_cli::sdk::MockBackend>());
 
     teamspeak_cli::sdk::InitOptions options;
     if (argc > 1) {

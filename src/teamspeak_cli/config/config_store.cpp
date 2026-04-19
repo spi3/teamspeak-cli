@@ -53,7 +53,7 @@ auto apply_root_key(domain::AppConfig& config, const std::string& key, const std
 auto apply_profile_key(domain::Profile& profile, const std::string& key, const std::string& value)
     -> domain::Result<void> {
     if (key == "backend") {
-        profile.backend = value;
+        profile.backend = util::iequals(value, "fake") ? "mock" : value;
     } else if (key == "host") {
         profile.host = value;
     } else if (key == "port") {
@@ -130,7 +130,7 @@ auto ConfigStore::load(const std::filesystem::path& path) const -> domain::Resul
             }
             config.profiles.push_back(domain::Profile{
                 .name = section.substr(prefix.size()),
-                .backend = "fake",
+                .backend = "mock",
                 .host = "127.0.0.1",
                 .port = 9987,
                 .nickname = "terminal",
@@ -239,7 +239,7 @@ auto ConfigStore::default_config() const -> domain::AppConfig {
             {
                 domain::Profile{
                     .name = "built-test",
-                    .backend = "fake",
+                    .backend = "mock",
                     .host = "127.0.0.1",
                     .port = 9987,
                     .nickname = "terminal",

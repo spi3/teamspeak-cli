@@ -97,7 +97,7 @@ set(TS_COMMON_SOURCES
   src/teamspeak_cli/events/event_queue.cpp
   src/teamspeak_cli/output/render.cpp
   src/teamspeak_cli/sdk/backend_factory.cpp
-  src/teamspeak_cli/sdk/fake_backend.cpp
+  src/teamspeak_cli/sdk/mock_backend.cpp
   src/teamspeak_cli/sdk/socket_backend.cpp
   src/teamspeak_cli/session/session_service.cpp
   src/teamspeak_cli/util/strings.cpp
@@ -117,7 +117,7 @@ add_executable(
   src/teamspeak_cli/bridge/socket_server.cpp
   src/teamspeak_cli/config/config_store.cpp
   src/teamspeak_cli/events/event_queue.cpp
-  src/teamspeak_cli/sdk/fake_backend.cpp
+  src/teamspeak_cli/sdk/mock_backend.cpp
   src/teamspeak_cli/util/strings.cpp
 )
 ts_apply_defaults(ts_built_test_plugin_host)
@@ -153,7 +153,7 @@ if(BUILD_TESTING)
     tests/session_service_test.cpp
     tests/test_support.hpp
     src/teamspeak_cli/events/event_queue.cpp
-    src/teamspeak_cli/sdk/fake_backend.cpp
+    src/teamspeak_cli/sdk/mock_backend.cpp
     src/teamspeak_cli/session/session_service.cpp
     src/teamspeak_cli/util/strings.cpp
   )
@@ -165,7 +165,7 @@ if(BUILD_TESTING)
     tests/event_translation_test.cpp
     tests/test_support.hpp
     src/teamspeak_cli/events/event_queue.cpp
-    src/teamspeak_cli/sdk/fake_backend.cpp
+    src/teamspeak_cli/sdk/mock_backend.cpp
     src/teamspeak_cli/util/strings.cpp
   )
   ts_apply_defaults(ts_event_translation_test)
@@ -187,7 +187,7 @@ if(BUILD_TESTING)
     src/teamspeak_cli/bridge/protocol.cpp
     src/teamspeak_cli/bridge/socket_server.cpp
     src/teamspeak_cli/events/event_queue.cpp
-    src/teamspeak_cli/sdk/fake_backend.cpp
+    src/teamspeak_cli/sdk/mock_backend.cpp
     src/teamspeak_cli/sdk/socket_backend.cpp
     src/teamspeak_cli/util/strings.cpp
   )

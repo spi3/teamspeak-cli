@@ -2,13 +2,13 @@
 
 ## Goal
 
-`ts` should feel like a normal Unix CLI while delegating all live TeamSpeak work to a backend. In the real integration path, that backend is a TeamSpeak 3 client plugin reached over a local socket. In development and CI, that backend is a fake implementation.
+`ts` should feel like a normal Unix CLI while delegating all live TeamSpeak work to a backend. In the real integration path, that backend is a TeamSpeak 3 client plugin reached over a local socket. In development and CI, that backend is a mock implementation.
 
 ## Main Targets
 
 - `ts`: the CLI executable
 - `ts3cli_plugin`: the TeamSpeak 3 client plugin shared library
-- `ts_built_test_plugin_host`: a local fake plugin host used in tests
+- `ts_built_test_plugin_host`: a local mock plugin host used in tests
 
 ## Layer Map
 
@@ -17,7 +17,7 @@
 - `src/teamspeak_cli/domain/`: shared models, IDs, result types, and event shapes
 - `src/teamspeak_cli/events/`: thread-safe event queue
 - `src/teamspeak_cli/output/`: table, detail, JSON, and YAML rendering
-- `src/teamspeak_cli/sdk/`: backend interface plus `fake`, socket-backed `plugin`, and plugin-host implementations
+- `src/teamspeak_cli/sdk/`: backend interface plus `mock`, socket-backed `plugin`, and plugin-host implementations
 - `src/teamspeak_cli/bridge/`: local socket protocol and bridge server
 - `src/teamspeak_cli/plugin/`: TeamSpeak 3 plugin exports and callback entry points
 - `src/teamspeak_cli/session/`: orchestration layer used by command handlers
@@ -26,7 +26,7 @@
 
 ### Built-test mode
 
-`ts` talks either directly to the fake backend or to that same fake backend through the socket bridge and `ts_built_test_plugin_host`.
+`ts` talks either directly to the mock backend or to that same mock backend through the socket bridge and `ts_built_test_plugin_host`.
 
 This is the stable development path because it is:
 
@@ -93,7 +93,7 @@ For the real plugin backend, this does not stop the TeamSpeak client session. It
 The repo has three practical layers of coverage:
 
 - unit tests for config, output, session, and event behavior
-- bridge tests using the fake backend over the same socket protocol used by the live plugin path
+- bridge tests using the mock backend over the same socket protocol used by the live plugin path
 - full CLI end-to-end tests where the built binary talks to `ts_built_test_plugin_host`
 
 There is also a TeamSpeak-backed local harness, but it should still be treated as host-sensitive integration tooling rather than the primary stable test surface.
