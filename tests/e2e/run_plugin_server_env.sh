@@ -2,18 +2,18 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=tests/e2e/real_plugin_runtime_common.sh
-source "${script_dir}/real_plugin_runtime_common.sh"
+# shellcheck source=tests/e2e/runtime_common.sh
+source "${script_dir}/runtime_common.sh"
 
-ts_bin="${1:?usage: run_real_plugin_server_env.sh <ts-binary> <plugin-shared-library>}"
-plugin_so="${2:?usage: run_real_plugin_server_env.sh <ts-binary> <plugin-shared-library>}"
+ts_bin="${1:?usage: run_plugin_server_env.sh <ts-binary> <plugin-shared-library>}"
+plugin_so="${2:?usage: run_plugin_server_env.sh <ts-binary> <plugin-shared-library>}"
 
-docker_image="${TS3_REAL_E2E_DOCKER_IMAGE:-teamspeak:latest}"
-server_port="${TS3_REAL_E2E_SERVER_PORT:-$((19000 + ($$ % 1000)))}"
-query_port="${TS3_REAL_E2E_QUERY_PORT:-$((21000 + ($$ % 1000)))}"
-autoconnect="${TS3_REAL_ENV_AUTOCONNECT:-1}"
-nickname="${TS3_REAL_ENV_NICKNAME:-cli-manual}"
-state_dir="${TS3_REAL_ENV_DIR:-}"
+docker_image="${TS3_DOCKER_IMAGE:-teamspeak:latest}"
+server_port="${TS3_SERVER_PORT:-$((19000 + ($$ % 1000)))}"
+query_port="${TS3_QUERY_PORT:-$((21000 + ($$ % 1000)))}"
+autoconnect="${TS3_ENV_AUTOCONNECT:-1}"
+nickname="${TS3_ENV_NICKNAME:-cli-manual}"
+state_dir="${TS3_ENV_DIR:-}"
 state_dir_owned=0
 
 if [[ ! -x "${ts_bin}" ]]; then
@@ -26,17 +26,17 @@ if [[ ! -f "${plugin_so}" ]]; then
   exit 1
 fi
 
-ts3_real_e2e_require_command Xvfb "Xvfb is required for the real TeamSpeak runtime environment"
-ts3_real_e2e_require_command docker "docker is required for the real TeamSpeak runtime environment"
-client_source_dir="$(ts3_real_e2e_resolve_client_source_dir)"
-ts3_real_e2e_resolve_xdotool
+ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed runtime environment"
+ts3_runtime_require_command docker "docker is required for the TeamSpeak-backed runtime environment"
+client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
+ts3_runtime_resolve_xdotool
 
 if [[ -z "${state_dir}" ]]; then
   state_dir="$(mktemp -d)"
   state_dir_owned=1
 else
   if [[ -e "${state_dir}" && -n "$(find "${state_dir}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
-    echo "TS3_REAL_ENV_DIR must point at an empty directory: ${state_dir}" >&2
+    echo "TS3_ENV_DIR must point at an empty directory: ${state_dir}" >&2
     exit 1
   fi
   mkdir -p "${state_dir}"
@@ -227,7 +227,7 @@ wait_for_connected_status() {
       sleep 1
       continue
     fi
-    if ts3_real_e2e_json_expect_fragment "${last_status}" '"phase":"connected"' "connection phase not connected" 2>/dev/null; then
+    if ts3_runtime_json_expect_fragment "${last_status}" '"phase":"connected"' "connection phase not connected" 2>/dev/null; then
       return 0
     fi
     sleep 1
@@ -270,8 +270,8 @@ TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" config init --config "${conf
 TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" profile use plugin-local --config "${config_path}" >/dev/null
 
 plugin_info_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" plugin info)"
-ts3_real_e2e_json_expect_fragment "${plugin_info_json}" '"plugin_available":true' "plugin backend was not available"
-ts3_real_e2e_json_expect_fragment "${plugin_info_json}" '"backend":"plugin"' "plugin backend did not report plugin mode"
+ts3_runtime_json_expect_fragment "${plugin_info_json}" '"plugin_available":true' "plugin backend was not available"
+ts3_runtime_json_expect_fragment "${plugin_info_json}" '"backend":"plugin"' "plugin backend did not report plugin mode"
 
 if [[ "${autoconnect}" != "0" ]]; then
   connect_ok=0
@@ -334,19 +334,19 @@ write_state_var "xdotool_library_path" "${xdotool_library_path}"
 
 cat >"${env_file}" <<EOF
 export TS_CONTROL_SOCKET_PATH='${socket_path}'
-export TS_REAL_ENV_CONFIG='${config_path}'
-export TS_REAL_ENV_STATE='${state_file}'
-export TS_REAL_ENV_DISPLAY='${display}'
-export TS_REAL_ENV_SERVER='127.0.0.1:${server_port}'
-export TS_REAL_ENV_NICKNAME='${nickname}'
-export TS_REAL_ENV_TS_BIN='${ts_bin}'
+export TS_ENV_CONFIG='${config_path}'
+export TS_ENV_STATE='${state_file}'
+export TS_ENV_DISPLAY='${display}'
+export TS_ENV_SERVER='127.0.0.1:${server_port}'
+export TS_ENV_NICKNAME='${nickname}'
+export TS_ENV_TS_BIN='${ts_bin}'
 EOF
 
 completed=1
 trap - EXIT
 
 cat <<EOF
-Real TeamSpeak runtime is up.
+TeamSpeak-backed runtime is up.
 
 State file: ${state_file}
 Env file:   ${env_file}
@@ -360,13 +360,13 @@ xdotool:    ${xdotool_bin}
 
 Use it like:
   source '${env_file}'
-  "\${TS_REAL_ENV_TS_BIN}" --config "\${TS_REAL_ENV_CONFIG}" plugin info
-  "\${TS_REAL_ENV_TS_BIN}" --config "\${TS_REAL_ENV_CONFIG}" status
-  "\${TS_REAL_ENV_TS_BIN}" --config "\${TS_REAL_ENV_CONFIG}" channel list
-  "\${TS_REAL_ENV_TS_BIN}" --config "\${TS_REAL_ENV_CONFIG}" client list
-  "\${TS_REAL_ENV_TS_BIN}" --config "\${TS_REAL_ENV_CONFIG}" --server "\${TS_REAL_ENV_SERVER}" --nickname "\${TS_REAL_ENV_NICKNAME}" connect
-  "\${TS_REAL_ENV_TS_BIN}" --config "\${TS_REAL_ENV_CONFIG}" disconnect
+  "\${TS_ENV_TS_BIN}" --config "\${TS_ENV_CONFIG}" plugin info
+  "\${TS_ENV_TS_BIN}" --config "\${TS_ENV_CONFIG}" status
+  "\${TS_ENV_TS_BIN}" --config "\${TS_ENV_CONFIG}" channel list
+  "\${TS_ENV_TS_BIN}" --config "\${TS_ENV_CONFIG}" client list
+  "\${TS_ENV_TS_BIN}" --config "\${TS_ENV_CONFIG}" --server "\${TS_ENV_SERVER}" --nickname "\${TS_ENV_NICKNAME}" connect
+  "\${TS_ENV_TS_BIN}" --config "\${TS_ENV_CONFIG}" disconnect
 
 Stop it with:
-  ${script_dir}/stop_real_plugin_server_env.sh '${state_file}'
+  ${script_dir}/stop_plugin_server_env.sh '${state_file}'
 EOF

@@ -55,6 +55,6 @@
 - `status`, `server info`, `channel list`, and `client list` inspect the current backend session state. They do not auto-connect around each command anymore.
 - `connect` asks the backend to open a connection.
 - `disconnect` asks the backend to close the current connection.
-- the default profile is `fake-default`
-- the real local bridge profile is `plugin-local`
-- the real plugin backend uses a local control socket and expects the TeamSpeak client plugin to already be running
+- the default profile is `plugin-local`
+- the `built-test` profile is the offline fallback
+- the plugin backend uses a local control socket and expects the TeamSpeak client plugin to already be running

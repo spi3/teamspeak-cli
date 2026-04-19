@@ -51,7 +51,7 @@ struct Profile {
 
 struct AppConfig {
     int version = 1;
-    std::string active_profile = "fake-default";
+    std::string active_profile = "plugin-local";
     std::vector<Profile> profiles;
 };
 

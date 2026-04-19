@@ -17,7 +17,7 @@ int main() {
 
     auto loaded = store.load(path);
     teamspeak_cli::tests::expect(loaded.ok(), "config load should succeed");
-    teamspeak_cli::tests::expect_eq(loaded.value().active_profile, std::string("fake-default"), "default active profile");
+    teamspeak_cli::tests::expect_eq(loaded.value().active_profile, std::string("plugin-local"), "default active profile");
     teamspeak_cli::tests::expect_eq(loaded.value().profiles.size(), std::size_t(2), "default profile count");
 
     auto found = store.find_profile(loaded.value(), "plugin-local");

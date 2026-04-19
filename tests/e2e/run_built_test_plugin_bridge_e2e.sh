@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ts_bin="${1:?usage: run_plugin_bridge_e2e.sh <ts-binary> <fake-plugin-host-binary>}"
-host_bin="${2:?usage: run_plugin_bridge_e2e.sh <ts-binary> <fake-plugin-host-binary>}"
+ts_bin="${1:?usage: run_built_test_plugin_bridge_e2e.sh <ts-binary> <built-test-plugin-host-binary>}"
+host_bin="${2:?usage: run_built_test_plugin_bridge_e2e.sh <ts-binary> <built-test-plugin-host-binary>}"
 
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -30,7 +30,7 @@ for _ in $(seq 1 50); do
 done
 
 if [[ ! -S "${socket_path}" ]]; then
-  echo "fake plugin host did not create control socket" >&2
+  echo "built-test plugin host did not create control socket" >&2
   exit 1
 fi
 

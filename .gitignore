@@ -8,6 +8,7 @@
 /out/
 /install/
 /.cache/
+/third_party/teamspeak/managed/
 /.idea/
 /.vscode/
 /.codex

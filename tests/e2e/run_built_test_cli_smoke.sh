@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ts_bin="${1:?usage: run_fake_cli_smoke.sh <ts-binary>}"
+ts_bin="${1:?usage: run_built_test_cli_smoke.sh <ts-binary>}"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
@@ -9,12 +9,13 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 config_path="${tmp_dir}/config.ini"
 
 "${ts_bin}" config init --config "${config_path}" >/dev/null
+"${ts_bin}" profile use built-test --config "${config_path}" >/dev/null
 
 version_output="$("${ts_bin}" version)"
 printf '%s\n' "${version_output}" | grep -q '^ts '
 
 profile_output="$("${ts_bin}" profile list --config "${config_path}")"
-printf '%s\n' "${profile_output}" | grep -q 'fake-default'
+printf '%s\n' "${profile_output}" | grep -q 'built-test'
 
 status_json="$("${ts_bin}" --json status --config "${config_path}")"
 printf '%s\n' "${status_json}" | grep -q '"backend":"fake"'

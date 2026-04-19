@@ -27,7 +27,7 @@ int main() {
 
     auto state = backend.connection_state();
     tests::expect(state.ok(), "connection state should succeed");
-    tests::expect_eq(state.value().phase, domain::ConnectionPhase::connected, "fake plugin host starts connected");
+    tests::expect_eq(state.value().phase, domain::ConnectionPhase::connected, "built-test plugin host starts connected");
 
     auto channels = backend.list_channels();
     tests::expect(channels.ok(), "channel list should succeed");

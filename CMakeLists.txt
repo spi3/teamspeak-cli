@@ -19,17 +19,25 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(TS_ENABLE_SANITIZERS "Enable address/undefined sanitizers in Debug builds" ON)
 option(TS_ENABLE_TS3_PLUGIN "Build the TeamSpeak 3 client plugin shared library" OFF)
-option(TS_ENABLE_REAL_TS3_E2E "Enable the live TeamSpeak client + server end-to-end test" OFF)
+option(TS_ENABLE_TS3_E2E "Enable the TeamSpeak-backed client + server end-to-end test" OFF)
 
 set(TS3_PLUGIN_SDK_DIR "$ENV{TS3_PLUGIN_SDK_DIR}" CACHE PATH "Path to the TeamSpeak 3 Client Plugin SDK root")
 set(TS3_PLUGIN_SDK_INCLUDE_DIR "" CACHE PATH "Path to the TeamSpeak 3 Client Plugin SDK include directory")
-set(TS3_REAL_E2E_CACHE_DIR "$ENV{TS3_REAL_E2E_CACHE_DIR}" CACHE PATH "Cache directory for TeamSpeak client and xdotool assets used by the live E2E test")
-set(TS3_REAL_E2E_CLIENT_DIR "$ENV{TS3_REAL_E2E_CLIENT_DIR}" CACHE PATH "Optional path to an extracted TeamSpeak 3 client directory for the live E2E test")
-set(TS3_REAL_E2E_CLIENT_VERSION "$ENV{TS3_REAL_E2E_CLIENT_VERSION}" CACHE STRING "Optional TeamSpeak 3 client version override for the live E2E test bootstrap")
-set(TS3_REAL_E2E_CLIENT_URL "$ENV{TS3_REAL_E2E_CLIENT_URL}" CACHE STRING "Optional TeamSpeak 3 client download URL override for the live E2E test bootstrap")
-set(TS3_REAL_E2E_CLIENT_SHA256 "$ENV{TS3_REAL_E2E_CLIENT_SHA256}" CACHE STRING "Optional TeamSpeak 3 client archive SHA256 override for the live E2E test bootstrap")
-set(TS3_REAL_E2E_XDOTOOL "$ENV{TS3_REAL_E2E_XDOTOOL}" CACHE FILEPATH "Optional path to xdotool for the live TeamSpeak E2E test")
-set(TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH "$ENV{TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH}" CACHE PATH "Optional LD_LIBRARY_PATH for the xdotool binary used by the live E2E test")
+set(_ts3_managed_dir_default "$ENV{TS3_MANAGED_DIR}")
+set(_ts3_client_dir_default "$ENV{TS3_CLIENT_DIR}")
+set(_ts3_client_version_default "$ENV{TS3_CLIENT_VERSION}")
+set(_ts3_client_url_default "$ENV{TS3_CLIENT_URL}")
+set(_ts3_client_sha256_default "$ENV{TS3_CLIENT_SHA256}")
+set(_ts3_xdotool_default "$ENV{TS3_XDOTOOL}")
+set(_ts3_xdotool_library_path_default "$ENV{TS3_XDOTOOL_LIBRARY_PATH}")
+
+set(TS3_MANAGED_DIR "${_ts3_managed_dir_default}" CACHE PATH "Managed directory for TeamSpeak client and xdotool assets used by the TeamSpeak-backed runtime")
+set(TS3_CLIENT_DIR "${_ts3_client_dir_default}" CACHE PATH "Optional path to an extracted TeamSpeak 3 client directory for the TeamSpeak-backed runtime")
+set(TS3_CLIENT_VERSION "${_ts3_client_version_default}" CACHE STRING "Optional TeamSpeak 3 client version override for the TeamSpeak-backed runtime bootstrap")
+set(TS3_CLIENT_URL "${_ts3_client_url_default}" CACHE STRING "Optional TeamSpeak 3 client download URL override for the TeamSpeak-backed runtime bootstrap")
+set(TS3_CLIENT_SHA256 "${_ts3_client_sha256_default}" CACHE STRING "Optional TeamSpeak 3 client archive SHA256 override for the TeamSpeak-backed runtime bootstrap")
+set(TS3_XDOTOOL "${_ts3_xdotool_default}" CACHE FILEPATH "Optional path to xdotool for the TeamSpeak-backed runtime")
+set(TS3_XDOTOOL_LIBRARY_PATH "${_ts3_xdotool_library_path_default}" CACHE PATH "Optional LD_LIBRARY_PATH for the xdotool binary used by the TeamSpeak-backed runtime")
 
 function(ts_enable_warnings target_name)
   if(MSVC)
@@ -103,8 +111,8 @@ add_executable(
 ts_apply_defaults(ts)
 
 add_executable(
-  ts_fake_plugin_host
-  tests/fake_plugin_host_main.cpp
+  ts_built_test_plugin_host
+  tests/built_test_plugin_host_main.cpp
   src/teamspeak_cli/bridge/protocol.cpp
   src/teamspeak_cli/bridge/socket_server.cpp
   src/teamspeak_cli/config/config_store.cpp
@@ -112,7 +120,7 @@ add_executable(
   src/teamspeak_cli/sdk/fake_backend.cpp
   src/teamspeak_cli/util/strings.cpp
 )
-ts_apply_defaults(ts_fake_plugin_host)
+ts_apply_defaults(ts_built_test_plugin_host)
 
 install(TARGETS ts RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/teamspeak-cli")
@@ -186,25 +194,30 @@ if(BUILD_TESTING)
   ts_apply_defaults(ts_socket_backend_test)
   add_test(NAME ts_socket_backend_test COMMAND ts_socket_backend_test)
 
-  add_test(NAME ts_fake_cli_smoke_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_fake_cli_smoke.sh" "$<TARGET_FILE:ts>")
   add_test(
-    NAME ts_plugin_bridge_e2e_test
-    COMMAND
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_plugin_bridge_e2e.sh"
-      "$<TARGET_FILE:ts>"
-      "$<TARGET_FILE:ts_fake_plugin_host>"
+    NAME ts_built_test_cli_smoke_test
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_cli_smoke.sh" "$<TARGET_FILE:ts>"
   )
-  set_tests_properties(ts_plugin_bridge_e2e_test PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME ts_built_test_bridge_e2e_test
+    COMMAND
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_plugin_bridge_e2e.sh"
+      "$<TARGET_FILE:ts>"
+      "$<TARGET_FILE:ts_built_test_plugin_host>"
+  )
+  set_tests_properties(ts_built_test_bridge_e2e_test PROPERTIES TIMEOUT 60)
 
   add_test(
     NAME ts_e2e_shell_syntax_test
     COMMAND
       bash -n
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/bootstrap_real_runtime_deps.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/real_plugin_runtime_common.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_real_plugin_server_env.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_real_plugin_server_e2e.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/stop_real_plugin_server_env.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_cli_smoke.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_plugin_bridge_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/bootstrap_runtime_deps.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_common.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_plugin_server_env.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_plugin_server_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/stop_plugin_server_env.sh"
   )
 endif()
 
@@ -253,43 +266,43 @@ if(TS_ENABLE_TS3_PLUGIN)
   set_target_properties(ts3cli_plugin PROPERTIES PREFIX "")
 endif()
 
-if(BUILD_TESTING AND TS_ENABLE_REAL_TS3_E2E)
+if(BUILD_TESTING AND TS_ENABLE_TS3_E2E)
   if(NOT TS_ENABLE_TS3_PLUGIN)
-    message(FATAL_ERROR "TS_ENABLE_REAL_TS3_E2E=ON requires TS_ENABLE_TS3_PLUGIN=ON.")
+    message(FATAL_ERROR "TS_ENABLE_TS3_E2E=ON requires TS_ENABLE_TS3_PLUGIN=ON.")
   endif()
 
   add_test(
-    NAME ts_real_plugin_server_e2e_test
+    NAME ts_plugin_server_e2e_test
     COMMAND
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_real_plugin_server_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_plugin_server_e2e.sh"
       "$<TARGET_FILE:ts>"
       "$<TARGET_FILE:ts3cli_plugin>"
   )
-  set_tests_properties(ts_real_plugin_server_e2e_test PROPERTIES TIMEOUT 300)
+  set_tests_properties(ts_plugin_server_e2e_test PROPERTIES TIMEOUT 300)
 
-  set(_ts_real_e2e_env "")
-  if(TS3_REAL_E2E_CACHE_DIR)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_CACHE_DIR=${TS3_REAL_E2E_CACHE_DIR}")
+  set(_ts_plugin_e2e_env "")
+  if(TS3_MANAGED_DIR)
+    list(APPEND _ts_plugin_e2e_env "TS3_MANAGED_DIR=${TS3_MANAGED_DIR}")
   endif()
-  if(TS3_REAL_E2E_CLIENT_DIR)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_CLIENT_DIR=${TS3_REAL_E2E_CLIENT_DIR}")
+  if(TS3_CLIENT_DIR)
+    list(APPEND _ts_plugin_e2e_env "TS3_CLIENT_DIR=${TS3_CLIENT_DIR}")
   endif()
-  if(TS3_REAL_E2E_CLIENT_VERSION)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_CLIENT_VERSION=${TS3_REAL_E2E_CLIENT_VERSION}")
+  if(TS3_CLIENT_VERSION)
+    list(APPEND _ts_plugin_e2e_env "TS3_CLIENT_VERSION=${TS3_CLIENT_VERSION}")
   endif()
-  if(TS3_REAL_E2E_CLIENT_URL)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_CLIENT_URL=${TS3_REAL_E2E_CLIENT_URL}")
+  if(TS3_CLIENT_URL)
+    list(APPEND _ts_plugin_e2e_env "TS3_CLIENT_URL=${TS3_CLIENT_URL}")
   endif()
-  if(TS3_REAL_E2E_CLIENT_SHA256)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_CLIENT_SHA256=${TS3_REAL_E2E_CLIENT_SHA256}")
+  if(TS3_CLIENT_SHA256)
+    list(APPEND _ts_plugin_e2e_env "TS3_CLIENT_SHA256=${TS3_CLIENT_SHA256}")
   endif()
-  if(TS3_REAL_E2E_XDOTOOL)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_XDOTOOL=${TS3_REAL_E2E_XDOTOOL}")
+  if(TS3_XDOTOOL)
+    list(APPEND _ts_plugin_e2e_env "TS3_XDOTOOL=${TS3_XDOTOOL}")
   endif()
-  if(TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH)
-    list(APPEND _ts_real_e2e_env "TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH=${TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH}")
+  if(TS3_XDOTOOL_LIBRARY_PATH)
+    list(APPEND _ts_plugin_e2e_env "TS3_XDOTOOL_LIBRARY_PATH=${TS3_XDOTOOL_LIBRARY_PATH}")
   endif()
-  if(_ts_real_e2e_env)
-    set_tests_properties(ts_real_plugin_server_e2e_test PROPERTIES ENVIRONMENT "${_ts_real_e2e_env}")
+  if(_ts_plugin_e2e_env)
+    set_tests_properties(ts_plugin_server_e2e_test PROPERTIES ENVIRONMENT "${_ts_plugin_e2e_env}")
   endif()
 endif()

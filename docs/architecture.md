@@ -17,7 +17,7 @@
 - `src/teamspeak_cli/output/`
   table/detail rendering plus stable JSON/YAML output
 - `src/teamspeak_cli/sdk/`
-  backend abstraction plus concrete `fake`, `plugin` socket, and real plugin-host backends
+  backend abstraction plus concrete `fake`, `plugin` socket, and plugin-host backends
 - `src/teamspeak_cli/bridge/`
   local control-socket protocol and server implementation
 - `src/teamspeak_cli/plugin/`
@@ -31,11 +31,11 @@ There are two main runtime modes.
 
 ### Development and CI
 
-`ts` talks to the `fake` backend directly or over the socket bridge through `ts_fake_plugin_host`.
+`ts` talks to the `fake` backend directly or over the socket bridge through `ts_built_test_plugin_host`.
 
 This keeps the project open-source, deterministic, and testable without TeamSpeak installed.
 
-### Real Integration
+### TeamSpeak-backed Integration
 
 1. The TeamSpeak 3 client loads `ts3cli_plugin`.
 2. The plugin starts a local control socket.
@@ -67,12 +67,12 @@ The CLI-side `plugin` backend does not call TeamSpeak APIs directly. It speaks a
 
 That protocol is used by:
 
-- the fake plugin-host process in tests
-- the real TeamSpeak client plugin at runtime
+- the built-test plugin-host process in tests
+- the TeamSpeak client plugin at runtime
 
 ## Event Translation
 
-The real plugin backend translates TeamSpeak callbacks into stable domain events and pushes them into `events::EventQueue`.
+The plugin backend translates TeamSpeak callbacks into stable domain events and pushes them into `events::EventQueue`.
 
 That keeps callback-thread behavior and TeamSpeak-specific details inside the plugin/backend layer.
 
@@ -86,7 +86,7 @@ The CLI currently favors one-shot commands:
 4. run one command
 5. shut down backend object
 
-For the `plugin` backend, this does not tear down the real TeamSpeak client session. It only tears down the CLI-side socket client object.
+For the `plugin` backend, this does not tear down the TeamSpeak client session. It only tears down the CLI-side socket client object.
 
 That keeps the command behavior predictable while leaving room for a future long-running shell or TUI.
 
@@ -95,7 +95,7 @@ That keeps the command behavior predictable while leaving room for a future long
 The repository now has three useful levels of coverage:
 
 - unit tests for config, rendering, and session behavior
-- direct bridge tests using `SocketBridgeServer` with the fake backend
-- full CLI end-to-end tests where the built `ts` binary talks to `ts_fake_plugin_host`
+- direct bridge tests using `SocketBridgeServer` with the built-test backend
+- full CLI end-to-end tests where the built `ts` binary talks to `ts_built_test_plugin_host`
 
 The missing piece is a fully automated TeamSpeak-client-plus-regular-server integration run, which remains a manual local validation path for now.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-state_file="${1:?usage: stop_real_plugin_server_env.sh <state-file>}"
+state_file="${1:?usage: stop_plugin_server_env.sh <state-file>}"
 
 if [[ ! -f "${state_file}" ]]; then
   echo "state file not found: ${state_file}" >&2
@@ -43,4 +43,4 @@ elif [[ -n "${client_runtime_dir:-}" || -n "${home_dir:-}" || -n "${env_file:-}"
     "${state_file}"
 fi
 
-echo "real TeamSpeak runtime stopped"
+echo "TeamSpeak-backed runtime stopped"

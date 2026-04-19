@@ -15,7 +15,7 @@ int main() {
             .server_password = "",
             .channel_password = "",
             .default_channel = "",
-            .profile_name = "fake-default",
+            .profile_name = "built-test",
         })
             .ok(),
         "connect"

@@ -22,10 +22,10 @@ The goal is a polished CLI in the style of `kubectl` or `gh` for client-side Tea
 The repository currently ships three important pieces:
 
 - `ts`: the CLI application
-- `fake` backend: fully local development backend used in tests and CI
+- `built-test` backend: fully local development backend used in tests and CI
 - `plugin` backend: a local control-socket backend that talks to a TeamSpeak client plugin
 
-The fake backend keeps the project buildable and runnable without TeamSpeak installed. The real plugin shared library is optional and built only when you point CMake at a local TeamSpeak 3 Client Plugin SDK checkout.
+The default build targets the TeamSpeak-backed plugin runtime and auto-fetches the TeamSpeak-managed inputs it needs into `third_party/teamspeak/managed`. The `built-test` path keeps the project buildable and runnable without TeamSpeak installed.
 
 ## Build
 
@@ -35,20 +35,21 @@ If you do not want to remember the CMake and test commands, use the top-level `M
 make help
 ```
 
-To prefetch the real runtime assets without launching the environment:
+To prefetch the TeamSpeak-managed assets without launching the environment:
 
 ```bash
-make deps-real
+make deps
 ```
 
-That target caches the TeamSpeak 3 client bundle, the TeamSpeak 3 Client Plugin SDK, and `xdotool`, then writes default paths into `.cache/ts3-real-e2e/deps.mk` and `.cache/ts3-real-e2e/deps.env`.
+That target caches the TeamSpeak 3 client bundle, the TeamSpeak 3 Client Plugin SDK, and `xdotool`, then writes default paths into `third_party/teamspeak/managed/deps.mk` and `third_party/teamspeak/managed/deps.env`.
 
 ### CLI and tests
 
 ```bash
+make deps
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure -E ts_plugin_server_e2e_test
 ```
 
 Equivalent Make targets:
@@ -58,33 +59,43 @@ make build
 make test
 ```
 
-### TeamSpeak 3 client plugin
+### Built-test fallback
 
-The TeamSpeak 3 Client Plugin SDK is not bundled here. Build the shared library with a local SDK checkout:
+If you want the fully local fake/offline path instead of the TeamSpeak-backed default:
 
 ```bash
-cmake -S . -B build-plugin -G Ninja \
+make build-built-test
+make test-built-test
+```
+
+### TeamSpeak-backed build
+
+The TeamSpeak 3 Client Plugin SDK is not bundled here. The default Makefile flow downloads it into `third_party/teamspeak/managed` and builds the plugin-backed tree for you:
+
+```bash
+make deps
+make build
+```
+
+If you want to drive CMake directly, configure the default build like this:
+
+```bash
+cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DTS_ENABLE_TS3_PLUGIN=ON \
-  -DTS3_PLUGIN_SDK_DIR=/path/to/ts3client-pluginsdk
+  -DTS_ENABLE_TS3_E2E=ON \
+  -DTS3_MANAGED_DIR=third_party/teamspeak/managed
 
-cmake --build build-plugin --target ts3cli_plugin
+cmake --build build
 ```
 
 If auto-discovery is not enough, pass:
 
 - `-DTS3_PLUGIN_SDK_INCLUDE_DIR=/path/to/ts3client-pluginsdk/include`
 
-Equivalent Make target:
+## TeamSpeak-backed Runtime Prerequisites
 
-```bash
-make deps-real
-make build-plugin
-```
-
-## Real Runtime Prerequisites
-
-To use the real `plugin` backend against a regular TeamSpeak server, you need:
+To use the default `plugin` backend against a regular TeamSpeak server, you need:
 
 - a TeamSpeak 3 client installation
 - the TeamSpeak 3 Client Plugin SDK to build the plugin
@@ -108,8 +119,8 @@ Initialize it with:
 
 The starter config includes:
 
-- `fake-default`
 - `plugin-local`
+- `built-test`
 
 Switch profiles with:
 
@@ -131,15 +142,16 @@ Initialize config and inspect profiles:
 ./build/ts profile list
 ```
 
-Talk to the fake backend:
+Talk to the `built-test` backend:
 
 ```bash
+./build/ts profile use built-test
 ./build/ts status
 ./build/ts channel list --json
 ./build/ts events watch --count 5
 ```
 
-Talk to the real plugin backend after the TeamSpeak client plugin is running:
+Talk to the plugin backend after the TeamSpeak client plugin is running:
 
 ```bash
 ./build/ts profile use plugin-local
@@ -169,7 +181,7 @@ Plugin       fake-plugin-host
 Version      development
 Available    yes
 SocketPath   /tmp/ts3cli-1000.sock
-Note         fake plugin host for local development and CI
+Note         built-test plugin host for local development and CI
 ```
 
 ```text
@@ -191,8 +203,8 @@ The default test suite covers:
 - event translation
 - CLI parse and dispatch
 - socket backend round-trips
-- end-to-end CLI execution against the fake backend
-- end-to-end CLI execution against a fake plugin host over the same control socket used by the real plugin path
+- end-to-end CLI execution against the `built-test` backend
+- end-to-end CLI execution against a built-test plugin host over the same control socket used by the default plugin path
 
 Run everything with:
 
@@ -202,52 +214,52 @@ ctest --test-dir build --output-on-failure
 
 The repository does not yet automate a full TeamSpeak-client-plus-regular-server runtime test in CI. That path requires a local TeamSpeak client installation and plugin loading, which is documented as a manual integration step for now.
 
-An optional live E2E harness is available for local runs. It starts:
+An optional TeamSpeak-backed E2E harness is available for local runs. It starts:
 
-- a real TeamSpeak 3 server in Docker
-- a real TeamSpeak 3 client under `Xvfb`
+- a TeamSpeak 3 server in Docker
+- a TeamSpeak 3 client under `Xvfb`
 - the `ts3cli_plugin` shared library inside that client
 
-and then drives the `ts` CLI against that live session.
+and then drives the `ts` CLI against that TeamSpeak-backed session.
 
 Example:
 
 ```bash
-cmake -S . -B build-real -G Ninja \
+cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DTS_ENABLE_TS3_PLUGIN=ON \
-  -DTS_ENABLE_REAL_TS3_E2E=ON \
-  -DTS3_PLUGIN_SDK_DIR=/path/to/ts3client-pluginsdk
+  -DTS_ENABLE_TS3_E2E=ON \
+  -DTS3_MANAGED_DIR=third_party/teamspeak/managed
 
-cmake --build build-real
+cmake --build build
 
-ctest --test-dir build-real --output-on-failure -R ts_real_plugin_server_e2e_test
+ctest --test-dir build --output-on-failure -R ts_plugin_server_e2e_test
 ```
 
 Equivalent Make target:
 
 ```bash
-make test-real
+make test-e2e
 ```
 
-`make build-real`, `make test-real`, and `make env-up` automatically verify the managed TeamSpeak runtime dependencies and bootstrap them into `.cache/ts3-real-e2e` when they are missing.
+`make build`, `make test-e2e`, and `make env-up` automatically verify the managed TeamSpeak-backed runtime dependencies and bootstrap them into `third_party/teamspeak/managed` when they are missing.
 
 If you want to pre-download the TeamSpeak client bundle, the TeamSpeak 3 Client Plugin SDK, and `xdotool` first:
 
 ```bash
-make deps-real
+make deps
 ```
 
 After that, the generated defaults are enough for:
 
 ```bash
-make build-real
-make test-real
+make build
+make test-e2e
 ```
 
 The live harness is intentionally opt-in. It still depends on a working Docker daemon plus `Xvfb`, but it now bootstraps the rest itself:
 
-- downloads the default TeamSpeak 3 Linux client bundle into `.cache/ts3-real-e2e/`
+- downloads the default TeamSpeak 3 Linux client bundle into `third_party/teamspeak/managed/`
 - verifies the archive SHA256 before extracting it
 - reuses a system `xdotool` if available, or downloads `xdotool` plus `libxdo3` into the same cache on Debian/Ubuntu-style hosts
 
@@ -255,17 +267,17 @@ As of April 18, 2026, the default client bootstrap target is TeamSpeak 3 Linux `
 
 Useful overrides:
 
-- `TS3_REAL_E2E_CACHE_DIR` to move the download cache
-- `TS3_REAL_E2E_CLIENT_DIR` to reuse an already extracted TeamSpeak client tree
-- `TS3_REAL_E2E_CLIENT_VERSION`, `TS3_REAL_E2E_CLIENT_URL`, `TS3_REAL_E2E_CLIENT_SHA256` to pin a different TeamSpeak client artifact
-- `TS3_REAL_E2E_XDOTOOL` and `TS3_REAL_E2E_XDOTOOL_LIBRARY_PATH` to force a specific xdotool binary/runtime
+- `TS3_MANAGED_DIR` to move the download cache
+- `TS3_CLIENT_DIR` to reuse an already extracted TeamSpeak client tree
+- `TS3_CLIENT_VERSION`, `TS3_CLIENT_URL`, `TS3_CLIENT_SHA256` to pin a different TeamSpeak client artifact
+- `TS3_XDOTOOL` and `TS3_XDOTOOL_LIBRARY_PATH` to force a specific xdotool binary/runtime
 
 The script still runs the client from a disposable copy of the extracted bundle so the cached or user-supplied client tree is not mutated.
 
-For manual verification, bring the real runtime up and leave it running:
+For manual verification, bring the TeamSpeak-backed runtime up and leave it running:
 
 ```bash
-./tests/e2e/run_real_plugin_server_env.sh ./build-real/ts ./build-real/ts3cli_plugin.so
+./tests/e2e/run_plugin_server_env.sh ./build/ts ./build/ts3cli_plugin.so
 ```
 
 Equivalent Make targets:
@@ -282,14 +294,14 @@ make env-down
 That script prints an `env.sh` path you can source before running `ts` manually. Tear it down with:
 
 ```bash
-./tests/e2e/stop_real_plugin_server_env.sh /path/to/env.state
+./tests/e2e/stop_plugin_server_env.sh /path/to/env.state
 ```
 
 ## Limitations
 
-- The fake backend is the only backend exercised in CI.
-- The real plugin shared library is build-gated behind a local TeamSpeak 3 Client Plugin SDK checkout.
-- The live TeamSpeak E2E test is local-only and still depends on a host `Xvfb` plus a working Docker daemon.
+- The `built-test` backend is the only backend exercised in CI.
+- The default plugin shared library still depends on the TeamSpeak 3 Client Plugin SDK.
+- The TeamSpeak-backed E2E test is local-only and still depends on a host `Xvfb` plus a working Docker daemon.
 - Audio and voice controls are not exposed yet.
 
 ## Developer Notes

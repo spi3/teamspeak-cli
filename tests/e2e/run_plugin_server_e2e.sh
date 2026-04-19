@@ -2,15 +2,15 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=tests/e2e/real_plugin_runtime_common.sh
-source "${script_dir}/real_plugin_runtime_common.sh"
+# shellcheck source=tests/e2e/runtime_common.sh
+source "${script_dir}/runtime_common.sh"
 
-ts_bin="${1:?usage: run_real_plugin_server_e2e.sh <ts-binary> <plugin-shared-library>}"
-plugin_so="${2:?usage: run_real_plugin_server_e2e.sh <ts-binary> <plugin-shared-library>}"
+ts_bin="${1:?usage: run_plugin_server_e2e.sh <ts-binary> <plugin-shared-library>}"
+plugin_so="${2:?usage: run_plugin_server_e2e.sh <ts-binary> <plugin-shared-library>}"
 
-docker_image="${TS3_REAL_E2E_DOCKER_IMAGE:-teamspeak:latest}"
-server_port="${TS3_REAL_E2E_SERVER_PORT:-$((19000 + ($$ % 1000)))}"
-query_port="${TS3_REAL_E2E_QUERY_PORT:-$((21000 + ($$ % 1000)))}"
+docker_image="${TS3_DOCKER_IMAGE:-teamspeak:latest}"
+server_port="${TS3_SERVER_PORT:-$((19000 + ($$ % 1000)))}"
+query_port="${TS3_QUERY_PORT:-$((21000 + ($$ % 1000)))}"
 
 if [[ ! -x "${ts_bin}" ]]; then
   echo "ts binary not found or not executable: ${ts_bin}" >&2
@@ -22,10 +22,10 @@ if [[ ! -f "${plugin_so}" ]]; then
   exit 1
 fi
 
-ts3_real_e2e_require_command Xvfb "Xvfb is required for the real TeamSpeak E2E test"
-ts3_real_e2e_require_command docker "docker is required for the real TeamSpeak E2E test"
-client_source_dir="$(ts3_real_e2e_resolve_client_source_dir)"
-ts3_real_e2e_resolve_xdotool
+ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed E2E test"
+ts3_runtime_require_command docker "docker is required for the TeamSpeak-backed E2E test"
+client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
+ts3_runtime_resolve_xdotool
 
 tmp_dir="$(mktemp -d)"
 client_runtime_dir="${tmp_dir}/client"
@@ -72,7 +72,7 @@ dump_client_logs() {
 }
 
 dump_diagnostics() {
-  echo "--- real E2E diagnostics ---" >&2
+  echo "--- TeamSpeak-backed E2E diagnostics ---" >&2
   echo "temp dir: ${tmp_dir}" >&2
   echo "display: ${display:-unset}" >&2
   echo "socket: ${socket_path}" >&2
@@ -115,7 +115,7 @@ cleanup() {
   if [[ ${status} -eq 0 ]]; then
     rm -rf "${tmp_dir}"
   else
-    echo "real TeamSpeak E2E artifacts preserved at ${tmp_dir}" >&2
+    echo "TeamSpeak-backed E2E artifacts preserved at ${tmp_dir}" >&2
   fi
   exit "${status}"
 }
@@ -241,7 +241,7 @@ wait_for_connected_status() {
       sleep 1
       continue
     fi
-    if ts3_real_e2e_json_expect_fragment "${last_status}" '"phase":"connected"' "connection phase not connected" 2>/dev/null; then
+    if ts3_runtime_json_expect_fragment "${last_status}" '"phase":"connected"' "connection phase not connected" 2>/dev/null; then
       printf '%s\n' "${last_status}"
       return 0
     fi
@@ -258,7 +258,7 @@ wait_for_disconnected_status() {
       sleep 1
       continue
     fi
-    if ts3_real_e2e_json_expect_fragment "${last_status}" '"phase":"disconnected"' "connection phase not disconnected" 2>/dev/null; then
+    if ts3_runtime_json_expect_fragment "${last_status}" '"phase":"disconnected"' "connection phase not disconnected" 2>/dev/null; then
       printf '%s\n' "${last_status}"
       return 0
     fi
@@ -302,8 +302,8 @@ TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" config init --config "${conf
 TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" profile use plugin-local --config "${config_path}" >/dev/null
 
 plugin_info_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" plugin info)"
-ts3_real_e2e_json_expect_fragment "${plugin_info_json}" '"plugin_available":true' "plugin backend was not available"
-ts3_real_e2e_json_expect_fragment "${plugin_info_json}" '"backend":"plugin"' "plugin backend did not report plugin mode"
+ts3_runtime_json_expect_fragment "${plugin_info_json}" '"plugin_available":true' "plugin backend was not available"
+ts3_runtime_json_expect_fragment "${plugin_info_json}" '"backend":"plugin"' "plugin backend did not report plugin mode"
 
 connect_ok=0
 status_json=""
@@ -337,45 +337,45 @@ if [[ "${connect_ok}" -ne 1 ]]; then
   cat "${tmp_dir}/connect.err" >&2 || true
   exit 1
 fi
-ts3_real_e2e_json_expect_fragment "${status_json}" '"phase":"connected"' "status never became connected"
-ts3_real_e2e_json_expect_fragment "${status_json}" '"backend":"plugin"' "status backend mismatch"
-ts3_real_e2e_json_expect_fragment "${status_json}" '"nickname":"cli-e2e"' "status nickname mismatch"
-ts3_real_e2e_json_expect_fragment "${status_json}" '"server":"127.0.0.1"' "status host mismatch"
-ts3_real_e2e_json_expect_fragment "${status_json}" "\"port\":${server_port}" "status port mismatch"
+ts3_runtime_json_expect_fragment "${status_json}" '"phase":"connected"' "status never became connected"
+ts3_runtime_json_expect_fragment "${status_json}" '"backend":"plugin"' "status backend mismatch"
+ts3_runtime_json_expect_fragment "${status_json}" '"nickname":"cli-e2e"' "status nickname mismatch"
+ts3_runtime_json_expect_fragment "${status_json}" '"server":"127.0.0.1"' "status host mismatch"
+ts3_runtime_json_expect_fragment "${status_json}" "\"port\":${server_port}" "status port mismatch"
 
 server_info_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" server info)"
-ts3_real_e2e_json_expect_fragment "${server_info_json}" '"backend":"plugin"' "server info backend mismatch"
-ts3_real_e2e_json_expect_fragment "${server_info_json}" '"host":"127.0.0.1"' "server info host mismatch"
-ts3_real_e2e_json_expect_fragment "${server_info_json}" "\"port\":${server_port}" "server info port mismatch"
-ts3_real_e2e_json_expect_number_ge "${server_info_json}" "channel_count" 1 "server info channel count mismatch"
-ts3_real_e2e_json_expect_number_ge "${server_info_json}" "client_count" 1 "server info client count mismatch"
-ts3_real_e2e_json_expect_not_fragment "${server_info_json}" '"current_channel":null' "server info did not report a current channel"
+ts3_runtime_json_expect_fragment "${server_info_json}" '"backend":"plugin"' "server info backend mismatch"
+ts3_runtime_json_expect_fragment "${server_info_json}" '"host":"127.0.0.1"' "server info host mismatch"
+ts3_runtime_json_expect_fragment "${server_info_json}" "\"port\":${server_port}" "server info port mismatch"
+ts3_runtime_json_expect_number_ge "${server_info_json}" "channel_count" 1 "server info channel count mismatch"
+ts3_runtime_json_expect_number_ge "${server_info_json}" "client_count" 1 "server info client count mismatch"
+ts3_runtime_json_expect_not_fragment "${server_info_json}" '"current_channel":null' "server info did not report a current channel"
 
 channels_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" channel list)"
-ts3_real_e2e_json_expect_nonempty_array "${channels_json}" "expected at least one channel"
-default_channel_id="$(ts3_real_e2e_json_extract_first_array_object_id_matching "${channels_json}" '"is_default":true' || true)"
+ts3_runtime_json_expect_nonempty_array "${channels_json}" "expected at least one channel"
+default_channel_id="$(ts3_runtime_json_extract_first_array_object_id_matching "${channels_json}" '"is_default":true' || true)"
 if [[ -z "${default_channel_id}" ]]; then
   echo "expected a default channel" >&2
   exit 1
 fi
 
 channel_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" channel get "${default_channel_id}")"
-ts3_real_e2e_json_expect_fragment "${channel_json}" "\"id\":\"${default_channel_id}\"" "channel get returned unexpected id"
+ts3_runtime_json_expect_fragment "${channel_json}" "\"id\":\"${default_channel_id}\"" "channel get returned unexpected id"
 
 join_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" channel join "${default_channel_id}")"
-ts3_real_e2e_json_expect_fragment "${join_json}" "\"current_channel\":\"${default_channel_id}\"" "channel join did not leave the client in the requested channel"
+ts3_runtime_json_expect_fragment "${join_json}" "\"current_channel\":\"${default_channel_id}\"" "channel join did not leave the client in the requested channel"
 
 clients_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" client list)"
-ts3_real_e2e_json_expect_nonempty_array "${clients_json}" "expected at least one client"
-self_client_id="$(ts3_real_e2e_json_extract_first_array_object_id_matching "${clients_json}" '"nickname":"cli-e2e"' '"self":true' || true)"
+ts3_runtime_json_expect_nonempty_array "${clients_json}" "expected at least one client"
+self_client_id="$(ts3_runtime_json_extract_first_array_object_id_matching "${clients_json}" '"nickname":"cli-e2e"' '"self":true' || true)"
 if [[ -z "${self_client_id}" ]]; then
   echo "self client was not visible in client list" >&2
   exit 1
 fi
 
 self_client_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" client get "cli-e2e")"
-ts3_real_e2e_json_expect_fragment "${self_client_json}" "\"id\":\"${self_client_id}\"" "client get returned the wrong client"
-ts3_real_e2e_json_expect_fragment "${self_client_json}" '"self":true' "client get did not report self=true"
+ts3_runtime_json_expect_fragment "${self_client_json}" "\"id\":\"${self_client_id}\"" "client get returned the wrong client"
+ts3_runtime_json_expect_fragment "${self_client_json}" '"self":true' "client get did not report self=true"
 
 TS_CONTROL_SOCKET_PATH="${socket_path}" \
   "${ts_bin}" \
@@ -384,9 +384,9 @@ TS_CONTROL_SOCKET_PATH="${socket_path}" \
   message send --target channel --id "${default_channel_id}" --text "cli-e2e ping" >/dev/null
 
 events_json="$(TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" events watch --count 8 --timeout-ms 1500)"
-ts3_real_e2e_json_expect_nonempty_array "${events_json}" "expected at least one event from the live session"
-ts3_real_e2e_json_expect_fragment "${events_json}" '"type":"connection.' "expected connection events from the live session"
+ts3_runtime_json_expect_nonempty_array "${events_json}" "expected at least one event from the live session"
+ts3_runtime_json_expect_fragment "${events_json}" '"type":"connection.' "expected connection events from the live session"
 
 TS_CONTROL_SOCKET_PATH="${socket_path}" "${ts_bin}" --json --config "${config_path}" disconnect >/dev/null
 disconnected_json="$(wait_for_disconnected_status)"
-ts3_real_e2e_json_expect_fragment "${disconnected_json}" '"phase":"disconnected"' "status never became disconnected"
+ts3_runtime_json_expect_fragment "${disconnected_json}" '"phase":"disconnected"' "status never became disconnected"

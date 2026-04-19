@@ -34,7 +34,7 @@ FakeBackend::FakeBackend() {
     };
 
     clients_ = {
-        domain::Client{.id = {1}, .nickname = "terminal", .unique_identity = "fake-default-identity", .channel_id = domain::ChannelId{1}, .self = true},
+        domain::Client{.id = {1}, .nickname = "terminal", .unique_identity = "built-test-identity", .channel_id = domain::ChannelId{1}, .self = true},
         domain::Client{.id = {2}, .nickname = "alice", .unique_identity = "sdk-alice", .channel_id = domain::ChannelId{2}},
         domain::Client{.id = {3}, .nickname = "bob", .unique_identity = "sdk-bob", .channel_id = domain::ChannelId{2}, .talking = true},
         domain::Client{.id = {4}, .nickname = "ops-bot", .unique_identity = "sdk-ops-bot", .channel_id = domain::ChannelId{3}},
@@ -47,8 +47,8 @@ FakeBackend::FakeBackend() {
         .server = "127.0.0.1",
         .port = 9987,
         .nickname = "terminal",
-        .identity = "fake-default-identity",
-        .profile = "fake-default",
+        .identity = "built-test-identity",
+        .profile = "built-test",
         .mode = "one-shot",
     };
 
@@ -144,7 +144,7 @@ auto FakeBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
         .plugin_version = "development",
         .plugin_available = true,
         .socket_path = bridge::resolve_socket_path(options_.socket_path),
-        .note = "fake plugin host for local development and CI",
+        .note = "built-test plugin host for local development and CI",
     });
 }
 
@@ -310,7 +310,7 @@ void FakeBackend::start_event_loop() {
             } else {
                 events_.push(now_event(
                     "heartbeat",
-                    "fake backend event heartbeat",
+                    "built-test backend event heartbeat",
                     {{"backend", "fake"}}
                 ));
             }

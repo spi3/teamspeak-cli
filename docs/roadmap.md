@@ -3,7 +3,7 @@
 ## Near Term
 
 - finish build verification of the optional `ts3cli_plugin` target against the TeamSpeak 3 Client Plugin SDK
-- validate real plugin runtime behavior inside a local TeamSpeak client install
+- validate plugin runtime behavior inside a local TeamSpeak client install
 - improve selector behavior for channel and client lookup
 - tighten plugin-side error reporting for asynchronous TeamSpeak operations
 

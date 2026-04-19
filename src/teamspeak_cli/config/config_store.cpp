@@ -235,16 +235,16 @@ auto ConfigStore::find_profile(const domain::AppConfig& config, const std::strin
 auto ConfigStore::default_config() const -> domain::AppConfig {
     return domain::AppConfig{
         .version = 1,
-        .active_profile = "fake-default",
+        .active_profile = "plugin-local",
         .profiles =
             {
                 domain::Profile{
-                    .name = "fake-default",
+                    .name = "built-test",
                     .backend = "fake",
                     .host = "127.0.0.1",
                     .port = 9987,
                     .nickname = "terminal",
-                    .identity = "fake-default-identity",
+                    .identity = "built-test-identity",
                     .server_password = "",
                     .channel_password = "",
                     .default_channel = "Lobby",
