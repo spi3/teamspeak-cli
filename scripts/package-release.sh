@@ -3,6 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
+# shellcheck source=tests/e2e/runtime_common.sh
+source "${repo_root}/tests/e2e/runtime_common.sh"
 
 have_command() {
   command -v "$1" >/dev/null 2>&1
@@ -80,6 +82,7 @@ staging_parent="${dist_dir}/.staging"
 build_type="${CMAKE_BUILD_TYPE:-Release}"
 package_version="${1:-${PACKAGE_VERSION:-${GITHUB_REF_NAME:-}}}"
 platform="${PLATFORM:-linux-x86_64}"
+plugin_sdk_dir="$(ts3_runtime_resolve_plugin_sdk_dir)"
 
 [[ -n "${cmake_bin}" ]] || die "cmake is required"
 
@@ -112,8 +115,9 @@ cmake_args=(
   -DCMAKE_BUILD_TYPE="${build_type}"
   -DBUILD_TESTING=OFF
   -DTS_ENABLE_SANITIZERS=OFF
-  -DTS_ENABLE_TS3_PLUGIN=OFF
+  -DTS_ENABLE_TS3_PLUGIN=ON
   -DTS_ENABLE_TS3_E2E=OFF
+  -DTS3_PLUGIN_SDK_DIR="${plugin_sdk_dir}"
 )
 
 if [[ "${generator}" == "Ninja" ]]; then
@@ -124,14 +128,17 @@ fi
 log "configuring ${build_type} build in ${build_dir}"
 "${cmake_bin}" "${cmake_args[@]}"
 
-log "building ts"
-"${cmake_bin}" --build "${build_dir}" --parallel --target ts
+log "building ts and ts3cli_plugin"
+"${cmake_bin}" --build "${build_dir}" --parallel --target ts ts3cli_plugin
 
 log "installing release tree into ${staging_dir}"
 "${cmake_bin}" --install "${build_dir}" --prefix "${staging_dir}"
 
 if have_command strip; then
   strip "${staging_dir}/bin/ts" || true
+  if [[ -f "${staging_dir}/plugins/ts3cli_plugin.so" ]]; then
+    strip "${staging_dir}/plugins/ts3cli_plugin.so" || true
+  fi
 fi
 
 log "creating ${archive_path}"

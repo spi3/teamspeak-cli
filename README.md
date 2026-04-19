@@ -41,7 +41,7 @@ make test-mock
 ./build-mock/ts channel list
 ```
 
-The `mock-local` profile uses the in-process mock backend. It is the fastest path for normal development and the path exercised in CI.
+The `mock-local` profile uses the in-process mock backend. It is the fastest path for normal development and still the most deterministic CI surface.
 
 ### TeamSpeak-backed Development
 

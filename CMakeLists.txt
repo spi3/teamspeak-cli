@@ -267,6 +267,7 @@ if(TS_ENABLE_TS3_PLUGIN)
   ts_apply_defaults(ts3cli_plugin NO_SANITIZERS)
   target_include_directories(ts3cli_plugin PRIVATE "${TS3_PLUGIN_SDK_INCLUDE_DIR}")
   set_target_properties(ts3cli_plugin PROPERTIES PREFIX "")
+  install(TARGETS ts3cli_plugin LIBRARY DESTINATION "plugins")
 endif()
 
 if(BUILD_TESTING AND TS_ENABLE_TS3_E2E)

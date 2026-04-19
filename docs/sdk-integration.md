@@ -147,8 +147,8 @@ The environment helper prints:
 
 ## Current Limitations
 
-- the TeamSpeak-backed build is optional and not exercised in CI
-- the TeamSpeak-backed harness is local-only and still host-sensitive
+- the TeamSpeak-backed build now runs in CI, but the Docker and `Xvfb` harness is still local-only
+- the TeamSpeak-backed harness is still host-sensitive
 - the first socket transport is Unix-domain-socket focused
 - voice and audio controls are intentionally out of scope for the first version
 
