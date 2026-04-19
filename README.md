@@ -90,6 +90,47 @@ make build
 make test
 ```
 
+## GitHub Releases
+
+Keep normal CI and binary publishing separate:
+
+- `.github/workflows/ci.yml` runs on branch pushes and pull requests to verify the project still configures, builds, and passes tests.
+- `.github/workflows/release.yml` runs only when you push a version tag matching `v*`, rebuilds the project in `Release` mode, packages `ts`, and publishes the archive to a GitHub Release.
+
+The release archive is intentionally scoped to the CLI binary and installed docs/examples. It does not bundle the proprietary TeamSpeak client or plugin SDK.
+
+To dry-run the release packaging locally:
+
+```bash
+make package-release PACKAGE_VERSION=v0.2.0
+```
+
+That produces:
+
+- `dist/ts-v0.2.0-linux-x86_64.tar.gz`
+- `dist/ts-v0.2.0-linux-x86_64.tar.gz.sha256`
+
+To publish from GitHub Actions, create and push a version tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow will:
+
+- run the test suite first
+- build a clean `Release` binary with sanitizers and tests disabled
+- stage the `cmake --install` output into a versioned tarball
+- create or update the matching GitHub Release and upload the archive plus checksum
+
+Users can then download and unpack the asset with:
+
+```bash
+curl -LO https://github.com/<owner>/teamspeak-cli/releases/download/v0.2.0/ts-v0.2.0-linux-x86_64.tar.gz
+tar -xzf ts-v0.2.0-linux-x86_64.tar.gz
+```
+
 ### Built-test fallback
 
 If you want the fully local fake/offline path instead of the TeamSpeak-backed default:

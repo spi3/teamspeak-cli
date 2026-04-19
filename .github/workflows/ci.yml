@@ -2,11 +2,15 @@ name: ci
 
 on:
   push:
+    tags-ignore:
+      - '*'
   pull_request:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -14,7 +18,7 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --parallel
 
       - name: Test
         run: ctest --test-dir build --output-on-failure

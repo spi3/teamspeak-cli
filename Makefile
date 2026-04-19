@@ -86,7 +86,7 @@ define require_env_state
 	fi
 endef
 
-.PHONY: help configure build test test-e2e test-all ts clean deps \
+.PHONY: help configure build test test-e2e test-all ts clean deps package-release \
 	configure-built-test build-built-test test-built-test ts-built-test \
 	env-up env-info env-ts env-down
 
@@ -122,6 +122,9 @@ test-e2e: build ## Run the TeamSpeak-backed Docker/Xvfb end-to-end test
 
 test-all: build ## Run the full default build tree test suite, including the TeamSpeak-backed E2E case
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure
+
+package-release: ## Build a release tarball under ./dist (set PACKAGE_VERSION=vX.Y.Z to control the asset name)
+	PACKAGE_VERSION="$(PACKAGE_VERSION)" ./scripts/package-release.sh
 
 ts: build ## Run the CLI from ./build with ARGS='...'
 	"$(TS_BIN)" $(ARGS)

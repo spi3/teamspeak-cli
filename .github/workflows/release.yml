@@ -1,0 +1,62 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  verify:
+    permissions:
+      contents: read
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  publish-linux-x86_64:
+    needs: verify
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package release archive
+        env:
+          PACKAGE_VERSION: ${{ github.ref_name }}
+        run: ./scripts/package-release.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-${{ github.ref_name }}-linux-x86_64
+          path: |
+            dist/ts-${{ github.ref_name }}-linux-x86_64.tar.gz
+            dist/ts-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
+
+      - name: Publish GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          archive="dist/ts-${TAG_NAME}-linux-x86_64.tar.gz"
+          checksum="${archive}.sha256"
+
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" "${archive}" "${checksum}" --clobber
+          else
+            gh release create "${TAG_NAME}" "${archive}" "${checksum}" \
+              --title "${TAG_NAME}" \
+              --generate-notes
+          fi
