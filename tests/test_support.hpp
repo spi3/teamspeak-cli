@@ -33,6 +33,18 @@ inline void expect_contains(
     }
 }
 
+template <typename Rep, typename Period>
+void expect_less_equal(
+    const std::chrono::duration<Rep, Period>& actual,
+    const std::chrono::duration<Rep, Period>& expected,
+    const std::string& message
+) {
+    if (!(actual <= expected)) {
+        std::cerr << "test failure: " << message << '\n';
+        std::exit(1);
+    }
+}
+
 inline auto make_temp_path(std::string_view prefix) -> std::filesystem::path {
     const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
     return std::filesystem::temp_directory_path() /

@@ -13,6 +13,7 @@ struct InitOptions {
     bool verbose = false;
     bool debug = false;
     std::string socket_path;
+    std::chrono::milliseconds command_timeout = std::chrono::seconds(5);
 };
 
 struct ConnectRequest {

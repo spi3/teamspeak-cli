@@ -232,6 +232,11 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
         add_error_hint(error, "Run `ts plugin info` to verify the ts3cli plugin bridge is available.");
     }
 
+    if (error.code == "socket_timeout") {
+        add_error_hint(error, "Run `ts plugin info` to check whether the ts3cli plugin bridge is responsive.");
+        add_error_hint(error, "Restart the TeamSpeak client if the plugin bridge appears stuck.");
+    }
+
     if (error.code == "channel_not_found") {
         add_error_hint(error, "Run `ts channel list` to see available channel IDs and names.");
     }
@@ -581,6 +586,45 @@ auto signal_client_target(pid_t pid, int signal_number) -> bool {
         }
     }
     return ::kill(pid, signal_number) == 0;
+}
+
+auto reap_process_with_timeout(pid_t pid, std::chrono::milliseconds timeout) -> bool {
+    if (pid <= 0) {
+        return true;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        int status = 0;
+        const pid_t wait_result = ::waitpid(pid, &status, WNOHANG);
+        if (wait_result == pid) {
+            return true;
+        }
+        if (wait_result < 0 && errno == ECHILD) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    int status = 0;
+    const pid_t final_wait_result = ::waitpid(pid, &status, WNOHANG);
+    return final_wait_result == pid || (final_wait_result < 0 && errno == ECHILD);
+}
+
+void terminate_and_reap_process(pid_t pid) {
+    if (pid <= 0) {
+        return;
+    }
+
+    if (::kill(pid, SIGTERM) == 0 || errno == ESRCH) {
+        if (reap_process_with_timeout(pid, std::chrono::seconds(1))) {
+            return;
+        }
+    }
+
+    if (::kill(pid, SIGKILL) == 0 || errno == ESRCH) {
+        (void)reap_process_with_timeout(pid, std::chrono::seconds(1));
+    }
 }
 
 auto basename_string(const std::string& raw) -> std::string {
@@ -976,9 +1020,7 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
             const auto socket_path = x11_socket_path_for_display(headless.display);
             if (!socket_path.has_value()) {
                 const int child_errno = EINVAL;
-                (void)::kill(xvfb_pid, SIGTERM);
-                int ignored_status = 0;
-                (void)::waitpid(xvfb_pid, &ignored_status, 0);
+                terminate_and_reap_process(xvfb_pid);
                 (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
                 _exit(127);
             }
@@ -1002,9 +1044,7 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
 
             if (!display_ready) {
                 const int child_errno = ETIMEDOUT;
-                (void)::kill(xvfb_pid, SIGTERM);
-                int ignored_status = 0;
-                (void)::waitpid(xvfb_pid, &ignored_status, 0);
+                terminate_and_reap_process(xvfb_pid);
                 (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
                 _exit(127);
             }
@@ -1012,9 +1052,7 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
             if (::setenv("DISPLAY", headless.display.c_str(), 1) != 0 ||
                 ::setenv("XDG_SESSION_TYPE", "x11", 1) != 0) {
                 const int child_errno = errno;
-                (void)::kill(xvfb_pid, SIGTERM);
-                int ignored_status = 0;
-                (void)::waitpid(xvfb_pid, &ignored_status, 0);
+                terminate_and_reap_process(xvfb_pid);
                 (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
                 _exit(127);
             }

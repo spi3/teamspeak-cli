@@ -1,9 +1,14 @@
 #include "teamspeak_cli/sdk/socket_backend.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
+#include <limits>
 
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -29,6 +34,188 @@ auto socket_connect_error(std::string_view operation, std::string_view socket_pa
     error.details.emplace("socket_path", socket_path);
     error.details.emplace("os_error", std::string(std::strerror(error_number)));
     return error;
+}
+
+auto socket_timeout_error(
+    std::string_view operation,
+    std::string_view socket_path,
+    std::string_view stage,
+    std::chrono::milliseconds timeout
+) -> domain::Error {
+    std::string message = "Timed out while ";
+    if (stage == "connect") {
+        message += "contacting the TeamSpeak client plugin";
+    } else if (stage == "write") {
+        message += "sending a request to the TeamSpeak client plugin";
+    } else {
+        message += "waiting for the TeamSpeak client plugin to respond";
+    }
+    message += " for " + std::string(operation) + ".";
+
+    auto error = bridge_error("socket_timeout", std::move(message));
+    error.details.emplace("operation", operation);
+    error.details.emplace("socket_path", socket_path);
+    error.details.emplace("stage", stage);
+    error.details.emplace("timeout_ms", std::to_string(timeout.count()));
+    return error;
+}
+
+auto socket_io_error(
+    std::string_view operation,
+    std::string_view socket_path,
+    std::string_view stage,
+    int error_number,
+    std::chrono::milliseconds timeout
+) -> domain::Error {
+    if (error_number == EAGAIN || error_number == EWOULDBLOCK) {
+        return socket_timeout_error(operation, socket_path, stage, timeout);
+    }
+
+    std::string code = "socket_";
+    code += stage;
+    code += "_failed";
+
+    std::string message = "failed to ";
+    if (stage == "write") {
+        message += "write request to";
+    } else {
+        message += "read reply from";
+    }
+    message += " plugin control socket";
+    if (error_number != 0) {
+        message += ": ";
+        message += std::strerror(error_number);
+    }
+
+    auto error = bridge_error(std::move(code), std::move(message));
+    error.details.emplace("operation", operation);
+    error.details.emplace("socket_path", socket_path);
+    error.details.emplace("stage", stage);
+    if (error_number != 0) {
+        error.details.emplace("os_error", std::string(std::strerror(error_number)));
+    }
+    return error;
+}
+
+auto normalized_timeout(std::chrono::milliseconds timeout) -> std::chrono::milliseconds {
+    if (timeout <= std::chrono::milliseconds::zero()) {
+        return std::chrono::milliseconds(1);
+    }
+    return timeout;
+}
+
+auto duration_to_poll_timeout(std::chrono::milliseconds timeout) -> int {
+    const auto safe_timeout = normalized_timeout(timeout);
+    constexpr auto max_poll_timeout = std::chrono::milliseconds(std::numeric_limits<int>::max());
+    if (safe_timeout >= max_poll_timeout) {
+        return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(safe_timeout.count());
+}
+
+auto duration_to_timeval(std::chrono::milliseconds timeout) -> timeval {
+    const auto safe_timeout = normalized_timeout(timeout);
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(safe_timeout);
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(safe_timeout - seconds);
+    return timeval{
+        .tv_sec = static_cast<decltype(timeval::tv_sec)>(seconds.count()),
+        .tv_usec = static_cast<decltype(timeval::tv_usec)>(micros.count()),
+    };
+}
+
+auto set_socket_timeout(int fd, int option_name, std::chrono::milliseconds timeout) -> domain::Result<void> {
+    const auto value = duration_to_timeval(timeout);
+    if (::setsockopt(fd, SOL_SOCKET, option_name, &value, sizeof(value)) != 0) {
+        return domain::fail(bridge_error(
+            "socket_option_failed",
+            "failed to configure plugin control socket timeout: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+    return domain::ok();
+}
+
+auto connect_with_timeout(
+    int fd,
+    const sockaddr_un& address,
+    socklen_t address_size,
+    std::string_view operation,
+    std::string_view socket_path,
+    std::chrono::milliseconds timeout
+) -> domain::Result<void> {
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return domain::fail(bridge_error(
+            "socket_flags_failed",
+            "failed to read plugin control socket flags: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        return domain::fail(bridge_error(
+            "socket_flags_failed",
+            "failed to configure plugin control socket: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    const int connected = ::connect(fd, reinterpret_cast<const sockaddr*>(&address), address_size);
+    if (connected == 0) {
+        if (::fcntl(fd, F_SETFL, flags) != 0) {
+            return domain::fail(bridge_error(
+                "socket_flags_failed",
+                "failed to restore plugin control socket flags: " + std::string(std::strerror(errno)),
+                domain::ExitCode::internal
+            ));
+        }
+        return domain::ok();
+    }
+
+    const int connect_errno = errno;
+    if (connect_errno != EINPROGRESS && connect_errno != EAGAIN) {
+        return domain::fail(socket_connect_error(operation, socket_path, connect_errno));
+    }
+
+    pollfd poll_state{
+        .fd = fd,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+
+    while (true) {
+        const int ready = ::poll(&poll_state, 1, duration_to_poll_timeout(timeout));
+        if (ready > 0) {
+            int socket_error = 0;
+            socklen_t socket_error_size = sizeof(socket_error);
+            if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_size) != 0) {
+                return domain::fail(bridge_error(
+                    "socket_option_failed",
+                    "failed to query plugin control socket state: " + std::string(std::strerror(errno)),
+                    domain::ExitCode::internal
+                ));
+            }
+            if (socket_error != 0) {
+                return domain::fail(socket_connect_error(operation, socket_path, socket_error));
+            }
+            break;
+        }
+        if (ready == 0) {
+            return domain::fail(socket_timeout_error(operation, socket_path, "connect", timeout));
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        return domain::fail(socket_connect_error(operation, socket_path, errno));
+    }
+
+    if (::fcntl(fd, F_SETFL, flags) != 0) {
+        return domain::fail(bridge_error(
+            "socket_flags_failed",
+            "failed to restore plugin control socket flags: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+    return domain::ok();
 }
 
 class FileDescriptor {
@@ -94,7 +281,8 @@ auto SocketBackend::connect(const ConnectRequest& request) -> domain::Result<voi
         bridge::protocol::hex_encode(request.channel_password),
         bridge::protocol::hex_encode(request.default_channel),
         bridge::protocol::hex_encode(request.profile_name),
-    });
+    },
+                             command_timeout());
     if (!response) {
         return domain::fail(response.error());
     }
@@ -110,7 +298,8 @@ auto SocketBackend::disconnect(std::string_view reason) -> domain::Result<void> 
         std::string(bridge::protocol::kMagic),
         "disconnect",
         bridge::protocol::hex_encode(reason),
-    });
+    },
+                             command_timeout());
     if (!response) {
         return domain::fail(response.error());
     }
@@ -122,7 +311,11 @@ auto SocketBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
     if (!ready) {
         return domain::fail<domain::PluginInfo>(ready.error());
     }
-    auto response = exchange("check TeamSpeak plugin status", {std::string(bridge::protocol::kMagic), "plugin_info"});
+    auto response = exchange(
+        "check TeamSpeak plugin status",
+        {std::string(bridge::protocol::kMagic), "plugin_info"},
+        command_timeout()
+    );
     if (!response) {
         if (response.error().code == "socket_connect_failed") {
             return domain::ok(domain::PluginInfo{
@@ -145,7 +338,11 @@ auto SocketBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
 }
 
 auto SocketBackend::connection_state() const -> domain::Result<domain::ConnectionState> {
-    auto response = exchange("read TeamSpeak status", {std::string(bridge::protocol::kMagic), "connection_state"});
+    auto response = exchange(
+        "read TeamSpeak status",
+        {std::string(bridge::protocol::kMagic), "connection_state"},
+        command_timeout()
+    );
     if (!response) {
         return domain::fail<domain::ConnectionState>(response.error());
     }
@@ -157,7 +354,11 @@ auto SocketBackend::connection_state() const -> domain::Result<domain::Connectio
 }
 
 auto SocketBackend::server_info() const -> domain::Result<domain::ServerInfo> {
-    auto response = exchange("read TeamSpeak server info", {std::string(bridge::protocol::kMagic), "server_info"});
+    auto response = exchange(
+        "read TeamSpeak server info",
+        {std::string(bridge::protocol::kMagic), "server_info"},
+        command_timeout()
+    );
     if (!response) {
         return domain::fail<domain::ServerInfo>(response.error());
     }
@@ -169,7 +370,11 @@ auto SocketBackend::server_info() const -> domain::Result<domain::ServerInfo> {
 }
 
 auto SocketBackend::list_channels() const -> domain::Result<std::vector<domain::Channel>> {
-    auto response = exchange("list TeamSpeak channels", {std::string(bridge::protocol::kMagic), "list_channels"});
+    auto response = exchange(
+        "list TeamSpeak channels",
+        {std::string(bridge::protocol::kMagic), "list_channels"},
+        command_timeout()
+    );
     if (!response) {
         return domain::fail<std::vector<domain::Channel>>(response.error());
     }
@@ -181,7 +386,11 @@ auto SocketBackend::list_channels() const -> domain::Result<std::vector<domain::
 }
 
 auto SocketBackend::list_clients() const -> domain::Result<std::vector<domain::Client>> {
-    auto response = exchange("list TeamSpeak clients", {std::string(bridge::protocol::kMagic), "list_clients"});
+    auto response = exchange(
+        "list TeamSpeak clients",
+        {std::string(bridge::protocol::kMagic), "list_clients"},
+        command_timeout()
+    );
     if (!response) {
         return domain::fail<std::vector<domain::Client>>(response.error());
     }
@@ -197,7 +406,8 @@ auto SocketBackend::get_channel(const domain::Selector& selector) const -> domai
         std::string(bridge::protocol::kMagic),
         "get_channel",
         bridge::protocol::hex_encode(selector.raw),
-    });
+    },
+                             command_timeout());
     if (!response) {
         return domain::fail<domain::Channel>(response.error());
     }
@@ -217,7 +427,8 @@ auto SocketBackend::get_client(const domain::Selector& selector) const -> domain
         std::string(bridge::protocol::kMagic),
         "get_client",
         bridge::protocol::hex_encode(selector.raw),
-    });
+    },
+                             command_timeout());
     if (!response) {
         return domain::fail<domain::Client>(response.error());
     }
@@ -237,7 +448,8 @@ auto SocketBackend::join_channel(const domain::Selector& selector) -> domain::Re
         std::string(bridge::protocol::kMagic),
         "join_channel",
         bridge::protocol::hex_encode(selector.raw),
-    });
+    },
+                             command_timeout());
     if (!response) {
         return domain::fail(response.error());
     }
@@ -251,7 +463,8 @@ auto SocketBackend::send_message(const domain::MessageRequest& request) -> domai
         domain::to_string(request.target_kind),
         bridge::protocol::hex_encode(request.target),
         bridge::protocol::hex_encode(request.text),
-    });
+    },
+                             command_timeout());
     if (!response) {
         return domain::fail(response.error());
     }
@@ -264,7 +477,8 @@ auto SocketBackend::next_event(std::chrono::milliseconds timeout)
         std::string(bridge::protocol::kMagic),
         "next_event",
         std::to_string(timeout.count()),
-    });
+    },
+                             std::max(command_timeout(), timeout + std::chrono::seconds(1)));
     if (!response) {
         return domain::fail<std::optional<domain::Event>>(response.error());
     }
@@ -275,7 +489,11 @@ auto SocketBackend::next_event(std::chrono::milliseconds timeout)
     return bridge::protocol::decode_event(response.value().payload);
 }
 
-auto SocketBackend::exchange(std::string_view operation, const bridge::protocol::Fields& request) const
+auto SocketBackend::exchange(
+    std::string_view operation,
+    const bridge::protocol::Fields& request,
+    std::chrono::milliseconds timeout
+) const
     -> domain::Result<bridge::protocol::Response> {
     auto ready = require_initialized();
     if (!ready) {
@@ -298,24 +516,35 @@ auto SocketBackend::exchange(std::string_view operation, const bridge::protocol:
     }
     std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path_.c_str());
 
-    if (::connect(fd.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
-        const int error_number = errno;
+    auto connected = connect_with_timeout(
+        fd.get(), address, sizeof(address), operation, socket_path_, timeout
+    );
+    if (!connected) {
+        return domain::fail<bridge::protocol::Response>(connected.error());
+    }
+
+    auto write_timeout = set_socket_timeout(fd.get(), SO_SNDTIMEO, timeout);
+    if (!write_timeout) {
+        return domain::fail<bridge::protocol::Response>(write_timeout.error());
+    }
+    auto read_timeout = set_socket_timeout(fd.get(), SO_RCVTIMEO, timeout);
+    if (!read_timeout) {
+        return domain::fail<bridge::protocol::Response>(read_timeout.error());
+    }
+
+    errno = 0;
+    if (!bridge::protocol::write_line(fd.get(), request)) {
         return domain::fail<bridge::protocol::Response>(
-            socket_connect_error(operation, socket_path_, error_number)
+            socket_io_error(operation, socket_path_, "write", errno, timeout)
         );
     }
 
-    if (!bridge::protocol::write_line(fd.get(), request)) {
-        return domain::fail<bridge::protocol::Response>(bridge_error(
-            "socket_write_failed", "failed to write request to plugin control socket"
-        ));
-    }
-
     std::string line;
+    errno = 0;
     if (!bridge::protocol::read_line(fd.get(), line)) {
-        return domain::fail<bridge::protocol::Response>(bridge_error(
-            "socket_read_failed", "failed to read reply from plugin control socket"
-        ));
+        return domain::fail<bridge::protocol::Response>(
+            socket_io_error(operation, socket_path_, "read", errno, timeout)
+        );
     }
     const auto header = bridge::protocol::split_fields(line);
     if (header.empty()) {
@@ -333,7 +562,11 @@ auto SocketBackend::exchange(std::string_view operation, const bridge::protocol:
     }
 
     bridge::protocol::Response response{.type = header[1], .payload = {}};
-    while (bridge::protocol::read_line(fd.get(), line)) {
+    while (true) {
+        errno = 0;
+        if (!bridge::protocol::read_line(fd.get(), line)) {
+            break;
+        }
         const auto fields = bridge::protocol::split_fields(line);
         if (fields.size() == 1 && fields[0] == "end") {
             return domain::ok(std::move(response));
@@ -341,9 +574,14 @@ auto SocketBackend::exchange(std::string_view operation, const bridge::protocol:
         response.payload.push_back(fields);
     }
 
-    return domain::fail<bridge::protocol::Response>(bridge_error(
-        "socket_read_failed", "bridge response ended unexpectedly"
-    ));
+    if (errno == 0) {
+        return domain::fail<bridge::protocol::Response>(bridge_error(
+            "socket_read_failed", "bridge response ended unexpectedly"
+        ));
+    }
+    return domain::fail<bridge::protocol::Response>(
+        socket_io_error(operation, socket_path_, "read", errno, timeout)
+    );
 }
 
 auto SocketBackend::require_initialized() const -> domain::Result<void> {
@@ -353,6 +591,10 @@ auto SocketBackend::require_initialized() const -> domain::Result<void> {
         ));
     }
     return domain::ok();
+}
+
+auto SocketBackend::command_timeout() const -> std::chrono::milliseconds {
+    return normalized_timeout(options_.command_timeout);
 }
 
 }  // namespace teamspeak_cli::sdk

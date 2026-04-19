@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <chrono>
 
 #include "teamspeak_cli/sdk/backend.hpp"
 
@@ -28,6 +29,7 @@ class SocketBridgeServer {
     std::string socket_path_;
     int listen_fd_ = -1;
     bool running_ = false;
+    std::chrono::milliseconds client_timeout_{std::chrono::seconds(5)};
     std::jthread accept_thread_;
 };
 

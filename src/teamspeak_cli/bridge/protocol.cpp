@@ -170,6 +170,9 @@ auto read_line(int fd, std::string& line) -> bool {
     char ch = '\0';
     while (true) {
         const auto received = ::read(fd, &ch, 1);
+        if (received < 0 && errno == EINTR) {
+            continue;
+        }
         if (received <= 0) {
             return false;
         }
@@ -186,6 +189,9 @@ auto write_line(int fd, const Fields& fields) -> bool {
     std::size_t remaining = line.size();
     while (remaining > 0) {
         const auto written = ::write(fd, data, remaining);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
         if (written <= 0) {
             return false;
         }

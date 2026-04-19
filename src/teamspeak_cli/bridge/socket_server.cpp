@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -98,6 +99,24 @@ auto decode_u64_arg(const protocol::Fields& fields, std::size_t index, std::stri
     return domain::ok(*parsed);
 }
 
+auto duration_to_timeval(std::chrono::milliseconds timeout) -> timeval {
+    if (timeout <= std::chrono::milliseconds::zero()) {
+        timeout = std::chrono::milliseconds(1);
+    }
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(timeout - seconds);
+    return timeval{
+        .tv_sec = static_cast<decltype(timeval::tv_sec)>(seconds.count()),
+        .tv_usec = static_cast<decltype(timeval::tv_usec)>(micros.count()),
+    };
+}
+
+auto configure_client_timeout(int fd, std::chrono::milliseconds timeout) -> bool {
+    const auto value = duration_to_timeval(timeout);
+    return ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value)) == 0 &&
+           ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value)) == 0;
+}
+
 }  // namespace
 
 SocketBridgeServer::SocketBridgeServer(std::unique_ptr<sdk::Backend> backend) : backend_(std::move(backend)) {}
@@ -164,6 +183,7 @@ auto SocketBridgeServer::start(const sdk::InitOptions& options) -> domain::Resul
     }
 
     listen_fd_ = listen_socket.release();
+    client_timeout_ = options.command_timeout;
     running_ = true;
     accept_thread_ = std::jthread([this](std::stop_token stop_token) {
         accept_loop(stop_token);
@@ -229,6 +249,10 @@ void SocketBridgeServer::accept_loop(std::stop_token stop_token) {
 }
 
 void SocketBridgeServer::handle_client(int client_fd) {
+    if (!configure_client_timeout(client_fd, client_timeout_)) {
+        return;
+    }
+
     std::string line;
     if (!protocol::read_line(client_fd, line)) {
         return;

@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <thread>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -43,6 +44,74 @@ class SocketFile {
   private:
     int fd_ = -1;
 };
+
+class HungSocketServer {
+  public:
+    explicit HungSocketServer(const std::filesystem::path& path) : path_(path) {
+        listen_fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        teamspeak_cli::tests::expect(listen_fd_ >= 0, "hung server should create a unix socket");
+
+        sockaddr_un address{};
+        address.sun_family = AF_UNIX;
+        std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", path.c_str());
+
+        const int bound = ::bind(listen_fd_, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+        teamspeak_cli::tests::expect(bound == 0, "hung server should bind the unix socket");
+        const int listening = ::listen(listen_fd_, 8);
+        teamspeak_cli::tests::expect(listening == 0, "hung server should listen on the unix socket");
+
+        thread_ = std::jthread([this](std::stop_token stop_token) {
+            const int accepted_fd = ::accept(listen_fd_, nullptr, nullptr);
+            if (accepted_fd < 0) {
+                return;
+            }
+            client_fd_ = accepted_fd;
+            while (!stop_token.stop_requested()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            ::close(accepted_fd);
+            client_fd_ = -1;
+        });
+    }
+
+    ~HungSocketServer() {
+        if (thread_.joinable()) {
+            thread_.request_stop();
+        }
+        if (client_fd_ >= 0) {
+            ::shutdown(client_fd_, SHUT_RDWR);
+        }
+        if (listen_fd_ >= 0) {
+            ::shutdown(listen_fd_, SHUT_RDWR);
+            ::close(listen_fd_);
+            listen_fd_ = -1;
+        }
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+        std::error_code ec;
+        std::filesystem::remove(path_, ec);
+    }
+
+  private:
+    std::filesystem::path path_;
+    int listen_fd_ = -1;
+    int client_fd_ = -1;
+    std::jthread thread_;
+};
+
+auto connect_raw_socket(const std::filesystem::path& path) -> int {
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    teamspeak_cli::tests::expect(fd >= 0, "raw client should create a unix socket");
+
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", path.c_str());
+
+    const int connected = ::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+    teamspeak_cli::tests::expect(connected == 0, "raw client should connect to the unix socket");
+    return fd;
+}
 
 }  // namespace
 
@@ -133,6 +202,71 @@ int main() {
         std::string(std::strerror(ECONNREFUSED)),
         "connection failure should preserve the OS socket error in debug details"
     );
+
+    const fs::path hung_socket_path = root / "hung.sock";
+    HungSocketServer hung_server(hung_socket_path);
+
+    sdk::SocketBackend hung_backend;
+    auto hung_initialized = hung_backend.initialize(sdk::InitOptions{
+        .socket_path = hung_socket_path.string(),
+        .command_timeout = std::chrono::milliseconds(100),
+    });
+    tests::expect(hung_initialized.ok(), "backend should initialize for hung bridge test");
+
+    const auto hung_started_at = std::chrono::steady_clock::now();
+    auto hung_state = hung_backend.connection_state();
+    const auto hung_elapsed = std::chrono::steady_clock::now() - hung_started_at;
+    tests::expect(!hung_state.ok(), "connection state should fail when the bridge does not respond");
+    tests::expect_eq(
+        hung_state.error().code,
+        std::string("socket_timeout"),
+        "hung bridge should surface a socket timeout"
+    );
+    tests::expect_eq(
+        hung_state.error().details.at("stage"),
+        std::string("read"),
+        "hung bridge should time out while reading the response"
+    );
+    tests::expect_eq(
+        hung_state.error().details.at("timeout_ms"),
+        std::string("100"),
+        "hung bridge should preserve the configured timeout"
+    );
+    tests::expect_less_equal(
+        std::chrono::duration_cast<std::chrono::milliseconds>(hung_elapsed),
+        std::chrono::milliseconds(500),
+        "hung bridge should fail quickly instead of hanging indefinitely"
+    );
+
+    const fs::path stalled_socket_path = root / "stalled.sock";
+    bridge::SocketBridgeServer stalled_server(std::make_unique<sdk::FakeBackend>());
+    auto stalled_started = stalled_server.start(sdk::InitOptions{
+        .socket_path = stalled_socket_path.string(),
+        .command_timeout = std::chrono::milliseconds(100),
+    });
+    tests::expect(stalled_started.ok(), "socket bridge server should start for stalled client test");
+
+    const int stalled_client_fd = connect_raw_socket(stalled_socket_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    sdk::SocketBackend recovered_backend;
+    auto recovered_initialized = recovered_backend.initialize(sdk::InitOptions{
+        .socket_path = stalled_socket_path.string(),
+        .command_timeout = std::chrono::milliseconds(100),
+    });
+    tests::expect(recovered_initialized.ok(), "backend should initialize for stalled client recovery test");
+
+    auto recovered_state = recovered_backend.connection_state();
+    tests::expect(
+        recovered_state.ok(),
+        "connection state should recover after a stalled client times out on the bridge server"
+    );
+
+    ::close(stalled_client_fd);
+    auto recovered_shutdown = recovered_backend.shutdown();
+    tests::expect(recovered_shutdown.ok(), "recovered backend shutdown should succeed");
+    auto stalled_stopped = stalled_server.stop();
+    tests::expect(stalled_stopped.ok(), "stalled socket bridge server should stop");
 
     fs::remove_all(root);
     return 0;
