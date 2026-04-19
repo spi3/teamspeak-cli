@@ -29,6 +29,7 @@ fi
 ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed runtime environment"
 ts3_runtime_require_command docker "docker is required for the TeamSpeak-backed runtime environment"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
+ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool
 
 if [[ -z "${state_dir}" ]]; then
@@ -142,6 +143,9 @@ start_client() {
     export HOME="${home_dir}"
     export DISPLAY="${display}"
     export TS_CONTROL_SOCKET_PATH="${socket_path}"
+    if [[ -n "${client_runtime_library_path}" ]]; then
+      export LD_LIBRARY_PATH="${client_runtime_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    fi
     nohup ./ts3client_runscript.sh -nosingleinstance >"${client_log}" 2>&1 &
     echo $!
   )"
@@ -329,6 +333,7 @@ write_state_var "nickname" "${nickname}"
 write_state_var "ts_bin" "${ts_bin}"
 write_state_var "autoconnect" "${autoconnect}"
 write_state_var "client_source_dir" "${client_source_dir}"
+write_state_var "client_runtime_library_path" "${client_runtime_library_path}"
 write_state_var "xdotool_bin" "${xdotool_bin}"
 write_state_var "xdotool_library_path" "${xdotool_library_path}"
 
@@ -340,6 +345,7 @@ export TS_ENV_DISPLAY='${display}'
 export TS_ENV_SERVER='127.0.0.1:${server_port}'
 export TS_ENV_NICKNAME='${nickname}'
 export TS_ENV_TS_BIN='${ts_bin}'
+export TS_ENV_CLIENT_LIBRARY_PATH='${client_runtime_library_path}'
 EOF
 
 completed=1
@@ -356,6 +362,7 @@ Server:     127.0.0.1:${server_port}
 Display:    ${display}
 Nickname:   ${nickname}
 Client:     ${client_source_dir}
+ClientLibs: ${client_runtime_library_path:-system}
 xdotool:    ${xdotool_bin}
 
 Use it like:

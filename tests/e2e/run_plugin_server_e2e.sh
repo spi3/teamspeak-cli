@@ -25,6 +25,7 @@ fi
 ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed E2E test"
 ts3_runtime_require_command docker "docker is required for the TeamSpeak-backed E2E test"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
+ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool
 
 tmp_dir="$(mktemp -d)"
@@ -165,6 +166,9 @@ start_client() {
     export HOME="${home_dir}"
     export DISPLAY="${display}"
     export TS_CONTROL_SOCKET_PATH="${socket_path}"
+    if [[ -n "${client_runtime_library_path}" ]]; then
+      export LD_LIBRARY_PATH="${client_runtime_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    fi
     exec ./ts3client_runscript.sh -nosingleinstance
   ) >"${client_log}" 2>&1 &
   client_pid=$!

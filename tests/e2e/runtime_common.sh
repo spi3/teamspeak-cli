@@ -113,6 +113,171 @@ ts3_runtime_validate_plugin_sdk_dir() {
   [[ -f "${candidate_dir}/include/plugin_definitions.h" ]]
 }
 
+ts3_runtime_client_ld_library_path() {
+  local client_dir="$1"
+  local runtime_library_path="${2:-}"
+
+  if [[ -n "${runtime_library_path}" ]]; then
+    printf '%s:%s\n' "${client_dir}" "${runtime_library_path}"
+    return 0
+  fi
+  printf '%s\n' "${client_dir}"
+}
+
+ts3_runtime_missing_client_shared_libraries() {
+  local client_dir="$1"
+  local runtime_library_path="${2:-}"
+  local launch_library_path
+  local binary_path
+
+  launch_library_path="$(ts3_runtime_client_ld_library_path "${client_dir}" "${runtime_library_path}")"
+
+  for binary_path in \
+    "${client_dir}/ts3client_linux_amd64" \
+    "${client_dir}/QtWebEngineProcess" \
+    "${client_dir}/platforms/libqxcb.so" \
+    "${client_dir}/xcbglintegrations/libqxcb-egl-integration.so" \
+    "${client_dir}/xcbglintegrations/libqxcb-glx-integration.so"; do
+    [[ -f "${binary_path}" ]] || continue
+    env LD_LIBRARY_PATH="${launch_library_path}" ldd "${binary_path}" 2>/dev/null
+  done | awk '/=> not found/ {print $1}' | sort -u
+}
+
+ts3_runtime_client_runtime_libraries_ready() {
+  local client_dir="$1"
+  local runtime_library_path="${2:-}"
+
+  [[ -n "${runtime_library_path}" ]] || return 1
+  [[ -d "${runtime_library_path}" ]] || return 1
+  [[ ! -n "$(ts3_runtime_missing_client_shared_libraries "${client_dir}" "${runtime_library_path}")" ]]
+}
+
+ts3_runtime_client_package_for_soname() {
+  local soname="$1"
+
+  case "${soname}" in
+    libevent-2.1.so.7)
+      printf '%s\n' "libevent-2.1-7"
+      ;;
+    libxslt.so.1)
+      printf '%s\n' "libxslt1.1"
+      ;;
+    libxcb-icccm.so.4)
+      printf '%s\n' "libxcb-icccm4"
+      ;;
+    libxcb-image.so.0)
+      printf '%s\n' "libxcb-image0"
+      ;;
+    libxcb-keysyms.so.1)
+      printf '%s\n' "libxcb-keysyms1"
+      ;;
+    libxcb-render-util.so.0)
+      printf '%s\n' "libxcb-render-util0"
+      ;;
+    libxcb-util.so.1)
+      printf '%s\n' "libxcb-util1"
+      ;;
+    libxcb-xinerama.so.0)
+      printf '%s\n' "libxcb-xinerama0"
+      ;;
+    libxcb-xkb.so.1)
+      printf '%s\n' "libxcb-xkb1"
+      ;;
+    libxkbcommon-x11.so.0)
+      printf '%s\n' "libxkbcommon-x11-0"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ts3_runtime_bootstrap_client_runtime_libraries_from_apt() {
+  local client_dir="$1"
+  local cache_dir="${ts3_runtime_managed_dir_default}/client-runtime-libs"
+  local package_dir="${cache_dir}/debs"
+  local extract_root="${cache_dir}/root"
+  local runtime_library_path=""
+  local missing_libraries
+  local package_name
+  local packages=()
+  local package_string=""
+  local deb_file
+
+  ts3_runtime_require_command apt-get "missing TeamSpeak client runtime libraries require apt-get on this host"
+  ts3_runtime_require_command dpkg-deb "missing TeamSpeak client runtime libraries require dpkg-deb on this host"
+
+  if [[ -d "${extract_root}" ]]; then
+    runtime_library_path="$(find "${extract_root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)"
+    if ts3_runtime_client_runtime_libraries_ready "${client_dir}" "${runtime_library_path}"; then
+      client_runtime_library_path="${runtime_library_path}"
+      return 0
+    fi
+  fi
+
+  missing_libraries="$(ts3_runtime_missing_client_shared_libraries "${client_dir}" "${runtime_library_path}")"
+  if [[ -z "${missing_libraries}" ]]; then
+    client_runtime_library_path=""
+    return 0
+  fi
+
+  while IFS= read -r soname; do
+    [[ -n "${soname}" ]] || continue
+    package_name="$(ts3_runtime_client_package_for_soname "${soname}")" || {
+      ts3_runtime_die "unsupported TeamSpeak client runtime dependency: ${soname}"
+    }
+    if [[ " ${package_string} " != *" ${package_name} "* ]]; then
+      packages+=("${package_name}")
+      package_string+=" ${package_name}"
+    fi
+  done <<<"${missing_libraries}"
+
+  mkdir -p "${package_dir}"
+  rm -rf "${extract_root}"
+  mkdir -p "${extract_root}"
+
+  ts3_runtime_log "downloading TeamSpeak client runtime packages: ${packages[*]}"
+  (
+    cd "${package_dir}"
+    apt-get download "${packages[@]}" >/dev/null
+  ) || ts3_runtime_die "failed to download TeamSpeak client runtime packages via apt-get"
+
+  for deb_file in "${package_dir}"/*.deb; do
+    [[ -f "${deb_file}" ]] || continue
+    dpkg-deb -x "${deb_file}" "${extract_root}"
+  done
+
+  runtime_library_path="$(find "${extract_root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)"
+  if ! ts3_runtime_client_runtime_libraries_ready "${client_dir}" "${runtime_library_path}"; then
+    ts3_runtime_die "bootstrapped TeamSpeak client runtime libraries are still incomplete"
+  fi
+
+  client_runtime_library_path="${runtime_library_path}"
+}
+
+ts3_runtime_resolve_client_runtime_library_path() {
+  local client_dir="$1"
+  local explicit_path="${TS3_CLIENT_LIBRARY_PATH:-}"
+
+  client_runtime_library_path=""
+
+  if [[ -n "${explicit_path}" ]]; then
+    if ts3_runtime_client_runtime_libraries_ready "${client_dir}" "${explicit_path}"; then
+      client_runtime_library_path="${explicit_path}"
+      return 0
+    fi
+    if [[ "${explicit_path}" != "${ts3_runtime_managed_dir_default}"* ]]; then
+      ts3_runtime_die "TeamSpeak client runtime library path is incomplete: ${explicit_path}"
+    fi
+    ts3_runtime_log "cached TeamSpeak client runtime libraries missing or incomplete at ${explicit_path}; bootstrapping again"
+  fi
+
+  if [[ -n "$(ts3_runtime_missing_client_shared_libraries "${client_dir}")" ]]; then
+    ts3_runtime_bootstrap_client_runtime_libraries_from_apt "${client_dir}"
+    return 0
+  fi
+}
+
 ts3_runtime_resolve_client_source_dir() {
   local explicit_dir="${TS3_CLIENT_DIR:-}"
   local version="${TS3_CLIENT_VERSION:-${ts3_runtime_default_client_version}}"
@@ -452,8 +617,9 @@ ts3_runtime_json_extract_first_array_object_id_matching() {
 ts3_runtime_write_default_env_files() {
   local plugin_sdk_dir="$1"
   local client_source_dir="$2"
-  local xdotool_path="$3"
-  local xdotool_lib_path="$4"
+  local client_library_path="$3"
+  local xdotool_path="$4"
+  local xdotool_lib_path="$5"
   local deps_mk_path="${TS3_DEPS_MK:-${ts3_runtime_managed_dir_default}/deps.mk}"
   local deps_env_path="${TS3_DEPS_ENV:-${ts3_runtime_managed_dir_default}/deps.env}"
 
@@ -464,6 +630,7 @@ ts3_runtime_write_default_env_files() {
 TS3_MANAGED_DIR := ${ts3_runtime_managed_dir_default}
 TS3_PLUGIN_SDK_DIR := ${plugin_sdk_dir}
 TS3_CLIENT_DIR := ${client_source_dir}
+TS3_CLIENT_LIBRARY_PATH := ${client_library_path}
 TS3_XDOTOOL := ${xdotool_path}
 TS3_XDOTOOL_LIBRARY_PATH := ${xdotool_lib_path}
 EOF
@@ -472,6 +639,7 @@ EOF
 export TS3_MANAGED_DIR='${ts3_runtime_managed_dir_default}'
 export TS3_PLUGIN_SDK_DIR='${plugin_sdk_dir}'
 export TS3_CLIENT_DIR='${client_source_dir}'
+export TS3_CLIENT_LIBRARY_PATH='${client_library_path}'
 export TS3_XDOTOOL='${xdotool_path}'
 export TS3_XDOTOOL_LIBRARY_PATH='${xdotool_lib_path}'
 EOF
