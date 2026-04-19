@@ -251,8 +251,8 @@ docker volume create "${volume_name}" >/dev/null
 docker run \
   --name "${container_name}" \
   --detach \
-  --publish "127.0.0.1:${server_port}:9987/udp" \
-  --publish "127.0.0.1:${query_port}:10011" \
+  --publish "0.0.0.0:${server_port}:9987/udp" \
+  --publish "0.0.0.0:${query_port}:10011" \
   --env TS3SERVER_LICENSE=accept \
   --volume "${volume_name}:/var/ts3server/" \
   "${docker_image}" >/dev/null
@@ -286,7 +286,7 @@ if [[ "${autoconnect}" != "0" ]]; then
         "${ts_bin}" \
         --json \
         --config "${config_path}" \
-        --server "127.0.0.1:${server_port}" \
+        --server "0.0.0.0:${server_port}" \
         --nickname "${nickname}" \
         connect >/dev/null 2>"${state_dir}/connect.err"; then
       if wait_for_connected_status 20; then
@@ -326,7 +326,7 @@ write_state_var "xvfb_pid" "${xvfb_pid}"
 write_state_var "container_name" "${container_name}"
 write_state_var "volume_name" "${volume_name}"
 write_state_var "display" "${display}"
-write_state_var "server_host" "127.0.0.1"
+write_state_var "server_host" "0.0.0.0"
 write_state_var "server_port" "${server_port}"
 write_state_var "query_port" "${query_port}"
 write_state_var "nickname" "${nickname}"
@@ -342,7 +342,7 @@ export TS_CONTROL_SOCKET_PATH='${socket_path}'
 export TS_ENV_CONFIG='${config_path}'
 export TS_ENV_STATE='${state_file}'
 export TS_ENV_DISPLAY='${display}'
-export TS_ENV_SERVER='127.0.0.1:${server_port}'
+export TS_ENV_SERVER='0.0.0.0:${server_port}'
 export TS_ENV_NICKNAME='${nickname}'
 export TS_ENV_TS_BIN='${ts_bin}'
 export TS_ENV_CLIENT_LIBRARY_PATH='${client_runtime_library_path}'
@@ -358,7 +358,7 @@ State file: ${state_file}
 Env file:   ${env_file}
 Config:     ${config_path}
 Socket:     ${socket_path}
-Server:     127.0.0.1:${server_port}
+Server:     0.0.0.0:${server_port}
 Display:    ${display}
 Nickname:   ${nickname}
 Client:     ${client_source_dir}

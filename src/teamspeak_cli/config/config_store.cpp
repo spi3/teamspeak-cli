@@ -4,7 +4,6 @@
 #include <fstream>
 #include <sstream>
 
-#include "teamspeak_cli/bridge/socket_paths.hpp"
 #include "teamspeak_cli/util/strings.hpp"
 
 namespace teamspeak_cli::config {
@@ -139,7 +138,7 @@ auto ConfigStore::load(const std::filesystem::path& path) const -> domain::Resul
                 .server_password = "",
                 .channel_password = "",
                 .default_channel = "Lobby",
-                .control_socket_path = bridge::default_socket_path(),
+                .control_socket_path = "",
             });
             current_profile = &config.profiles.back();
             continue;
@@ -248,7 +247,7 @@ auto ConfigStore::default_config() const -> domain::AppConfig {
                     .server_password = "",
                     .channel_password = "",
                     .default_channel = "Lobby",
-                    .control_socket_path = bridge::default_socket_path(),
+                    .control_socket_path = "",
                 },
                 domain::Profile{
                     .name = "plugin-local",
@@ -260,7 +259,7 @@ auto ConfigStore::default_config() const -> domain::AppConfig {
                     .server_password = "",
                     .channel_password = "",
                     .default_channel = "",
-                    .control_socket_path = bridge::default_socket_path(),
+                    .control_socket_path = "",
                 },
             },
     };

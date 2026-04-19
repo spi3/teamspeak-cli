@@ -23,6 +23,11 @@ int main() {
     auto found = store.find_profile(loaded.value(), "plugin-local");
     teamspeak_cli::tests::expect(found.ok(), "plugin-local profile should exist");
     teamspeak_cli::tests::expect_eq(found.value()->backend, std::string("plugin"), "plugin backend name");
+    teamspeak_cli::tests::expect_eq(
+        found.value()->control_socket_path,
+        std::string(""),
+        "default plugin-local socket path should be empty so runtime defaults stay dynamic"
+    );
 
     fs::remove_all(root);
     return 0;

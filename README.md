@@ -27,6 +27,36 @@ The repository currently ships three important pieces:
 
 The default build targets the TeamSpeak-backed plugin runtime and auto-fetches the TeamSpeak-managed inputs it needs into `third_party/teamspeak/managed`. The `built-test` path keeps the project buildable and runnable without TeamSpeak installed.
 
+## One-shot Install
+
+On Linux `x86_64`, you can download the TeamSpeak 3 client, build the CLI and plugin, and install everything for the current user with:
+
+```bash
+./scripts/install.sh
+```
+
+By default the installer:
+
+- caches TeamSpeak-managed downloads under `~/.cache/teamspeak-cli/install`
+- builds a `Release` tree in `build-install`
+- installs `ts` plus the repo docs/examples under `~/.local`
+- installs the TeamSpeak client plus `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
+- creates `~/.local/bin/ts3client` as a launcher for the installed TeamSpeak client
+- installs `~/.local/bin/ts-uninstall` to remove the user-level install later
+- initializes `~/.config/ts/config.ini` if it does not already exist
+
+Run `./scripts/install.sh --help` for path overrides such as `--prefix`, `--client-dir`, and `--config-path`.
+
+After install, make sure `~/.local/bin` is on `PATH`. `ts client start` will launch the TeamSpeak client in a managed headless `Xvfb` session when no GUI display is available, and it exports the active profile's control socket path so the started client and `ts plugin info` agree on the same socket. `ts3client` launches the installed wrapper directly. Use `ts client status` to check the tracked local process, enable the plugin if TeamSpeak has not already enabled it, and verify the bridge with `ts plugin info`. Set `TS_CLIENT_HEADLESS=0` to disable the managed headless launch or `TS_CLIENT_HEADLESS=1` to force it.
+
+To remove the install later, run:
+
+```bash
+ts-uninstall
+```
+
+The uninstaller removes the installed binaries, launcher, TeamSpeak client bundle, managed download cache, installer build directory, and the generated config file when the installer created it. Use `ts-uninstall --keep-config` if you want to keep `~/.config/ts/config.ini`.
+
 ## Build
 
 If you do not want to remember the CMake and test commands, use the top-level `Makefile`:
@@ -132,6 +162,8 @@ The `plugin` backend uses a local control socket path. By default it resolves fr
 
 - `TS_CONTROL_SOCKET_PATH`, if set
 - otherwise an OS-appropriate local runtime path such as `/tmp/ts3cli-<uid>.sock`
+
+Leave `control_socket_path=` blank in config unless you intentionally want to pin the plugin bridge to one fixed socket path.
 
 ## Example Commands
 

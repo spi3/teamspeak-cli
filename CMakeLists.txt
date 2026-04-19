@@ -211,6 +211,8 @@ if(BUILD_TESTING)
     NAME ts_e2e_shell_syntax_test
     COMMAND
       bash -n
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/uninstall.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_cli_smoke.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_plugin_bridge_e2e.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/bootstrap_runtime_deps.sh"
