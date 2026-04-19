@@ -30,28 +30,42 @@ ts3_runtime_require_command() {
 ts3_runtime_download_file() {
   local url="$1"
   local destination="$2"
-  local temp_file="${destination}.tmp.$$"
+  local partial_file="${destination}.part"
 
   mkdir -p "$(dirname "${destination}")"
-  rm -f "${temp_file}"
 
   if command -v curl >/dev/null 2>&1; then
     ts3_runtime_log "downloading ${url}"
-    if ! curl --fail --location --retry 3 --output "${temp_file}" "${url}"; then
-      rm -f "${temp_file}"
+    if ! curl \
+      --fail \
+      --location \
+      --continue-at - \
+      --retry 5 \
+      --retry-delay 2 \
+      --retry-all-errors \
+      --connect-timeout 30 \
+      --speed-limit 10240 \
+      --speed-time 30 \
+      --output "${partial_file}" \
+      "${url}"; then
       return 1
     fi
   elif command -v wget >/dev/null 2>&1; then
     ts3_runtime_log "downloading ${url}"
-    if ! wget -O "${temp_file}" "${url}"; then
-      rm -f "${temp_file}"
+    if ! wget \
+      --continue \
+      --tries=5 \
+      --timeout=30 \
+      --read-timeout=30 \
+      -O "${partial_file}" \
+      "${url}"; then
       return 1
     fi
   else
     ts3_runtime_die "curl or wget is required to download ${url}"
   fi
 
-  mv "${temp_file}" "${destination}"
+  mv "${partial_file}" "${destination}"
 }
 
 ts3_runtime_sha256_file() {
@@ -203,6 +217,8 @@ ts3_runtime_bootstrap_client_runtime_libraries_from_apt() {
   local packages=()
   local package_string=""
   local deb_file
+  local pass=0
+  local max_passes=6
 
   ts3_runtime_require_command apt-get "missing TeamSpeak client runtime libraries require apt-get on this host"
   ts3_runtime_require_command dpkg-deb "missing TeamSpeak client runtime libraries require dpkg-deb on this host"
@@ -215,36 +231,45 @@ ts3_runtime_bootstrap_client_runtime_libraries_from_apt() {
     fi
   fi
 
-  missing_libraries="$(ts3_runtime_missing_client_shared_libraries "${client_dir}" "${runtime_library_path}")"
-  if [[ -z "${missing_libraries}" ]]; then
-    client_runtime_library_path=""
-    return 0
-  fi
-
-  while IFS= read -r soname; do
-    [[ -n "${soname}" ]] || continue
-    package_name="$(ts3_runtime_client_package_for_soname "${soname}")" || {
-      ts3_runtime_die "unsupported TeamSpeak client runtime dependency: ${soname}"
-    }
-    if [[ " ${package_string} " != *" ${package_name} "* ]]; then
-      packages+=("${package_name}")
-      package_string+=" ${package_name}"
-    fi
-  done <<<"${missing_libraries}"
-
   mkdir -p "${package_dir}"
-  rm -rf "${extract_root}"
   mkdir -p "${extract_root}"
 
-  ts3_runtime_log "downloading TeamSpeak client runtime packages: ${packages[*]}"
-  (
-    cd "${package_dir}"
-    apt-get download "${packages[@]}" >/dev/null
-  ) || ts3_runtime_die "failed to download TeamSpeak client runtime packages via apt-get"
+  while (( pass < max_passes )); do
+    runtime_library_path="$(find "${extract_root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)"
+    missing_libraries="$(ts3_runtime_missing_client_shared_libraries "${client_dir}" "${runtime_library_path}")"
+    if [[ -z "${missing_libraries}" ]]; then
+      client_runtime_library_path="${runtime_library_path}"
+      return 0
+    fi
 
-  for deb_file in "${package_dir}"/*.deb; do
-    [[ -f "${deb_file}" ]] || continue
-    dpkg-deb -x "${deb_file}" "${extract_root}"
+    packages=()
+    while IFS= read -r soname; do
+      [[ -n "${soname}" ]] || continue
+      package_name="$(ts3_runtime_client_package_for_soname "${soname}")" || {
+        ts3_runtime_die "unsupported TeamSpeak client runtime dependency: ${soname}"
+      }
+      if [[ " ${package_string} " != *" ${package_name} "* ]]; then
+        packages+=("${package_name}")
+        package_string+=" ${package_name}"
+      fi
+    done <<<"${missing_libraries}"
+
+    if [[ "${#packages[@]}" -eq 0 ]]; then
+      break
+    fi
+
+    ts3_runtime_log "downloading TeamSpeak client runtime packages: ${packages[*]}"
+    (
+      cd "${package_dir}"
+      apt-get download "${packages[@]}" >/dev/null
+    ) || ts3_runtime_die "failed to download TeamSpeak client runtime packages via apt-get"
+
+    for deb_file in "${package_dir}"/*.deb; do
+      [[ -f "${deb_file}" ]] || continue
+      dpkg-deb -x "${deb_file}" "${extract_root}"
+    done
+
+    pass=$((pass + 1))
   done
 
   runtime_library_path="$(find "${extract_root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)"
