@@ -195,11 +195,89 @@ ts3_runtime_client_package_for_soname() {
   local soname="$1"
 
   case "${soname}" in
+    libasound.so.2)
+      printf '%s\n' "libasound2"
+      ;;
+    libatomic.so.1)
+      printf '%s\n' "libatomic1"
+      ;;
+    libc++.so.1)
+      printf '%s\n' "libc++1"
+      ;;
+    libdbus-1.so.3)
+      printf '%s\n' "libdbus-1-3"
+      ;;
+    libEGL.so.1)
+      printf '%s\n' "libegl1"
+      ;;
     libevent-2.1.so.7)
       printf '%s\n' "libevent-2.1-7"
       ;;
-    libxslt.so.1)
-      printf '%s\n' "libxslt1.1"
+    libexpat.so.1)
+      printf '%s\n' "libexpat1"
+      ;;
+    libfontconfig.so.1)
+      printf '%s\n' "libfontconfig1"
+      ;;
+    libfreetype.so.6)
+      printf '%s\n' "libfreetype6"
+      ;;
+    libGL.so.1)
+      printf '%s\n' "libgl1"
+      ;;
+    libglib-2.0.so.0|libgthread-2.0.so.0)
+      printf '%s\n' "libglib2.0-0"
+      ;;
+    libICE.so.6)
+      printf '%s\n' "libice6"
+      ;;
+    liblcms2.so.2)
+      printf '%s\n' "liblcms2-2"
+      ;;
+    libnspr4.so|libplc4.so|libplds4.so)
+      printf '%s\n' "libnspr4"
+      ;;
+    libnss3.so|libnssutil3.so|libsmime3.so)
+      printf '%s\n' "libnss3"
+      ;;
+    libpci.so.3)
+      printf '%s\n' "libpci3"
+      ;;
+    libSM.so.6)
+      printf '%s\n' "libsm6"
+      ;;
+    libX11.so.6)
+      printf '%s\n' "libx11-6"
+      ;;
+    libX11-xcb.so.1)
+      printf '%s\n' "libx11-xcb1"
+      ;;
+    libXcomposite.so.1)
+      printf '%s\n' "libxcomposite1"
+      ;;
+    libXdamage.so.1)
+      printf '%s\n' "libxdamage1"
+      ;;
+    libXext.so.6)
+      printf '%s\n' "libxext6"
+      ;;
+    libXfixes.so.3)
+      printf '%s\n' "libxfixes3"
+      ;;
+    libXrandr.so.2)
+      printf '%s\n' "libxrandr2"
+      ;;
+    libXrender.so.1)
+      printf '%s\n' "libxrender1"
+      ;;
+    libXtst.so.6)
+      printf '%s\n' "libxtst6"
+      ;;
+    libxcb.so.1)
+      printf '%s\n' "libxcb1"
+      ;;
+    libxcb-glx.so.0)
+      printf '%s\n' "libxcb-glx0"
       ;;
     libxcb-icccm.so.4)
       printf '%s\n' "libxcb-icccm4"
@@ -210,11 +288,29 @@ ts3_runtime_client_package_for_soname() {
     libxcb-keysyms.so.1)
       printf '%s\n' "libxcb-keysyms1"
       ;;
+    libxcb-randr.so.0)
+      printf '%s\n' "libxcb-randr0"
+      ;;
+    libxcb-render.so.0)
+      printf '%s\n' "libxcb-render0"
+      ;;
     libxcb-render-util.so.0)
       printf '%s\n' "libxcb-render-util0"
       ;;
+    libxcb-shape.so.0)
+      printf '%s\n' "libxcb-shape0"
+      ;;
+    libxcb-shm.so.0)
+      printf '%s\n' "libxcb-shm0"
+      ;;
+    libxcb-sync.so.1)
+      printf '%s\n' "libxcb-sync1"
+      ;;
     libxcb-util.so.1)
       printf '%s\n' "libxcb-util1"
+      ;;
+    libxcb-xfixes.so.0)
+      printf '%s\n' "libxcb-xfixes0"
       ;;
     libxcb-xinerama.so.0)
       printf '%s\n' "libxcb-xinerama0"
@@ -222,8 +318,17 @@ ts3_runtime_client_package_for_soname() {
     libxcb-xkb.so.1)
       printf '%s\n' "libxcb-xkb1"
       ;;
+    libxkbcommon.so.0)
+      printf '%s\n' "libxkbcommon0"
+      ;;
     libxkbcommon-x11.so.0)
       printf '%s\n' "libxkbcommon-x11-0"
+      ;;
+    libxml2.so.2)
+      printf '%s\n' "libxml2"
+      ;;
+    libxslt.so.1)
+      printf '%s\n' "libxslt1.1"
       ;;
     *)
       return 1
