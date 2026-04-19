@@ -13,14 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-
-      - name: Build
-        run: cmake --build build --parallel
-
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+      - name: Build and test built-test path
+        run: make test-built-test
 
   publish-linux-x86_64:
     needs: verify
@@ -33,7 +27,7 @@ jobs:
       - name: Package release archive
         env:
           PACKAGE_VERSION: ${{ github.ref_name }}
-        run: ./scripts/package-release.sh
+        run: make package-release
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
