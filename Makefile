@@ -173,6 +173,5 @@ env-down: ## Stop the tracked TeamSpeak environment
 	./tests/e2e/stop_plugin_server_env.sh "$$state_file"; \
 	rm -f "$(ENV_STATE_REF)" "$(ENV_OUTPUT_REF)"
 
-clean: ## Remove generated build directories and tracked TeamSpeak environment pointers
-	rm -rf $(BUILD_DIR) $(BUILT_TEST_BUILD_DIR)
-	rm -f $(ENV_STATE_REF) $(ENV_OUTPUT_REF)
+clean: ## Remove generated build directories, tracked TeamSpeak environment pointers, and managed dependencies
+	rm -rf $(BUILD_DIR) $(BUILT_TEST_BUILD_DIR) $(TS3_MANAGED_DIR)
