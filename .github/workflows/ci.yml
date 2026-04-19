@@ -14,5 +14,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and test built-test path
-        run: make test-built-test
+      - name: Build and test mock path
+        run: make test-mock
