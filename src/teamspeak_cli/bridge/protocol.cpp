@@ -125,9 +125,10 @@ auto hex_encode(std::string_view value) -> std::string {
     static constexpr char digits[] = "0123456789abcdef";
     std::string out;
     out.reserve(value.size() * 2);
-    for (const unsigned char ch : value) {
-        out.push_back(digits[(ch >> 4U) & 0x0FU]);
-        out.push_back(digits[ch & 0x0FU]);
+    for (const char ch : value) {
+        const auto byte = static_cast<unsigned char>(ch);
+        out.push_back(digits[(byte >> 4U) & 0x0FU]);
+        out.push_back(digits[byte & 0x0FU]);
     }
     return out;
 }
