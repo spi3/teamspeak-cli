@@ -31,7 +31,7 @@ class SocketBackend final : public Backend {
         -> domain::Result<std::optional<domain::Event>> override;
 
   private:
-    auto exchange(const bridge::protocol::Fields& request) const
+    auto exchange(std::string_view operation, const bridge::protocol::Fields& request) const
         -> domain::Result<bridge::protocol::Response>;
     auto require_initialized() const -> domain::Result<void>;
 

@@ -2,7 +2,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
+#include <cstring>
 #include <string>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -37,6 +41,37 @@ class EnvGuard {
   private:
     std::string name_;
     std::optional<std::string> previous_;
+};
+
+class SocketFile {
+  public:
+    explicit SocketFile(const fs::path& path) {
+        fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        teamspeak_cli::tests::expect(fd_ >= 0, "socket fixture should create a unix socket");
+
+        sockaddr_un address{};
+        address.sun_family = AF_UNIX;
+        std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", path.c_str());
+
+        const int bound = ::bind(fd_, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+        teamspeak_cli::tests::expect(bound == 0, "socket fixture should bind the unix socket");
+    }
+
+    ~SocketFile() {
+        if (fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    void close() {
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+    }
+
+  private:
+    int fd_ = -1;
 };
 
 auto parse_command(
@@ -168,6 +203,35 @@ int main() {
     tests::expect(!invalid_result.ok(), "invalid message target should fail during dispatch");
     tests::expect_eq(
         invalid_result.error().exit_code, domain::ExitCode::usage, "invalid target exit code"
+    );
+    tests::expect_contains(
+        output::render_error(invalid_result.error(), output::Format::table, false),
+        "ts message send --help",
+        "invalid message target should suggest the command help"
+    );
+
+    auto missing_profile = parse_command(
+        router, {"profile", "use", "missing-profile", "--config", config_path.string()}
+    );
+    tests::expect(missing_profile.ok(), "missing profile parse should succeed");
+    auto missing_profile_result = router.dispatch(missing_profile.value());
+    tests::expect(!missing_profile_result.ok(), "missing profile dispatch should fail");
+    tests::expect_contains(
+        output::render_error(missing_profile_result.error(), output::Format::table, false),
+        "ts profile list",
+        "missing profile should suggest listing available profiles"
+    );
+
+    auto missing_channel = parse_command(
+        router, {"channel", "get", "missing-channel", "--profile", "built-test", "--config", config_path.string()}
+    );
+    tests::expect(missing_channel.ok(), "missing channel parse should succeed");
+    auto missing_channel_result = router.dispatch(missing_channel.value());
+    tests::expect(!missing_channel_result.ok(), "missing channel dispatch should fail");
+    tests::expect_contains(
+        output::render_error(missing_channel_result.error(), output::Format::table, false),
+        "ts channel list",
+        "missing channel should suggest listing channels"
     );
 
     const fs::path launcher_path = temp_dir / "fake-client.sh";
@@ -413,6 +477,45 @@ int main() {
     }
     tests::expect(::kill(discovered_child, 0) != 0, "client stop should terminate a discovered process");
     discovery_guard();
+
+    auto loaded_for_status = config_store.load(config_path);
+    tests::expect(loaded_for_status.ok(), "config should load before status error test");
+    auto plugin_profile_for_status = config_store.find_profile(loaded_for_status.value(), "plugin-local");
+    tests::expect(plugin_profile_for_status.ok(), "plugin-local profile should exist for status error test");
+    const fs::path stale_socket_path = temp_dir / "stale.sock";
+    plugin_profile_for_status.value()->control_socket_path = stale_socket_path.string();
+    auto saved_status_config = config_store.save(config_path, loaded_for_status.value());
+    tests::expect(saved_status_config.ok(), "status error test config should save");
+
+    SocketFile stale_socket(stale_socket_path);
+    stale_socket.close();
+
+    auto status_command = parse_command(router, {"status", "--config", config_path.string()});
+    tests::expect(status_command.ok(), "status parse should succeed");
+    auto status_result = router.dispatch(status_command.value());
+    tests::expect(!status_result.ok(), "status dispatch should fail when the plugin bridge is unavailable");
+    const auto status_error_table = output::render_error(status_result.error(), output::Format::table, false);
+    tests::expect_contains(
+        status_error_table,
+        "ts client start",
+        "status error should suggest launching the TeamSpeak client"
+    );
+    tests::expect_contains(
+        status_error_table,
+        "ts plugin info",
+        "status error should suggest checking the plugin bridge"
+    );
+    const auto status_error_json = output::render_error(status_result.error(), output::Format::json, false);
+    tests::expect_contains(
+        status_error_json,
+        "\"hints\":[",
+        "status error json should include structured hints"
+    );
+    tests::expect_contains(
+        status_error_json,
+        "ts client start",
+        "status error json should include the client start hint"
+    );
 
     fs::remove_all(temp_dir);
     return 0;

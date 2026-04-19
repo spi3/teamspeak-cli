@@ -153,7 +153,7 @@ Stop it with `tests/e2e/stop_plugin_server_env.sh <state-file>`.
 ## Current Limitations
 
 - The TeamSpeak-backed build is optional and not exercised in CI.
-- The TeamSpeak-backed E2E path is local-only and still expects a working Docker daemon plus `Xvfb` on the host.
+- The TeamSpeak-backed E2E path is local-only and still expects `Xvfb` plus a working Docker daemon that the current user can access on the host.
 - The socket transport is implemented first on Unix-style local sockets.
 - Voice/audio controls are intentionally out of scope for the first version.
 

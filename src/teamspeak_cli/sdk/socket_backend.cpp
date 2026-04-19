@@ -18,6 +18,19 @@ auto bridge_error(std::string code, std::string message, domain::ExitCode exit_c
     return domain::make_error("bridge", std::move(code), std::move(message), exit_code);
 }
 
+auto socket_connect_error(std::string_view operation, std::string_view socket_path, int error_number)
+    -> domain::Error {
+    auto error = bridge_error(
+        "socket_connect_failed",
+        "Unable to " + std::string(operation) +
+            " because the TeamSpeak client is not running or the ts3cli plugin is unavailable."
+    );
+    error.details.emplace("operation", operation);
+    error.details.emplace("socket_path", socket_path);
+    error.details.emplace("os_error", std::string(std::strerror(error_number)));
+    return error;
+}
+
 class FileDescriptor {
   public:
     explicit FileDescriptor(int fd = -1) : fd_(fd) {}
@@ -70,7 +83,7 @@ auto SocketBackend::connect(const ConnectRequest& request) -> domain::Result<voi
     if (!ready) {
         return ready;
     }
-    auto response = exchange({
+    auto response = exchange("ask TeamSpeak to connect", {
         std::string(bridge::protocol::kMagic),
         "connect",
         bridge::protocol::hex_encode(request.host),
@@ -93,7 +106,7 @@ auto SocketBackend::disconnect(std::string_view reason) -> domain::Result<void> 
     if (!ready) {
         return ready;
     }
-    auto response = exchange({
+    auto response = exchange("ask TeamSpeak to disconnect", {
         std::string(bridge::protocol::kMagic),
         "disconnect",
         bridge::protocol::hex_encode(reason),
@@ -109,7 +122,7 @@ auto SocketBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
     if (!ready) {
         return domain::fail<domain::PluginInfo>(ready.error());
     }
-    auto response = exchange({std::string(bridge::protocol::kMagic), "plugin_info"});
+    auto response = exchange("check TeamSpeak plugin status", {std::string(bridge::protocol::kMagic), "plugin_info"});
     if (!response) {
         if (response.error().code == "socket_connect_failed") {
             return domain::ok(domain::PluginInfo{
@@ -132,7 +145,7 @@ auto SocketBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
 }
 
 auto SocketBackend::connection_state() const -> domain::Result<domain::ConnectionState> {
-    auto response = exchange({std::string(bridge::protocol::kMagic), "connection_state"});
+    auto response = exchange("read TeamSpeak status", {std::string(bridge::protocol::kMagic), "connection_state"});
     if (!response) {
         return domain::fail<domain::ConnectionState>(response.error());
     }
@@ -144,7 +157,7 @@ auto SocketBackend::connection_state() const -> domain::Result<domain::Connectio
 }
 
 auto SocketBackend::server_info() const -> domain::Result<domain::ServerInfo> {
-    auto response = exchange({std::string(bridge::protocol::kMagic), "server_info"});
+    auto response = exchange("read TeamSpeak server info", {std::string(bridge::protocol::kMagic), "server_info"});
     if (!response) {
         return domain::fail<domain::ServerInfo>(response.error());
     }
@@ -156,7 +169,7 @@ auto SocketBackend::server_info() const -> domain::Result<domain::ServerInfo> {
 }
 
 auto SocketBackend::list_channels() const -> domain::Result<std::vector<domain::Channel>> {
-    auto response = exchange({std::string(bridge::protocol::kMagic), "list_channels"});
+    auto response = exchange("list TeamSpeak channels", {std::string(bridge::protocol::kMagic), "list_channels"});
     if (!response) {
         return domain::fail<std::vector<domain::Channel>>(response.error());
     }
@@ -168,7 +181,7 @@ auto SocketBackend::list_channels() const -> domain::Result<std::vector<domain::
 }
 
 auto SocketBackend::list_clients() const -> domain::Result<std::vector<domain::Client>> {
-    auto response = exchange({std::string(bridge::protocol::kMagic), "list_clients"});
+    auto response = exchange("list TeamSpeak clients", {std::string(bridge::protocol::kMagic), "list_clients"});
     if (!response) {
         return domain::fail<std::vector<domain::Client>>(response.error());
     }
@@ -180,7 +193,7 @@ auto SocketBackend::list_clients() const -> domain::Result<std::vector<domain::C
 }
 
 auto SocketBackend::get_channel(const domain::Selector& selector) const -> domain::Result<domain::Channel> {
-    auto response = exchange({
+    auto response = exchange("read TeamSpeak channel details", {
         std::string(bridge::protocol::kMagic),
         "get_channel",
         bridge::protocol::hex_encode(selector.raw),
@@ -200,7 +213,7 @@ auto SocketBackend::get_channel(const domain::Selector& selector) const -> domai
 }
 
 auto SocketBackend::get_client(const domain::Selector& selector) const -> domain::Result<domain::Client> {
-    auto response = exchange({
+    auto response = exchange("read TeamSpeak client details", {
         std::string(bridge::protocol::kMagic),
         "get_client",
         bridge::protocol::hex_encode(selector.raw),
@@ -220,7 +233,7 @@ auto SocketBackend::get_client(const domain::Selector& selector) const -> domain
 }
 
 auto SocketBackend::join_channel(const domain::Selector& selector) -> domain::Result<void> {
-    auto response = exchange({
+    auto response = exchange("join the TeamSpeak channel", {
         std::string(bridge::protocol::kMagic),
         "join_channel",
         bridge::protocol::hex_encode(selector.raw),
@@ -232,7 +245,7 @@ auto SocketBackend::join_channel(const domain::Selector& selector) -> domain::Re
 }
 
 auto SocketBackend::send_message(const domain::MessageRequest& request) -> domain::Result<void> {
-    auto response = exchange({
+    auto response = exchange("send the TeamSpeak message", {
         std::string(bridge::protocol::kMagic),
         "send_message",
         domain::to_string(request.target_kind),
@@ -247,7 +260,7 @@ auto SocketBackend::send_message(const domain::MessageRequest& request) -> domai
 
 auto SocketBackend::next_event(std::chrono::milliseconds timeout)
     -> domain::Result<std::optional<domain::Event>> {
-    auto response = exchange({
+    auto response = exchange("read TeamSpeak events", {
         std::string(bridge::protocol::kMagic),
         "next_event",
         std::to_string(timeout.count()),
@@ -262,7 +275,7 @@ auto SocketBackend::next_event(std::chrono::milliseconds timeout)
     return bridge::protocol::decode_event(response.value().payload);
 }
 
-auto SocketBackend::exchange(const bridge::protocol::Fields& request) const
+auto SocketBackend::exchange(std::string_view operation, const bridge::protocol::Fields& request) const
     -> domain::Result<bridge::protocol::Response> {
     auto ready = require_initialized();
     if (!ready) {
@@ -286,10 +299,10 @@ auto SocketBackend::exchange(const bridge::protocol::Fields& request) const
     std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path_.c_str());
 
     if (::connect(fd.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
-        return domain::fail<bridge::protocol::Response>(bridge_error(
-            "socket_connect_failed",
-            "failed to connect to plugin control socket at " + socket_path_ + ": " + std::string(std::strerror(errno))
-        ));
+        const int error_number = errno;
+        return domain::fail<bridge::protocol::Response>(
+            socket_connect_error(operation, socket_path_, error_number)
+        );
     }
 
     if (!bridge::protocol::write_line(fd.get(), request)) {

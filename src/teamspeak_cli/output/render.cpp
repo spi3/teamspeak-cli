@@ -3,6 +3,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <string_view>
 
 #include "teamspeak_cli/util/strings.hpp"
 
@@ -234,6 +235,48 @@ auto maybe_channel(const std::optional<domain::ChannelId>& channel_id) -> ValueH
     return make_string(domain::to_string(*channel_id));
 }
 
+auto error_hints(const domain::Error& error) -> std::vector<std::string> {
+    std::vector<std::string> hints;
+    constexpr std::string_view kHintPrefix = "hint_";
+    for (const auto& [key, value] : error.details) {
+        if (key.rfind(kHintPrefix, 0) == 0) {
+            hints.push_back(value);
+        }
+    }
+    return hints;
+}
+
+auto error_debug_details(const domain::Error& error) -> std::map<std::string, ValueHolder> {
+    std::map<std::string, ValueHolder> details;
+    constexpr std::string_view kHintPrefix = "hint_";
+    for (const auto& [key, value] : error.details) {
+        if (key.rfind(kHintPrefix, 0) == 0) {
+            continue;
+        }
+        details.emplace(key, make_string(value));
+    }
+    return details;
+}
+
+auto render_error_human(
+    const domain::Error& error,
+    const std::vector<std::string>& hints,
+    bool debug
+) -> std::string {
+    std::ostringstream out;
+    out << error.message;
+    if (debug) {
+        out << " (" << error.category << ":" << error.code << ")";
+    }
+    if (!hints.empty()) {
+        out << '\n' << "Next steps:";
+        for (std::size_t index = 0; index < hints.size(); ++index) {
+            out << '\n' << (index + 1) << ". " << hints[index];
+        }
+    }
+    return out.str();
+}
+
 }  // namespace
 
 auto parse_format(const std::string& name) -> domain::Result<Format> {
@@ -279,24 +322,28 @@ auto render(const CommandOutput& output, Format format) -> std::string {
 }
 
 auto render_error(const domain::Error& error, Format format, bool debug) -> std::string {
+    const auto hints = error_hints(error);
     std::map<std::string, ValueHolder> payload{
         {"category", make_string(error.category)},
         {"code", make_string(error.code)},
         {"message", make_string(error.message)},
     };
-    if (debug) {
-        std::map<std::string, ValueHolder> details;
-        for (const auto& [key, value] : error.details) {
-            details.emplace(key, make_string(value));
+    if (!hints.empty()) {
+        std::vector<ValueHolder> hint_values;
+        hint_values.reserve(hints.size());
+        for (const auto& hint : hints) {
+            hint_values.push_back(make_string(hint));
         }
+        payload.emplace("hints", make_array(std::move(hint_values)));
+    }
+    if (debug) {
+        auto details = error_debug_details(error);
         payload.emplace("details", make_object(std::move(details)));
     }
 
     CommandOutput output{
         .data = make_object(std::move(payload)),
-        .human =
-            debug ? HumanView{std::string(error.message + " (" + error.category + ":" + error.code + ")")}
-                  : HumanView{std::string(error.message)},
+        .human = HumanView{render_error_human(error, hints, debug)},
     };
     return render(output, format);
 }

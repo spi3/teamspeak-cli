@@ -27,6 +27,31 @@ ts3_runtime_require_command() {
   fi
 }
 
+ts3_runtime_require_docker_access() {
+  local context="$1"
+  local docker_error
+
+  ts3_runtime_require_command docker "docker is required for ${context}"
+
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  docker_error="$(docker info 2>&1 || true)"
+
+  if [[ "${docker_error}" == *"permission denied"*"/var/run/docker.sock"* ]]; then
+    ts3_runtime_die \
+      "docker is installed but the current user cannot access /var/run/docker.sock for ${context}. Start a Docker daemon the user can access, or add the user to the docker group."
+  fi
+
+  if [[ "${docker_error}" == *"Cannot connect to the Docker daemon"* ]] || \
+     [[ "${docker_error}" == *"Is the docker daemon running"* ]]; then
+    ts3_runtime_die "docker is installed but the daemon is not reachable for ${context}. Start Docker and retry."
+  fi
+
+  ts3_runtime_die "docker preflight failed for ${context}: ${docker_error}"
+}
+
 ts3_runtime_download_file() {
   local url="$1"
   local destination="$2"

@@ -289,7 +289,7 @@ make build
 make test-e2e
 ```
 
-The live harness is intentionally opt-in. It still depends on a working Docker daemon plus `Xvfb`, but it now bootstraps the rest itself:
+The live harness is intentionally opt-in. It still depends on `Xvfb` plus a working Docker daemon that the current user can access, but it now bootstraps the rest itself:
 
 - downloads the default TeamSpeak 3 Linux client bundle into `third_party/teamspeak/managed/`
 - verifies the archive SHA256 before extracting it
@@ -333,7 +333,7 @@ That script prints an `env.sh` path you can source before running `ts` manually.
 
 - The `built-test` backend is the only backend exercised in CI.
 - The default plugin shared library still depends on the TeamSpeak 3 Client Plugin SDK.
-- The TeamSpeak-backed E2E test is local-only and still depends on a host `Xvfb` plus a working Docker daemon.
+- The TeamSpeak-backed E2E test is local-only and still depends on a host `Xvfb` plus a working Docker daemon that the current user can access.
 - Audio and voice controls are not exposed yet.
 
 ## Developer Notes

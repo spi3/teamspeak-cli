@@ -23,7 +23,7 @@ if [[ ! -f "${plugin_so}" ]]; then
 fi
 
 ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed E2E test"
-ts3_runtime_require_command docker "docker is required for the TeamSpeak-backed E2E test"
+ts3_runtime_require_docker_access "the TeamSpeak-backed E2E test"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool

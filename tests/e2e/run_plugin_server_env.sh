@@ -11,6 +11,7 @@ plugin_so="${2:?usage: run_plugin_server_env.sh <ts-binary> <plugin-shared-libra
 docker_image="${TS3_DOCKER_IMAGE:-teamspeak:latest}"
 server_port="${TS3_SERVER_PORT:-$((19000 + ($$ % 1000)))}"
 query_port="${TS3_QUERY_PORT:-$((21000 + ($$ % 1000)))}"
+server_host="127.0.0.1"
 autoconnect="${TS3_ENV_AUTOCONNECT:-1}"
 nickname="${TS3_ENV_NICKNAME:-cli-manual}"
 state_dir="${TS3_ENV_DIR:-}"
@@ -27,7 +28,7 @@ if [[ ! -f "${plugin_so}" ]]; then
 fi
 
 ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed runtime environment"
-ts3_runtime_require_command docker "docker is required for the TeamSpeak-backed runtime environment"
+ts3_runtime_require_docker_access "the TeamSpeak-backed runtime environment"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool
@@ -286,7 +287,7 @@ if [[ "${autoconnect}" != "0" ]]; then
         "${ts_bin}" \
         --json \
         --config "${config_path}" \
-        --server "0.0.0.0:${server_port}" \
+        --server "${server_host}:${server_port}" \
         --nickname "${nickname}" \
         connect >/dev/null 2>"${state_dir}/connect.err"; then
       if wait_for_connected_status 20; then
@@ -326,7 +327,7 @@ write_state_var "xvfb_pid" "${xvfb_pid}"
 write_state_var "container_name" "${container_name}"
 write_state_var "volume_name" "${volume_name}"
 write_state_var "display" "${display}"
-write_state_var "server_host" "0.0.0.0"
+write_state_var "server_host" "${server_host}"
 write_state_var "server_port" "${server_port}"
 write_state_var "query_port" "${query_port}"
 write_state_var "nickname" "${nickname}"
@@ -342,7 +343,7 @@ export TS_CONTROL_SOCKET_PATH='${socket_path}'
 export TS_ENV_CONFIG='${config_path}'
 export TS_ENV_STATE='${state_file}'
 export TS_ENV_DISPLAY='${display}'
-export TS_ENV_SERVER='0.0.0.0:${server_port}'
+export TS_ENV_SERVER='${server_host}:${server_port}'
 export TS_ENV_NICKNAME='${nickname}'
 export TS_ENV_TS_BIN='${ts_bin}'
 export TS_ENV_CLIENT_LIBRARY_PATH='${client_runtime_library_path}'
@@ -358,7 +359,7 @@ State file: ${state_file}
 Env file:   ${env_file}
 Config:     ${config_path}
 Socket:     ${socket_path}
-Server:     0.0.0.0:${server_port}
+Server:     ${server_host}:${server_port}
 Display:    ${display}
 Nickname:   ${nickname}
 Client:     ${client_source_dir}

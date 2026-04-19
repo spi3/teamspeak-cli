@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <string_view>
@@ -136,6 +137,145 @@ auto app_error(std::string category, std::string code, std::string message, doma
 
 auto client_error(std::string code, std::string message, domain::ExitCode exit_code) -> domain::Error {
     return domain::make_error("client", std::move(code), std::move(message), exit_code);
+}
+
+auto add_error_hint(domain::Error& error, std::string hint) -> void {
+    if (hint.empty()) {
+        return;
+    }
+
+    constexpr std::string_view kHintPrefix = "hint_";
+    for (const auto& [key, value] : error.details) {
+        if (key.rfind(kHintPrefix, 0) == 0 && value == hint) {
+            return;
+        }
+    }
+
+    std::size_t next_index = 1;
+    while (true) {
+        std::ostringstream key;
+        key << kHintPrefix << std::setw(3) << std::setfill('0') << next_index;
+        if (!error.details.contains(key.str())) {
+            error.details.emplace(key.str(), std::move(hint));
+            return;
+        }
+        ++next_index;
+    }
+}
+
+auto help_command_for_path(std::string_view path) -> std::string {
+    if (path.empty()) {
+        return "ts --help";
+    }
+    return "ts " + std::string(path) + " --help";
+}
+
+auto session_action_for_path(std::string_view path) -> std::string_view {
+    if (path == "connect") {
+        return "connect to TeamSpeak";
+    }
+    if (path == "disconnect") {
+        return "disconnect from TeamSpeak";
+    }
+    if (path == "status") {
+        return "read TeamSpeak status";
+    }
+    if (path == "server info") {
+        return "read TeamSpeak server info";
+    }
+    if (path == "channel list") {
+        return "list TeamSpeak channels";
+    }
+    if (path == "channel get") {
+        return "read TeamSpeak channel details";
+    }
+    if (path == "channel join") {
+        return "join the TeamSpeak channel";
+    }
+    if (path == "client list") {
+        return "list TeamSpeak clients";
+    }
+    if (path == "client get") {
+        return "read TeamSpeak client details";
+    }
+    if (path == "message send") {
+        return "send the TeamSpeak message";
+    }
+    if (path == "events watch") {
+        return "watch TeamSpeak events";
+    }
+    return "";
+}
+
+auto contextualize_error(const ParsedCommand& command, domain::Error error) -> domain::Error {
+    const std::string path = util::join(command.path, " ");
+    if (!path.empty()) {
+        error.details.emplace("command", path);
+    }
+
+    const auto session_action = session_action_for_path(path);
+    if ((error.code == "functions_unavailable" || error.code == "not_initialized") &&
+        !session_action.empty()) {
+        error.message = "Unable to " + std::string(session_action) +
+                        " because the TeamSpeak client is not running or the ts3cli plugin is unavailable.";
+    }
+    if (error.code == "not_connected" && !session_action.empty()) {
+        error.message =
+            "Unable to " + std::string(session_action) + " because there is no active TeamSpeak server connection.";
+        add_error_hint(error, "Run `ts connect` to join the configured TeamSpeak server.");
+        add_error_hint(error, "Run `ts status` to confirm the connection state before retrying.");
+    }
+
+    if (error.code == "socket_connect_failed" || error.code == "functions_unavailable" ||
+        error.code == "not_initialized") {
+        add_error_hint(error, "Run `ts client start` to launch the local TeamSpeak client.");
+        add_error_hint(error, "Run `ts plugin info` to verify the ts3cli plugin bridge is available.");
+    }
+
+    if (error.code == "channel_not_found") {
+        add_error_hint(error, "Run `ts channel list` to see available channel IDs and names.");
+    }
+
+    if (error.code == "client_not_found") {
+        add_error_hint(error, "Run `ts client list` to see available client IDs and nicknames.");
+    }
+
+    if (error.code == "profile_not_found") {
+        add_error_hint(error, "Run `ts profile list` to see the profiles available in the selected config.");
+    }
+
+    if (error.code == "missing_config") {
+        add_error_hint(error, "Run `ts config init` to create a starter config file.");
+    }
+
+    if (error.code == "unknown_backend") {
+        add_error_hint(error, "Run `ts config view` to inspect the backend configured for the active profile.");
+    }
+
+    if (path == "connect" && error.code == "missing_identity") {
+        add_error_hint(error, "Run `ts config view` to inspect the active profile before retrying `ts connect`.");
+    }
+
+    if (path == "client stop" && error.code == "stop_timeout") {
+        add_error_hint(error, "Run `ts client stop --force` to send SIGKILL to the tracked TeamSpeak process.");
+        add_error_hint(error, "Run `ts client status` afterward to confirm the process is gone.");
+    }
+
+    if (path == "client start" && error.code == "launcher_not_found") {
+        add_error_hint(error, "Install the TeamSpeak client or set `TS_CLIENT_LAUNCHER`, then rerun `ts client start`.");
+    }
+
+    if (path == "client start" &&
+        (error.code == "xvfb_not_found" || error.code == "invalid_xvfb" || error.code == "display_not_found" ||
+         error.code == "invalid_display")) {
+        add_error_hint(error, "Install Xvfb or set `TS_CLIENT_HEADLESS=0`, then rerun `ts client start`.");
+    }
+
+    if (error.exit_code == domain::ExitCode::usage) {
+        add_error_hint(error, "Run `" + help_command_for_path(path) + "` to review usage.");
+    }
+
+    return error;
 }
 
 struct ResolvedProfile {
@@ -1474,351 +1614,358 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
 auto CommandRouter::dispatch(const ParsedCommand& command) -> domain::Result<output::CommandOutput> {
     const auto path = util::join(command.path, " ");
 
-    if (path == "version") {
-        const std::vector<std::string> backends = {"fake", "plugin"};
-        std::vector<output::ValueHolder> backend_values;
-        for (const auto& backend : backends) {
-            backend_values.push_back(output::make_string(backend));
-        }
-        return domain::ok(output::CommandOutput{
-            .data = output::make_object({
-                {"name", output::make_string("ts")},
-                {"version", output::make_string(TSCLI_VERSION)},
-                {"compiled_backends", output::make_array(std::move(backend_values))},
-            }),
-            .human = std::string("ts " TSCLI_VERSION),
-        });
-    }
-
-    if (path == "config init") {
-        const bool force = command.flags.contains("force");
-        const auto config_path =
-            command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
-        auto config = config_store_.init(config_path, force);
-        if (!config) {
-            return domain::fail<output::CommandOutput>(config.error());
-        }
-        return domain::ok(output::CommandOutput{
-            .data = output::make_object({
-                {"path", output::make_string(config_path.string())},
-                {"active_profile", output::make_string(config.value().active_profile)},
-            }),
-            .human = std::string("initialized config at " + config_path.string()),
-        });
-    }
-
-    if (path == "config view") {
-        const auto config_path =
-            command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
-        auto loaded = config_store_.load_or_default(config_path);
-        if (!loaded) {
-            return domain::fail<output::CommandOutput>(loaded.error());
-        }
-        return domain::ok(output::CommandOutput{
-            .data = output::make_object({
-                {"path", output::make_string(config_path.string())},
-                {"active_profile", output::make_string(loaded.value().active_profile)},
-                {"profiles", output::to_value(loaded.value().profiles)},
-            }),
-            .human = output::profile_table(loaded.value().profiles, loaded.value().active_profile),
-        });
-    }
-
-    if (path == "profile list") {
-        auto resolved = load_profile(config_store_, command);
-        if (!resolved) {
-            return domain::fail<output::CommandOutput>(resolved.error());
-        }
-        return domain::ok(output::CommandOutput{
-            .data = output::to_value(resolved.value().config.profiles),
-            .human = output::profile_table(
-                resolved.value().config.profiles, resolved.value().config.active_profile
-            ),
-        });
-    }
-
-    if (path == "profile use") {
-        auto name = require_positional(command, 0, "name");
-        if (!name) {
-            return domain::fail<output::CommandOutput>(name.error());
-        }
-        const auto config_path =
-            command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
-        auto loaded = config_store_.load_or_default(config_path);
-        if (!loaded) {
-            return domain::fail<output::CommandOutput>(loaded.error());
-        }
-        auto found = config_store_.find_profile(loaded.value(), name.value());
-        if (!found) {
-            return domain::fail<output::CommandOutput>(found.error());
-        }
-        loaded.value().active_profile = name.value();
-        const auto saved = config_store_.save(config_path, loaded.value());
-        if (!saved) {
-            return domain::fail<output::CommandOutput>(saved.error());
-        }
-        return domain::ok(output::CommandOutput{
-            .data = output::make_object({
-                {"active_profile", output::make_string(name.value())},
-                {"path", output::make_string(config_path.string())},
-            }),
-            .human = std::string("active profile set to " + name.value()),
-        });
-    }
-
-    if (path == "completion") {
-        auto shell = require_positional(command, 0, "shell");
-        if (!shell) {
-            return domain::fail<output::CommandOutput>(shell.error());
-        }
-        auto script = completion::generate(shell.value());
-        if (!script) {
-            return domain::fail<output::CommandOutput>(script.error());
-        }
-        return domain::ok(output::CommandOutput{
-            .data = output::make_object({
-                {"shell", output::make_string(shell.value())},
-                {"script", output::make_string(script.value())},
-            }),
-            .human = script.value(),
-        });
-    }
-
-    if (path == "plugin info" || path == "sdk info") {
-        return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-            auto info = session.plugin_info();
-            if (!info) {
-                return domain::fail<output::CommandOutput>(info.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(info.value()),
-                .human = output::plugin_info_view(info.value()),
-            });
-        });
-    }
-
-    if (path == "connect") {
-        return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto& resolved) {
-            auto connected = session.connect(build_connect_request(resolved.profile));
-            if (!connected) {
-                return domain::fail<output::CommandOutput>(connected.error());
-            }
-            auto state = session.connection_state();
-            if (!state) {
-                return domain::fail<output::CommandOutput>(state.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(state.value()),
-                .human = output::status_view(state.value()),
-            });
-        });
-    }
-
-    if (path == "disconnect") {
-        return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-            auto disconnected = session.disconnect("ts disconnect");
-            if (!disconnected) {
-                return domain::fail<output::CommandOutput>(disconnected.error());
-            }
-            auto state = session.connection_state();
-            if (!state) {
-                return domain::fail<output::CommandOutput>(state.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(state.value()),
-                .human = output::status_view(state.value()),
-            });
-        });
-    }
-
-    if (path == "status") {
-        return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-            auto state = session.connection_state();
-            if (!state) {
-                return domain::fail<output::CommandOutput>(state.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(state.value()),
-                .human = output::status_view(state.value()),
-            });
-        });
-    }
-
-    if (path == "server info") {
-        return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-            auto info = session.server_info();
-            if (!info) {
-                return domain::fail<output::CommandOutput>(info.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(info.value()),
-                .human = output::server_view(info.value()),
-            });
-        });
-    }
-
-    if (path == "channel list") {
-        return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-            auto channels = session.list_channels();
-            if (!channels) {
-                return domain::fail<output::CommandOutput>(channels.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(channels.value()),
-                .human = output::channel_table(channels.value()),
-            });
-        });
-    }
-
-    if (path == "channel get") {
-        auto selector = require_positional(command, 0, "id-or-name");
-        if (!selector) {
-            return domain::fail<output::CommandOutput>(selector.error());
-        }
-        return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
-            auto channel = session.get_channel(domain::Selector{selector.value()});
-            if (!channel) {
-                return domain::fail<output::CommandOutput>(channel.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(channel.value()),
-                .human = output::channel_details(channel.value()),
-            });
-        });
-    }
-
-    if (path == "channel join") {
-        auto selector = require_positional(command, 0, "id-or-name");
-        if (!selector) {
-            return domain::fail<output::CommandOutput>(selector.error());
-        }
-        return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
-            auto joined = session.join_channel(domain::Selector{selector.value()});
-            if (!joined) {
-                return domain::fail<output::CommandOutput>(joined.error());
-            }
-            auto state = session.server_info();
-            if (!state) {
-                return domain::fail<output::CommandOutput>(state.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(state.value()),
-                .human = output::server_view(state.value()),
-            });
-        });
-    }
-
-    if (path == "client status") {
-        return client_status_process();
-    }
-
-    if (path == "client start") {
-        return start_client_process(command, config_store_);
-    }
-
-    if (path == "client stop") {
-        return stop_client_process(command.flags.contains("force"));
-    }
-
-    if (path == "client list") {
-        return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-            auto clients = session.list_clients();
-            if (!clients) {
-                return domain::fail<output::CommandOutput>(clients.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(clients.value()),
-                .human = output::client_table(clients.value()),
-            });
-        });
-    }
-
-    if (path == "client get") {
-        auto selector = require_positional(command, 0, "id-or-name");
-        if (!selector) {
-            return domain::fail<output::CommandOutput>(selector.error());
-        }
-        return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
-            auto client = session.get_client(domain::Selector{selector.value()});
-            if (!client) {
-                return domain::fail<output::CommandOutput>(client.error());
-            }
-            return domain::ok(output::CommandOutput{
-                .data = output::to_value(client.value()),
-                .human = output::client_details(client.value()),
-            });
-        });
-    }
-
-    if (path == "message send") {
-        auto target = require_option(command, "target");
-        auto id = require_option(command, "id");
-        auto text = require_option(command, "text");
-        if (!target) {
-            return domain::fail<output::CommandOutput>(target.error());
-        }
-        if (!id) {
-            return domain::fail<output::CommandOutput>(id.error());
-        }
-        if (!text) {
-            return domain::fail<output::CommandOutput>(text.error());
-        }
-
-        domain::MessageTargetKind kind{};
-        if (target.value() == "client") {
-            kind = domain::MessageTargetKind::client;
-        } else if (target.value() == "channel") {
-            kind = domain::MessageTargetKind::channel;
-        } else {
-            return domain::fail<output::CommandOutput>(cli_error(
-                "invalid_target", "--target must be client or channel"
-            ));
-        }
-
-        return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
-            auto sent = session.send_message(domain::MessageRequest{
-                .target_kind = kind,
-                .target = id.value(),
-                .text = text.value(),
-            });
-            if (!sent) {
-                return domain::fail<output::CommandOutput>(sent.error());
+    const auto result = [&]() -> domain::Result<output::CommandOutput> {
+        if (path == "version") {
+            const std::vector<std::string> backends = {"fake", "plugin"};
+            std::vector<output::ValueHolder> backend_values;
+            for (const auto& backend : backends) {
+                backend_values.push_back(output::make_string(backend));
             }
             return domain::ok(output::CommandOutput{
                 .data = output::make_object({
-                    {"target_kind", output::make_string(target.value())},
-                    {"target", output::make_string(id.value())},
-                    {"text", output::make_string(text.value())},
+                    {"name", output::make_string("ts")},
+                    {"version", output::make_string(TSCLI_VERSION)},
+                    {"compiled_backends", output::make_array(std::move(backend_values))},
                 }),
-                .human = std::string("message sent"),
+                .human = std::string("ts " TSCLI_VERSION),
             });
-        });
-    }
+        }
 
-    if (path == "events watch") {
-        auto count = parse_positive_size(command.options, "count", 5);
-        if (!count) {
-            return domain::fail<output::CommandOutput>(count.error());
-        }
-        auto timeout = parse_timeout_ms(command.options, 1000);
-        if (!timeout) {
-            return domain::fail<output::CommandOutput>(timeout.error());
-        }
-        return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
-            auto events = session.watch_events(count.value(), timeout.value());
-            if (!events) {
-                return domain::fail<output::CommandOutput>(events.error());
+        if (path == "config init") {
+            const bool force = command.flags.contains("force");
+            const auto config_path =
+                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
+            auto config = config_store_.init(config_path, force);
+            if (!config) {
+                return domain::fail<output::CommandOutput>(config.error());
             }
             return domain::ok(output::CommandOutput{
-                .data = output::to_value(events.value()),
-                .human = output::event_table(events.value()),
+                .data = output::make_object({
+                    {"path", output::make_string(config_path.string())},
+                    {"active_profile", output::make_string(config.value().active_profile)},
+                }),
+                .human = std::string("initialized config at " + config_path.string()),
             });
-        });
-    }
+        }
 
-    return domain::fail<output::CommandOutput>(app_error(
-        "cli", "unhandled_command", "command not implemented: " + path, domain::ExitCode::internal
-    ));
+        if (path == "config view") {
+            const auto config_path =
+                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
+            auto loaded = config_store_.load_or_default(config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"path", output::make_string(config_path.string())},
+                    {"active_profile", output::make_string(loaded.value().active_profile)},
+                    {"profiles", output::to_value(loaded.value().profiles)},
+                }),
+                .human = output::profile_table(loaded.value().profiles, loaded.value().active_profile),
+            });
+        }
+
+        if (path == "profile list") {
+            auto resolved = load_profile(config_store_, command);
+            if (!resolved) {
+                return domain::fail<output::CommandOutput>(resolved.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::to_value(resolved.value().config.profiles),
+                .human = output::profile_table(
+                    resolved.value().config.profiles, resolved.value().config.active_profile
+                ),
+            });
+        }
+
+        if (path == "profile use") {
+            auto name = require_positional(command, 0, "name");
+            if (!name) {
+                return domain::fail<output::CommandOutput>(name.error());
+            }
+            const auto config_path =
+                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
+            auto loaded = config_store_.load_or_default(config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+            auto found = config_store_.find_profile(loaded.value(), name.value());
+            if (!found) {
+                return domain::fail<output::CommandOutput>(found.error());
+            }
+            loaded.value().active_profile = name.value();
+            const auto saved = config_store_.save(config_path, loaded.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"active_profile", output::make_string(name.value())},
+                    {"path", output::make_string(config_path.string())},
+                }),
+                .human = std::string("active profile set to " + name.value()),
+            });
+        }
+
+        if (path == "completion") {
+            auto shell = require_positional(command, 0, "shell");
+            if (!shell) {
+                return domain::fail<output::CommandOutput>(shell.error());
+            }
+            auto script = completion::generate(shell.value());
+            if (!script) {
+                return domain::fail<output::CommandOutput>(script.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"shell", output::make_string(shell.value())},
+                    {"script", output::make_string(script.value())},
+                }),
+                .human = script.value(),
+            });
+        }
+
+        if (path == "plugin info" || path == "sdk info") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto info = session.plugin_info();
+                if (!info) {
+                    return domain::fail<output::CommandOutput>(info.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(info.value()),
+                    .human = output::plugin_info_view(info.value()),
+                });
+            });
+        }
+
+        if (path == "connect") {
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto& resolved) {
+                auto connected = session.connect(build_connect_request(resolved.profile));
+                if (!connected) {
+                    return domain::fail<output::CommandOutput>(connected.error());
+                }
+                auto state = session.connection_state();
+                if (!state) {
+                    return domain::fail<output::CommandOutput>(state.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(state.value()),
+                    .human = output::status_view(state.value()),
+                });
+            });
+        }
+
+        if (path == "disconnect") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto disconnected = session.disconnect("ts disconnect");
+                if (!disconnected) {
+                    return domain::fail<output::CommandOutput>(disconnected.error());
+                }
+                auto state = session.connection_state();
+                if (!state) {
+                    return domain::fail<output::CommandOutput>(state.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(state.value()),
+                    .human = output::status_view(state.value()),
+                });
+            });
+        }
+
+        if (path == "status") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto state = session.connection_state();
+                if (!state) {
+                    return domain::fail<output::CommandOutput>(state.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(state.value()),
+                    .human = output::status_view(state.value()),
+                });
+            });
+        }
+
+        if (path == "server info") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto info = session.server_info();
+                if (!info) {
+                    return domain::fail<output::CommandOutput>(info.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(info.value()),
+                    .human = output::server_view(info.value()),
+                });
+            });
+        }
+
+        if (path == "channel list") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto channels = session.list_channels();
+                if (!channels) {
+                    return domain::fail<output::CommandOutput>(channels.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(channels.value()),
+                    .human = output::channel_table(channels.value()),
+                });
+            });
+        }
+
+        if (path == "channel get") {
+            auto selector = require_positional(command, 0, "id-or-name");
+            if (!selector) {
+                return domain::fail<output::CommandOutput>(selector.error());
+            }
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto channel = session.get_channel(domain::Selector{selector.value()});
+                if (!channel) {
+                    return domain::fail<output::CommandOutput>(channel.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(channel.value()),
+                    .human = output::channel_details(channel.value()),
+                });
+            });
+        }
+
+        if (path == "channel join") {
+            auto selector = require_positional(command, 0, "id-or-name");
+            if (!selector) {
+                return domain::fail<output::CommandOutput>(selector.error());
+            }
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto joined = session.join_channel(domain::Selector{selector.value()});
+                if (!joined) {
+                    return domain::fail<output::CommandOutput>(joined.error());
+                }
+                auto state = session.server_info();
+                if (!state) {
+                    return domain::fail<output::CommandOutput>(state.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(state.value()),
+                    .human = output::server_view(state.value()),
+                });
+            });
+        }
+
+        if (path == "client status") {
+            return client_status_process();
+        }
+
+        if (path == "client start") {
+            return start_client_process(command, config_store_);
+        }
+
+        if (path == "client stop") {
+            return stop_client_process(command.flags.contains("force"));
+        }
+
+        if (path == "client list") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto clients = session.list_clients();
+                if (!clients) {
+                    return domain::fail<output::CommandOutput>(clients.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(clients.value()),
+                    .human = output::client_table(clients.value()),
+                });
+            });
+        }
+
+        if (path == "client get") {
+            auto selector = require_positional(command, 0, "id-or-name");
+            if (!selector) {
+                return domain::fail<output::CommandOutput>(selector.error());
+            }
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto client = session.get_client(domain::Selector{selector.value()});
+                if (!client) {
+                    return domain::fail<output::CommandOutput>(client.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(client.value()),
+                    .human = output::client_details(client.value()),
+                });
+            });
+        }
+
+        if (path == "message send") {
+            auto target = require_option(command, "target");
+            auto id = require_option(command, "id");
+            auto text = require_option(command, "text");
+            if (!target) {
+                return domain::fail<output::CommandOutput>(target.error());
+            }
+            if (!id) {
+                return domain::fail<output::CommandOutput>(id.error());
+            }
+            if (!text) {
+                return domain::fail<output::CommandOutput>(text.error());
+            }
+
+            domain::MessageTargetKind kind{};
+            if (target.value() == "client") {
+                kind = domain::MessageTargetKind::client;
+            } else if (target.value() == "channel") {
+                kind = domain::MessageTargetKind::channel;
+            } else {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "invalid_target", "--target must be client or channel"
+                ));
+            }
+
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto sent = session.send_message(domain::MessageRequest{
+                    .target_kind = kind,
+                    .target = id.value(),
+                    .text = text.value(),
+                });
+                if (!sent) {
+                    return domain::fail<output::CommandOutput>(sent.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"target_kind", output::make_string(target.value())},
+                        {"target", output::make_string(id.value())},
+                        {"text", output::make_string(text.value())},
+                    }),
+                    .human = std::string("message sent"),
+                });
+            });
+        }
+
+        if (path == "events watch") {
+            auto count = parse_positive_size(command.options, "count", 5);
+            if (!count) {
+                return domain::fail<output::CommandOutput>(count.error());
+            }
+            auto timeout = parse_timeout_ms(command.options, 1000);
+            if (!timeout) {
+                return domain::fail<output::CommandOutput>(timeout.error());
+            }
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto events = session.watch_events(count.value(), timeout.value());
+                if (!events) {
+                    return domain::fail<output::CommandOutput>(events.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(events.value()),
+                    .human = output::event_table(events.value()),
+                });
+            });
+        }
+
+        return domain::fail<output::CommandOutput>(app_error(
+            "cli", "unhandled_command", "command not implemented: " + path, domain::ExitCode::internal
+        ));
+    }();
+
+    if (!result) {
+        return domain::fail<output::CommandOutput>(contextualize_error(command, result.error()));
+    }
+    return result;
 }
 
 }  // namespace teamspeak_cli::cli
