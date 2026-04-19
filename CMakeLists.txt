@@ -76,8 +76,8 @@ function(ts_apply_defaults target_name)
   target_include_directories(
     ${target_name}
     PRIVATE
-      "${CMAKE_CURRENT_SOURCE_DIR}/src"
       "${TS_GENERATED_INCLUDE_DIR}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src"
   )
   target_link_libraries(${target_name} PRIVATE Threads::Threads)
   ts_enable_warnings(${target_name})

@@ -1,36 +1,72 @@
 # teamspeak-cli
 
-`teamspeak-cli` is a companion CLI for a TeamSpeak 3 client plugin. The `ts` binary talks to a local plugin over a control socket, and that plugin talks to regular TeamSpeak servers through the official TeamSpeak 3 client plugin API.
+`teamspeak-cli` is a terminal-first CLI for controlling a TeamSpeak 3 client through a local plugin bridge. The `ts` binary talks to a local control socket, and the plugin loaded inside the official TeamSpeak 3 client talks to regular TeamSpeak servers through the TeamSpeak 3 Client Plugin SDK.
 
-This is not ServerQuery, not WebQuery, and not a standalone TeamSpeak SDK `ClientLib` client.
+This project is not ServerQuery, not WebQuery, and not a standalone TeamSpeak `ClientLib` client.
 
-## Vision
+## What You Get
 
-The goal is a polished CLI in the style of `kubectl` or `gh` for client-side TeamSpeak workflows:
+- `ts`: the CLI users run
+- `ts3cli_plugin.so`: the optional TeamSpeak 3 client plugin used for live integration
+- `ts_built_test_plugin_host`: a local fake plugin host used by tests and CI
+- a fully local `built-test` profile for development without TeamSpeak installed
+- install and uninstall scripts for a user-level Linux `x86_64` setup
 
-- inspect the current TeamSpeak client session
-- connect the client to a server
-- list channels and clients
-- list clients within one channel or across all channels
-- inspect a specific channel or client
-- join channels
-- send text messages
-- stream asynchronous events
-- grow later into a persistent shell or TUI
+## Verified Paths
 
-## Current State
+The following flows were checked against the current repository state during this documentation audit:
 
-The repository currently ships three important pieces:
+- `make build-built-test`
+- `make test-built-test`
+- `make build`
+- `make test`
+- `./scripts/install.sh --help`
+- `./scripts/uninstall.sh --help`
 
-- `ts`: the CLI application
-- `built-test` backend: fully local development backend used in tests and CI
-- `plugin` backend: a local control-socket backend that talks to a TeamSpeak client plugin
+The TeamSpeak-backed Docker and `Xvfb` harness is available, but it is still the least stable path in the repo. Treat `make test-e2e` and `make env-up` as local integration tools, not as the primary always-green workflow.
 
-The default build targets the TeamSpeak-backed plugin runtime and auto-fetches the TeamSpeak-managed inputs it needs into `third_party/teamspeak/managed`. The `built-test` path keeps the project buildable and runnable without TeamSpeak installed.
+## Choose A Path
 
-## One-shot Install
+### Offline Development
 
-On Linux `x86_64`, you can download the TeamSpeak 3 client, build the CLI and plugin, and install everything for the current user with:
+Use this when you want to work on the CLI, config, rendering, socket protocol, or session layer without any proprietary TeamSpeak runtime on your machine.
+
+```bash
+make build-built-test
+make test-built-test
+
+./build-built-test/ts config init
+./build-built-test/ts profile use built-test
+./build-built-test/ts status
+./build-built-test/ts channel list
+```
+
+The `built-test` profile uses the in-process fake backend. It is the fastest path for normal development and the path exercised in CI.
+
+### TeamSpeak-backed Development
+
+Use this when you need the real TeamSpeak 3 client plugin and runtime bridge.
+
+```bash
+make build
+make test
+```
+
+`make build` does more than raw CMake defaults:
+
+- bootstraps managed TeamSpeak inputs under `third_party/teamspeak/managed`
+- configures the plugin-backed build
+- builds `ts`, `ts3cli_plugin.so`, tests, and helper binaries
+
+If you want to prefetch the managed runtime inputs first, run:
+
+```bash
+make deps
+```
+
+### User Install
+
+On Linux `x86_64`, install the CLI, TeamSpeak client bundle, plugin, launcher, docs, and starter config for the current user with:
 
 ```bash
 ./scripts/install.sh
@@ -38,355 +74,218 @@ On Linux `x86_64`, you can download the TeamSpeak 3 client, build the CLI and pl
 
 By default the installer:
 
-- caches TeamSpeak-managed downloads under `~/.cache/teamspeak-cli/install`
+- caches managed downloads under `~/.cache/teamspeak-cli/install`
 - builds a `Release` tree in `build-install`
-- installs `ts` plus the repo docs/examples under `~/.local`
-- installs the TeamSpeak client plus `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
-- creates `~/.local/bin/ts3client` as a launcher for the installed TeamSpeak client
-- installs `~/.local/bin/ts-uninstall` to remove the user-level install later
-- initializes `~/.config/ts/config.ini` if it does not already exist
+- installs `ts` and the bundled docs/examples under `~/.local`
+- installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
+- installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
+- installs `~/.local/bin/ts-uninstall`
+- initializes `~/.config/ts/config.ini` when that file does not already exist
 
-Run `./scripts/install.sh --help` for path overrides such as `--prefix`, `--client-dir`, and `--config-path`.
+Inspect overrides with:
 
-After install, make sure `~/.local/bin` is on `PATH`. `ts client start` will launch the TeamSpeak client in a managed headless `Xvfb` session when no GUI display is available, and it exports the active profile's control socket path so the started client and `ts plugin info` agree on the same socket. `ts3client` launches the installed wrapper directly. Use `ts client status` to check the tracked local process, enable the plugin if TeamSpeak has not already enabled it, and verify the bridge with `ts plugin info`. Set `TS_CLIENT_HEADLESS=0` to disable the managed headless launch or `TS_CLIENT_HEADLESS=1` to force it.
+```bash
+./scripts/install.sh --help
+```
 
-To remove the install later, run:
+Remove a user-level install later with:
 
 ```bash
 ts-uninstall
 ```
 
-The uninstaller removes the installed binaries, launcher, TeamSpeak client bundle, managed download cache, installer build directory, and the generated config file when the installer created it. Use `ts-uninstall --keep-config` if you want to keep `~/.config/ts/config.ini`.
+Use `ts-uninstall --keep-config` if you want to preserve a config file that the installer created.
 
-## Build
+## Build Matrix
 
-If you do not want to remember the CMake and test commands, use the top-level `Makefile`:
+There are two important build surfaces:
 
-```bash
-make help
-```
+- `make ...`: the repo's high-level workflow for normal use
+- raw `cmake ...`: the low-level workflow when you want precise control
 
-To prefetch the TeamSpeak-managed assets without launching the environment:
+Raw CMake defaults do not build the TeamSpeak plugin target. They build the CLI, the built-test host, and the test binaries.
 
-```bash
-make deps
-```
-
-That target caches the TeamSpeak 3 client bundle, the TeamSpeak 3 Client Plugin SDK, and `xdotool`, then writes default paths into `third_party/teamspeak/managed/deps.mk` and `third_party/teamspeak/managed/deps.env`.
-
-### CLI and tests
-
-```bash
-make deps
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure -E ts_plugin_server_e2e_test
-```
-
-Equivalent Make targets:
-
-```bash
-make build
-make test
-```
-
-## GitHub Releases
-
-Keep normal CI and binary publishing separate:
-
-- `.github/workflows/ci.yml` runs on branch pushes and pull requests to verify the project still configures, builds, and passes tests.
-- `.github/workflows/release.yml` runs only when you push a version tag matching `v*`, rebuilds the project in `Release` mode, packages `ts`, and publishes the archive to a GitHub Release.
-
-The release archive is intentionally scoped to the CLI binary and installed docs/examples. It does not bundle the proprietary TeamSpeak client or plugin SDK.
-
-To dry-run the release packaging locally:
-
-```bash
-make package-release PACKAGE_VERSION=v0.2.0
-```
-
-That produces:
-
-- `dist/ts-v0.2.0-linux-x86_64.tar.gz`
-- `dist/ts-v0.2.0-linux-x86_64.tar.gz.sha256`
-
-To publish from GitHub Actions, create and push a version tag:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-The release workflow will:
-
-- run the test suite first
-- build a clean `Release` binary with sanitizers and tests disabled
-- stage the `cmake --install` output into a versioned tarball
-- create or update the matching GitHub Release and upload the archive plus checksum
-
-Users can then download and unpack the asset with:
-
-```bash
-curl -LO https://github.com/<owner>/teamspeak-cli/releases/download/v0.2.0/ts-v0.2.0-linux-x86_64.tar.gz
-tar -xzf ts-v0.2.0-linux-x86_64.tar.gz
-```
-
-### Built-test fallback
-
-If you want the fully local fake/offline path instead of the TeamSpeak-backed default:
-
-```bash
-make build-built-test
-make test-built-test
-```
-
-### TeamSpeak-backed build
-
-The TeamSpeak 3 Client Plugin SDK is not bundled here. The default Makefile flow downloads it into `third_party/teamspeak/managed` and builds the plugin-backed tree for you:
-
-```bash
-make deps
-make build
-```
-
-If you want to drive CMake directly, configure the default build like this:
+Example plain CMake configure:
 
 ```bash
 cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=ninja
+```
+
+To build the TeamSpeak plugin with raw CMake, opt in explicitly:
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=ninja \
   -DTS_ENABLE_TS3_PLUGIN=ON \
   -DTS_ENABLE_TS3_E2E=ON \
   -DTS3_MANAGED_DIR=third_party/teamspeak/managed
-
-cmake --build build
 ```
 
-If auto-discovery is not enough, pass:
+If SDK auto-discovery is not enough, pass `-DTS3_PLUGIN_SDK_INCLUDE_DIR=/path/to/ts3client-pluginsdk/include`.
 
-- `-DTS3_PLUGIN_SDK_INCLUDE_DIR=/path/to/ts3client-pluginsdk/include`
+If `cmake` or `ninja` are not on `PATH`, prefer the top-level `make` targets instead of hardcoding one machine's fallback toolchain path.
 
-## TeamSpeak-backed Runtime Prerequisites
+## Configuration And Profiles
 
-To use the default `plugin` backend against a regular TeamSpeak server, you need:
-
-- a TeamSpeak 3 client installation
-- the TeamSpeak 3 Client Plugin SDK to build the plugin
-- the built `ts3cli_plugin` shared library installed into the TeamSpeak client’s plugin directory
-- the plugin enabled in the TeamSpeak client
-
-The TeamSpeak client and the plugin SDK are proprietary TeamSpeak components and are not redistributed in this repository.
-
-## Config and Profiles
-
-`ts` uses an INI config file:
+`ts` uses an INI config file.
 
 - default path: `~/.config/ts/config.ini`
-- override with `--config /path/to/config.ini`
+- override per command with `--config /path/to/config.ini`
+- initialize a starter file with `ts config init`
 
-Initialize it with:
+The starter config ships with two profiles:
 
-```bash
-./build/ts config init
-```
+- `built-test`: fully local fake backend
+- `plugin-local`: local socket backend for a real TeamSpeak client plugin
 
-The starter config includes:
-
-- `plugin-local`
-- `built-test`
-
-Switch profiles with:
+Useful profile commands:
 
 ```bash
-./build/ts profile use plugin-local
+ts config init
+ts config view
+ts profile list
+ts profile use built-test
 ```
 
-The `plugin` backend uses a local control socket path. By default it resolves from:
+The plugin socket path resolves in this order:
 
+- `control_socket_path=` in the selected profile, if non-empty
 - `TS_CONTROL_SOCKET_PATH`, if set
-- otherwise an OS-appropriate local runtime path such as `/tmp/ts3cli-<uid>.sock`
+- otherwise a runtime-local default such as `$XDG_RUNTIME_DIR/ts3cli.sock` or `/tmp/ts3cli-<uid>.sock`
 
-Leave `control_socket_path=` blank in config unless you intentionally want to pin the plugin bridge to one fixed socket path.
+Leave `control_socket_path=` blank unless you intentionally want to pin one fixed socket path in config.
 
-## Example Commands
+## Everyday Commands
 
-Initialize config and inspect profiles:
+The CLI is organized into small command groups:
+
+- `version`
+- `plugin info`
+- `config init`, `config view`
+- `profile list`, `profile use`
+- `connect`, `disconnect`, `status`, `server info`
+- `channel list`, `channel get`, `channel join`, `channel clients`
+- `client status`, `client start`, `client stop`, `client list`, `client get`
+- `message send`
+- `events watch`
+- `completion bash|zsh|fish|powershell`
+
+Examples against the offline backend:
 
 ```bash
-./build/ts config init
-./build/ts profile list
+./build-built-test/ts --profile built-test status
+./build-built-test/ts --profile built-test channel list --json
+./build-built-test/ts --profile built-test channel clients Engineering
+./build-built-test/ts --profile built-test events watch --count 5
 ```
 
-Talk to the `built-test` backend:
+Examples against the real plugin backend after the TeamSpeak client is running and the plugin is enabled:
 
 ```bash
-./build/ts profile use built-test
-./build/ts status
-./build/ts channel list --json
-./build/ts channel clients Engineering
-./build/ts events watch --count 5
+ts --profile plugin-local plugin info
+ts --profile plugin-local status
+ts --profile plugin-local channel list
+ts --profile plugin-local client list
+ts --profile plugin-local message send --target channel --id Lobby --text "hello"
 ```
 
-Talk to the plugin backend after the TeamSpeak client plugin is running:
+To connect through the real client:
 
 ```bash
-./build/ts profile use plugin-local
-./build/ts plugin info
-./build/ts status
-./build/ts channel list
-./build/ts channel clients
-./build/ts client list
-./build/ts message send --target channel --id Lobby --text "hello"
-```
-
-Ask the TeamSpeak client plugin to open a new server connection:
-
-```bash
-./build/ts --profile plugin-local \
+ts --profile plugin-local \
   --server voice.example.com:9987 \
   --nickname terminal \
   connect
 ```
 
-`ts connect` now waits for the connection attempt to complete, with a 15 second timeout, and streams human-readable progress as TeamSpeak reports it. `ts disconnect`, `ts client start`, and `ts client stop` follow the same default pattern for human-oriented terminal use. Use `--json` or `--output yaml` if you explicitly want one structured result at the end instead of streamed prose.
+When output is `table`, these commands stream human-readable progress by default:
 
-## Sample Output
+- `connect`
+- `disconnect`
+- `client start`
+- `client stop`
 
-```text
-$ ts plugin info
-Backend      fake
-Transport    in-process
-Plugin       fake-plugin-host
-Version      development
-Available    yes
-SocketPath   /tmp/ts3cli-1000.sock
-Note         built-test plugin host for local development and CI
-```
+When output is `json` or `yaml`, they print one structured result at the end instead.
 
-```text
-$ ts channel list
-ID  Name        Parent  Clients  Default
-1   Lobby       -       1        yes
-2   Engineering -       2        no
-3   Operations  -       1        no
-4   Breakout    2       0        no
-```
+## TeamSpeak-backed Runtime Notes
 
-## Testing
+The repo-managed TeamSpeak runtime is intentionally pinned, not floating:
 
-The default test suite covers:
-
-- config parsing and persistence
-- rendering
-- session orchestration
-- event translation
-- CLI parse and dispatch
-- socket backend round-trips
-- end-to-end CLI execution against the `built-test` backend
-- end-to-end CLI execution against a built-test plugin host over the same control socket used by the default plugin path
-
-Run everything with:
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-The repository does not yet automate a full TeamSpeak-client-plus-regular-server runtime test in CI. That path requires a local TeamSpeak client installation and plugin loading, which is documented as a manual integration step for now.
-
-An optional TeamSpeak-backed E2E harness is available for local runs. It starts:
-
-- a TeamSpeak 3 server in Docker
-- a TeamSpeak 3 client under `Xvfb`
-- the `ts3cli_plugin` shared library inside that client
-
-and then drives the `ts` CLI against that TeamSpeak-backed session.
-
-Example:
-
-```bash
-cmake -S . -B build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DTS_ENABLE_TS3_PLUGIN=ON \
-  -DTS_ENABLE_TS3_E2E=ON \
-  -DTS3_MANAGED_DIR=third_party/teamspeak/managed
-
-cmake --build build
-
-ctest --test-dir build --output-on-failure -R ts_plugin_server_e2e_test
-```
-
-Equivalent Make target:
-
-```bash
-make test-e2e
-```
-
-`make build`, `make test-e2e`, and `make env-up` automatically verify the managed TeamSpeak-backed runtime dependencies and bootstrap them into `third_party/teamspeak/managed` when they are missing.
-
-If you want to pre-download the TeamSpeak client bundle, the TeamSpeak 3 Client Plugin SDK, and `xdotool` first:
-
-```bash
-make deps
-```
-
-After that, the generated defaults are enough for:
-
-```bash
-make build
-make test-e2e
-```
-
-The live harness is intentionally opt-in. It still depends on `Xvfb` plus a working Docker daemon that the current user can access, but it now bootstraps the rest itself:
-
-- downloads the default TeamSpeak 3 Linux client bundle into `third_party/teamspeak/managed/`
-- verifies the archive SHA256 before extracting it
-- reuses a system `xdotool` if available, or downloads `xdotool` plus `libxdo3` into the same cache on Debian/Ubuntu-style hosts
-
-As of April 18, 2026, the default client bootstrap target is TeamSpeak 3 Linux `3.6.2` with SHA256 `59f110438971a23f904a700e7dd0a811cf99d4e6b975ba3aa45962d43b006422`, matching the official TeamSpeak downloads page.
+- the Linux client bootstrap defaults live in `tests/e2e/runtime_common.sh`
+- the managed cache lives under `third_party/teamspeak/managed`
+- `make deps` writes resolved paths to `third_party/teamspeak/managed/deps.mk` and `deps.env`
 
 Useful overrides:
 
-- `TS3_MANAGED_DIR` to move the download cache
-- `TS3_CLIENT_DIR` to reuse an already extracted TeamSpeak client tree
-- `TS3_CLIENT_VERSION`, `TS3_CLIENT_URL`, `TS3_CLIENT_SHA256` to pin a different TeamSpeak client artifact
-- `TS3_XDOTOOL` and `TS3_XDOTOOL_LIBRARY_PATH` to force a specific xdotool binary/runtime
+- `TS3_MANAGED_DIR`
+- `TS3_CLIENT_DIR`
+- `TS3_CLIENT_VERSION`
+- `TS3_CLIENT_URL`
+- `TS3_CLIENT_SHA256`
+- `TS3_XDOTOOL`
+- `TS3_XDOTOOL_LIBRARY_PATH`
 
-The script still runs the client from a disposable copy of the extracted bundle so the cached or user-supplied client tree is not mutated.
+The TeamSpeak-backed local harness starts:
 
-For manual verification, bring the TeamSpeak-backed runtime up and leave it running:
+- a TeamSpeak 3 server in Docker
+- a TeamSpeak 3 client under `Xvfb`
+- `ts3cli_plugin.so` inside that client
+
+Run it directly:
 
 ```bash
-./tests/e2e/run_plugin_server_env.sh ./build/ts ./build/ts3cli_plugin.so
+make test-e2e
 ```
 
-Equivalent Make targets:
+Or keep it running for manual checks:
 
 ```bash
 make env-up
 make env-info
 make env-ts ARGS='plugin info'
 make env-ts ARGS='status'
-make env-ts ARGS='channel list'
 make env-down
 ```
 
-That script prints an `env.sh` path you can source before running `ts` manually. Tear it down with:
+This path is still host-sensitive. TeamSpeak first-run dialogs, display quirks, audio backends, or upstream UI changes can still break automation even when the plugin itself loads correctly.
 
-```bash
-./tests/e2e/stop_plugin_server_env.sh /path/to/env.state
-```
+## Troubleshooting
 
-## Limitations
+If `ts plugin info` or `ts status` says the plugin bridge is unavailable:
 
-- The `built-test` backend is the only backend exercised in CI.
-- The default plugin shared library still depends on the TeamSpeak 3 Client Plugin SDK.
-- The TeamSpeak-backed E2E test is local-only and still depends on a host `Xvfb` plus a working Docker daemon that the current user can access.
-- Audio and voice controls are not exposed yet.
+- run `ts client start`
+- make sure the TeamSpeak client plugin is enabled
+- confirm the CLI and client agree on the same socket path
+- use `ts plugin info` again to inspect the resolved socket path and backend note
 
-## Developer Notes
+If `ts client start` cannot find a launcher:
 
-- Format with `clang-format -i` using the repository `.clang-format`.
-- Keep CLI logic in `src/teamspeak_cli/cli/` and backend/plugin details out of command handlers.
-- Prefer extending the socket/backend seam instead of letting TeamSpeak callback details leak into CLI code.
+- install the user-level bundle with `./scripts/install.sh`
+- or set `TS_CLIENT_LAUNCHER`
+- or set `TS3_CLIENT_DIR` to a TeamSpeak client tree containing `ts3client_runscript.sh`
+
+If headless launch fails:
+
+- install `Xvfb`
+- or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
+- or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
+
+If `make test-e2e` fails after the client starts:
+
+- read the temp directory that the harness prints on failure
+- inspect the client log, visible dialogs, and socket path in that temp dir
+- expect to debug first-run TeamSpeak dialogs and host-specific runtime issues before treating the harness as stable
+
+## Development Notes
+
+- format C++ with `clang-format -i`
+- prefer `rg` for searches
+- keep CLI parsing and command dispatch in `src/teamspeak_cli/cli/`
+- keep TeamSpeak-specific details behind the backend and socket bridge layers
+- prefer extending the backend seam over leaking TeamSpeak callback details into the CLI
 
 ## Documentation
 

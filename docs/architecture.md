@@ -2,49 +2,49 @@
 
 ## Goal
 
-`ts` is a CLI companion for a TeamSpeak 3 client plugin. The CLI should stay scripting-friendly and terminal-first, while the plugin does the actual TeamSpeak client integration against regular TeamSpeak servers.
+`ts` should feel like a normal Unix CLI while delegating all live TeamSpeak work to a backend. In the real integration path, that backend is a TeamSpeak 3 client plugin reached over a local socket. In development and CI, that backend is a fake implementation.
 
-## Layers
+## Main Targets
 
-- `src/teamspeak_cli/cli/`
-  command parsing, help, completions, and dispatch
-- `src/teamspeak_cli/config/`
-  config discovery, profile loading, persistence, and overrides
-- `src/teamspeak_cli/domain/`
-  IDs, result/error types, session models, and event models
-- `src/teamspeak_cli/events/`
-  thread-safe event queue
-- `src/teamspeak_cli/output/`
-  table/detail rendering plus stable JSON/YAML output
-- `src/teamspeak_cli/sdk/`
-  backend abstraction plus concrete `fake`, `plugin` socket, and plugin-host backends
-- `src/teamspeak_cli/bridge/`
-  local control-socket protocol and server implementation
-- `src/teamspeak_cli/plugin/`
-  TeamSpeak 3 plugin entry points
-- `src/teamspeak_cli/session/`
-  orchestration layer used by commands
+- `ts`: the CLI executable
+- `ts3cli_plugin`: the TeamSpeak 3 client plugin shared library
+- `ts_built_test_plugin_host`: a local fake plugin host used in tests
 
-## Runtime Shape
+## Layer Map
 
-There are two main runtime modes.
+- `src/teamspeak_cli/cli/`: argument parsing, help, completions, command dispatch, and client-process helpers
+- `src/teamspeak_cli/config/`: config discovery, parsing, persistence, profile selection, and per-command overrides
+- `src/teamspeak_cli/domain/`: shared models, IDs, result types, and event shapes
+- `src/teamspeak_cli/events/`: thread-safe event queue
+- `src/teamspeak_cli/output/`: table, detail, JSON, and YAML rendering
+- `src/teamspeak_cli/sdk/`: backend interface plus `fake`, socket-backed `plugin`, and plugin-host implementations
+- `src/teamspeak_cli/bridge/`: local socket protocol and bridge server
+- `src/teamspeak_cli/plugin/`: TeamSpeak 3 plugin exports and callback entry points
+- `src/teamspeak_cli/session/`: orchestration layer used by command handlers
 
-### Development and CI
+## Runtime Modes
 
-`ts` talks to the `fake` backend directly or over the socket bridge through `ts_built_test_plugin_host`.
+### Built-test mode
 
-This keeps the project open-source, deterministic, and testable without TeamSpeak installed.
+`ts` talks either directly to the fake backend or to that same fake backend through the socket bridge and `ts_built_test_plugin_host`.
 
-### TeamSpeak-backed Integration
+This is the stable development path because it is:
 
-1. The TeamSpeak 3 client loads `ts3cli_plugin`.
+- open source
+- deterministic
+- fast
+- exercised in CI
+
+### TeamSpeak-backed mode
+
+1. The official TeamSpeak 3 client loads `ts3cli_plugin`.
 2. The plugin starts a local control socket.
 3. `ts` connects to that socket through the `plugin` backend.
-4. The plugin host backend uses the official TeamSpeak 3 plugin callbacks and exported client functions to inspect and control the live TeamSpeak client session.
+4. The plugin host backend translates CLI requests into TeamSpeak 3 client API calls.
 
 ## Backend Boundary
 
-The central seam is `sdk::Backend`.
+The key seam is `sdk::Backend`.
 
 That interface exposes the operations the CLI cares about:
 
@@ -55,47 +55,45 @@ That interface exposes the operations the CLI cares about:
 - send text messages
 - read translated events
 
-The CLI and session layers depend on that interface, not on TeamSpeak callback types.
+The CLI and session layers depend on this interface, not on TeamSpeak callback types.
 
 ## Bridge Protocol
 
-The CLI-side `plugin` backend does not call TeamSpeak APIs directly. It speaks a simple line protocol over a local socket:
+The CLI-side plugin backend never calls TeamSpeak APIs directly. It uses a small line-based local socket protocol:
 
-- requests are one command per connection
-- replies are explicit success or error envelopes
-- domain objects are serialized into small, typed record lines
+- one request per connection
+- explicit success and error envelopes
+- serialized domain objects rather than TeamSpeak-native structs
 
-That protocol is used by:
+The same protocol is used by:
 
-- the built-test plugin-host process in tests
-- the TeamSpeak client plugin at runtime
+- the built-test plugin host in automated tests
+- the real TeamSpeak client plugin at runtime
 
 ## Event Translation
 
-The plugin backend translates TeamSpeak callbacks into stable domain events and pushes them into `events::EventQueue`.
+The TeamSpeak side translates client callbacks into stable domain events and pushes them into `events::EventQueue`.
 
-That keeps callback-thread behavior and TeamSpeak-specific details inside the plugin/backend layer.
+That keeps callback-thread behavior and TeamSpeak-specific details behind the backend boundary.
 
-## Session Model
+## Command Lifecycle
 
 The CLI currently favors one-shot commands:
 
-1. load profile
-2. create backend
-3. initialize backend
+1. load config and resolve a profile
+2. create one backend object
+3. initialize it
 4. run one command
-5. shut down backend object
+5. shut down the CLI-side backend object
 
-For the `plugin` backend, this does not tear down the TeamSpeak client session. It only tears down the CLI-side socket client object.
+For the real plugin backend, this does not stop the TeamSpeak client session. It only tears down the short-lived socket client that served the command.
 
-That keeps the command behavior predictable while leaving room for a future long-running shell or TUI.
+## Testing Shape
 
-## Testing Strategy
+The repo has three practical layers of coverage:
 
-The repository now has three useful levels of coverage:
+- unit tests for config, output, session, and event behavior
+- bridge tests using the fake backend over the same socket protocol used by the live plugin path
+- full CLI end-to-end tests where the built binary talks to `ts_built_test_plugin_host`
 
-- unit tests for config, rendering, and session behavior
-- direct bridge tests using `SocketBridgeServer` with the built-test backend
-- full CLI end-to-end tests where the built `ts` binary talks to `ts_built_test_plugin_host`
-
-The missing piece is a fully automated TeamSpeak-client-plus-regular-server integration run, which remains a manual local validation path for now.
+There is also a TeamSpeak-backed local harness, but it should still be treated as host-sensitive integration tooling rather than the primary stable test surface.

@@ -1,42 +1,59 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is currently minimal and only exposes the root workspace plus a `.codex` marker file. There is no established source or test layout yet. Keep new code organized from the start:
 
-- Place application code in `src/teamspeak_cli/`.
-- Place tests in `tests/`.
-- Keep small fixtures or sample inputs in `tests/fixtures/`.
-- Store project notes or design docs in `docs/` when needed.
+This is a C++20 CMake project with a CLI, a TeamSpeak plugin, shell tooling, and both offline and TeamSpeak-backed test paths. Keep code and docs in the established layout:
 
-Avoid mixing scripts, library code, and test data at the repository root.
+- `src/teamspeak_cli/`: application, bridge, backend, and plugin code
+- `tests/`: C++ test binaries and end-to-end shell checks
+- `tests/e2e/`: TeamSpeak-backed and built-test harness scripts
+- `tests/fixtures/`: small test inputs
+- `docs/`: user and developer documentation
+- `scripts/`: install and uninstall entry points
+
+Avoid adding new top-level scripts or loose source files when an existing directory already fits.
 
 ## Build, Test, and Development Commands
-There is no committed build toolchain in the current snapshot. When adding one, keep the command surface small and document it here and in the primary README. Prefer predictable commands such as:
 
-- `python -m pytest` to run the full test suite
-- `ruff check .` for linting
-- `ruff format .` for formatting
+Prefer the top-level `Makefile` unless you specifically need raw CMake control:
 
-If the project adopts another language or package manager, update this section immediately rather than leaving stale examples behind.
+- `make help` to list the supported workflows
+- `make build-built-test` to build the offline development path
+- `make test-built-test` to run the offline suite
+- `make build` to build the TeamSpeak-backed tree and bootstrap managed dependencies
+- `make test` to run the default automated suite without the Docker and `Xvfb` E2E case
+- `make test-e2e` to run the TeamSpeak-backed local integration harness
+- `./scripts/install.sh` for a user-level install
+- `./scripts/uninstall.sh` or `ts-uninstall` to remove a user-level install
+
+If you use raw CMake, remember that plugin builds are opt-in with `-DTS_ENABLE_TS3_PLUGIN=ON`.
 
 ## Coding Style & Naming Conventions
-Use 4-space indentation for Python and keep files ASCII unless a non-ASCII character is required. Follow these naming defaults:
 
-- Modules and packages: `snake_case`
-- Classes: `PascalCase`
-- Functions, methods, variables: `snake_case`
-- Constants: `UPPER_SNAKE_CASE`
+Use 4-space indentation and keep files ASCII unless a non-ASCII character is required. Follow these naming defaults:
 
-Favor small modules, explicit imports, and short docstrings for non-obvious behavior.
+- directories, files, functions, methods, variables: `snake_case`
+- classes, structs, enums: `PascalCase`
+- constants: `UPPER_SNAKE_CASE`
+
+Use the repository `.clang-format` for C++ formatting. Keep TeamSpeak-specific details behind backend, bridge, and plugin boundaries instead of mixing them into command parsing or rendering code.
 
 ## Testing Guidelines
-Add tests alongside every new feature or bug fix. Name test files `test_*.py` and test functions `test_<behavior>()`. Keep fixtures local to the test module unless they are shared broadly. Aim for meaningful coverage of CLI behavior, parsing, and error paths, not just happy-path execution.
+
+Add or update tests with every feature or bug fix. The main test surfaces are:
+
+- focused C++ tests in `tests/*_test.cpp`
+- built-test CLI and bridge end-to-end checks
+- local-only TeamSpeak-backed shell harnesses in `tests/e2e/`
+
+Prefer the built-test path for most new coverage because it is deterministic and exercised in automation. Use the TeamSpeak-backed harness when the change genuinely depends on the real client plugin runtime.
 
 ## Commit & Pull Request Guidelines
-Git history is not available in this workspace snapshot, so use concise, imperative commit messages such as `Add CLI config loader` or `Fix argument parsing error`. Keep pull requests focused and include:
 
-- A short summary of behavior changes
-- Test evidence or a note explaining why tests were not run
-- Linked issues or task references when applicable
+Use concise, imperative commit messages such as `Add socket bridge error hint` or `Document TeamSpeak-backed build path`. Keep pull requests focused and include:
 
-Update this guide as soon as the repository gains a real toolchain or directory structure.
+- a short summary of behavior changes
+- test evidence or a note explaining why tests were not run
+- linked issues or task references when applicable
+
+Update this guide whenever the build surface, runtime assumptions, or directory structure change.
