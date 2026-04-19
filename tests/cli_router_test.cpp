@@ -689,10 +689,18 @@ int main() {
     };
 
     EnvGuard discovered_process_env("TS_CLIENT_DISCOVERY_NAME", discovered_process_name);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto client_status_discovered = router.dispatch(client_status.value());
-    tests::expect(client_status_discovered.ok(), "client status with untracked process should succeed");
-    const auto discovered_json = output::render(client_status_discovered.value(), output::Format::json);
+    teamspeak_cli::domain::Result<teamspeak_cli::output::CommandOutput> client_status_discovered =
+        router.dispatch(client_status.value());
+    std::string discovered_json;
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        tests::expect(client_status_discovered.ok(), "client status with untracked process should succeed");
+        discovered_json = output::render(client_status_discovered.value(), output::Format::json);
+        if (discovered_json.find("\"status\":\"running\"") != std::string::npos) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        client_status_discovered = router.dispatch(client_status.value());
+    }
     tests::expect_contains(
         discovered_json,
         "\"status\":\"running\"",
