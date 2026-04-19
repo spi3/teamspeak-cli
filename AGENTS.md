@@ -6,7 +6,7 @@ This is a C++20 CMake project with a CLI, a TeamSpeak plugin, shell tooling, and
 
 - `src/teamspeak_cli/`: application, bridge, backend, and plugin code
 - `tests/`: C++ test binaries and end-to-end shell checks
-- `tests/e2e/`: TeamSpeak-backed and built-test harness scripts
+- `tests/e2e/`: TeamSpeak-backed and mock harness scripts
 - `tests/fixtures/`: small test inputs
 - `docs/`: user and developer documentation
 - `scripts/`: install and uninstall entry points
@@ -18,8 +18,8 @@ Avoid adding new top-level scripts or loose source files when an existing direct
 Prefer the top-level `Makefile` unless you specifically need raw CMake control:
 
 - `make help` to list the supported workflows
-- `make build-built-test` to build the offline development path
-- `make test-built-test` to run the offline suite
+- `make build-mock` to build the offline development path
+- `make test-mock` to run the offline suite
 - `make build` to build the TeamSpeak-backed tree and bootstrap managed dependencies
 - `make test` to run the default automated suite without the Docker and `Xvfb` E2E case
 - `make test-e2e` to run the TeamSpeak-backed local integration harness
@@ -43,10 +43,10 @@ Use the repository `.clang-format` for C++ formatting. Keep TeamSpeak-specific d
 Add or update tests with every feature or bug fix. The main test surfaces are:
 
 - focused C++ tests in `tests/*_test.cpp`
-- built-test CLI and bridge end-to-end checks
+- mock CLI and bridge end-to-end checks
 - local-only TeamSpeak-backed shell harnesses in `tests/e2e/`
 
-Prefer the built-test path for most new coverage because it is deterministic and exercised in automation. Use the TeamSpeak-backed harness when the change genuinely depends on the real client plugin runtime.
+Prefer the mock path for most new coverage because it is deterministic and exercised in automation. Use the TeamSpeak-backed harness when the change genuinely depends on the real client plugin runtime.
 
 ## Commit & Pull Request Guidelines
 

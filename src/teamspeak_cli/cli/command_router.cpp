@@ -2240,17 +2240,17 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
             if (!found) {
                 return domain::fail<output::CommandOutput>(found.error());
             }
-            loaded.value().active_profile = name.value();
+            loaded.value().active_profile = found.value()->name;
             const auto saved = config_store_.save(config_path, loaded.value());
             if (!saved) {
                 return domain::fail<output::CommandOutput>(saved.error());
             }
             return domain::ok(output::CommandOutput{
                 .data = output::make_object({
-                    {"active_profile", output::make_string(name.value())},
+                    {"active_profile", output::make_string(found.value()->name)},
                     {"path", output::make_string(config_path.string())},
                 }),
-                .human = std::string("active profile set to " + name.value()),
+                .human = std::string("active profile set to " + found.value()->name),
             });
         }
 

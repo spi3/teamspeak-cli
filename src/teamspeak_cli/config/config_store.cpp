@@ -9,8 +9,43 @@
 namespace teamspeak_cli::config {
 namespace {
 
+constexpr auto kLegacyMockProfileName = "built-test";
+constexpr auto kMockProfileName = "mock-local";
+constexpr auto kLegacyMockIdentity = "built-test-identity";
+constexpr auto kMockIdentity = "mock-local-identity";
+
 auto config_error(std::string code, std::string message) -> domain::Error {
     return domain::make_error("config", std::move(code), std::move(message), domain::ExitCode::config);
+}
+
+auto is_mock_profile_alias(const std::string& name) -> bool {
+    return name == kMockProfileName || name == kLegacyMockProfileName;
+}
+
+void migrate_legacy_mock_profile(domain::AppConfig& config) {
+    bool has_mock_profile = false;
+    for (const auto& profile : config.profiles) {
+        if (profile.name == kMockProfileName) {
+            has_mock_profile = true;
+            break;
+        }
+    }
+
+    if (!has_mock_profile) {
+        for (auto& profile : config.profiles) {
+            if (profile.name == kLegacyMockProfileName) {
+                profile.name = kMockProfileName;
+                if (profile.identity == kLegacyMockIdentity) {
+                    profile.identity = kMockIdentity;
+                }
+                has_mock_profile = true;
+            }
+        }
+    }
+
+    if (config.active_profile == kLegacyMockProfileName && has_mock_profile) {
+        config.active_profile = kMockProfileName;
+    }
 }
 
 auto render_config(const domain::AppConfig& config) -> std::string {
@@ -164,6 +199,8 @@ auto ConfigStore::load(const std::filesystem::path& path) const -> domain::Resul
         config = default_config();
     }
 
+    migrate_legacy_mock_profile(config);
+
     return domain::ok(std::move(config));
 }
 
@@ -216,6 +253,13 @@ auto ConfigStore::find_profile(domain::AppConfig& config, const std::string& nam
             return domain::ok(&profile);
         }
     }
+    if (is_mock_profile_alias(name)) {
+        for (auto& profile : config.profiles) {
+            if (is_mock_profile_alias(profile.name)) {
+                return domain::ok(&profile);
+            }
+        }
+    }
     return domain::fail<domain::Profile*>(config_error("profile_not_found", "profile not found: " + name));
 }
 
@@ -224,6 +268,13 @@ auto ConfigStore::find_profile(const domain::AppConfig& config, const std::strin
     for (const auto& profile : config.profiles) {
         if (profile.name == name) {
             return domain::ok(&profile);
+        }
+    }
+    if (is_mock_profile_alias(name)) {
+        for (const auto& profile : config.profiles) {
+            if (is_mock_profile_alias(profile.name)) {
+                return domain::ok(&profile);
+            }
         }
     }
     return domain::fail<const domain::Profile*>(config_error(
@@ -238,12 +289,12 @@ auto ConfigStore::default_config() const -> domain::AppConfig {
         .profiles =
             {
                 domain::Profile{
-                    .name = "built-test",
+                    .name = kMockProfileName,
                     .backend = "mock",
                     .host = "127.0.0.1",
                     .port = 9987,
                     .nickname = "terminal",
-                    .identity = "built-test-identity",
+                    .identity = kMockIdentity,
                     .server_password = "",
                     .channel_password = "",
                     .default_channel = "Lobby",

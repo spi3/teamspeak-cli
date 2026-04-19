@@ -8,16 +8,16 @@ This project is not ServerQuery, not WebQuery, and not a standalone TeamSpeak `C
 
 - `ts`: the CLI users run
 - `ts3cli_plugin.so`: the optional TeamSpeak 3 client plugin used for live integration
-- `ts_built_test_plugin_host`: a local mock plugin host used by tests and CI
-- a fully local `built-test` profile for development without TeamSpeak installed
+- `ts_mock_bridge_host`: a local mock bridge host used by tests and CI
+- a fully local `mock-local` profile for development without TeamSpeak installed
 - install and uninstall scripts for a user-level Linux `x86_64` setup
 
 ## Verified Paths
 
 The following flows were checked against the current repository state during this documentation audit:
 
-- `make build-built-test`
-- `make test-built-test`
+- `make build-mock`
+- `make test-mock`
 - `make build`
 - `make test`
 - `./scripts/install.sh --help`
@@ -32,16 +32,18 @@ The TeamSpeak-backed Docker and `Xvfb` harness is available, but it is still the
 Use this when you want to work on the CLI, config, rendering, socket protocol, or session layer without any proprietary TeamSpeak runtime on your machine.
 
 ```bash
-make build-built-test
-make test-built-test
+make build-mock
+make test-mock
 
-./build-built-test/ts config init
-./build-built-test/ts profile use built-test
-./build-built-test/ts status
-./build-built-test/ts channel list
+./build-mock/ts config init
+./build-mock/ts profile use mock-local
+./build-mock/ts status
+./build-mock/ts channel list
 ```
 
-The `built-test` profile uses the in-process mock backend. It is the fastest path for normal development and the path exercised in CI.
+The `mock-local` profile uses the in-process mock backend. It is the fastest path for normal development and the path exercised in CI.
+
+The legacy `built-test` profile name and `make *-built-test` targets still work as deprecated aliases during the transition.
 
 ### TeamSpeak-backed Development
 
@@ -103,7 +105,7 @@ There are two important build surfaces:
 - `make ...`: the repo's high-level workflow for normal use
 - raw `cmake ...`: the low-level workflow when you want precise control
 
-Raw CMake defaults do not build the TeamSpeak plugin target. They build the CLI, the built-test host, and the test binaries.
+Raw CMake defaults do not build the TeamSpeak plugin target. They build the CLI, the mock bridge host, and the test binaries.
 
 Example plain CMake configure:
 
@@ -138,7 +140,7 @@ If `cmake` or `ninja` are not on `PATH`, prefer the top-level `make` targets ins
 
 The starter config ships with two profiles:
 
-- `built-test`: fully local mock backend
+- `mock-local`: fully local mock backend
 - `plugin-local`: local socket backend for a real TeamSpeak client plugin
 
 Useful profile commands:
@@ -147,8 +149,10 @@ Useful profile commands:
 ts config init
 ts config view
 ts profile list
-ts profile use built-test
+ts profile use mock-local
 ```
+
+`ts profile use built-test` still resolves to `mock-local` for compatibility with older configs and scripts.
 
 The plugin socket path resolves in this order:
 
@@ -176,10 +180,10 @@ The CLI is organized into small command groups:
 Examples against the offline backend:
 
 ```bash
-./build-built-test/ts --profile built-test status
-./build-built-test/ts --profile built-test channel list --json
-./build-built-test/ts --profile built-test channel clients Engineering
-./build-built-test/ts --profile built-test events watch --count 5
+./build-mock/ts --profile mock-local status
+./build-mock/ts --profile mock-local channel list --json
+./build-mock/ts --profile mock-local channel clients Engineering
+./build-mock/ts --profile mock-local events watch --count 5
 ```
 
 Examples against the real plugin backend after the TeamSpeak client is running and the plugin is enabled:

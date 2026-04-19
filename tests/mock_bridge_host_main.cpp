@@ -24,6 +24,7 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
+    // Exercise the socket bridge with the same mock backend used by the direct offline path.
     teamspeak_cli::bridge::SocketBridgeServer server(std::make_unique<teamspeak_cli::sdk::MockBackend>());
 
     teamspeak_cli::sdk::InitOptions options;

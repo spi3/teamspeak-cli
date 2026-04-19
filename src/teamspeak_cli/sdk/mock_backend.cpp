@@ -34,7 +34,7 @@ MockBackend::MockBackend() {
     };
 
     clients_ = {
-        domain::Client{.id = {1}, .nickname = "terminal", .unique_identity = "built-test-identity", .channel_id = domain::ChannelId{1}, .self = true},
+        domain::Client{.id = {1}, .nickname = "terminal", .unique_identity = "mock-local-identity", .channel_id = domain::ChannelId{1}, .self = true},
         domain::Client{.id = {2}, .nickname = "alice", .unique_identity = "sdk-alice", .channel_id = domain::ChannelId{2}},
         domain::Client{.id = {3}, .nickname = "bob", .unique_identity = "sdk-bob", .channel_id = domain::ChannelId{2}, .talking = true},
         domain::Client{.id = {4}, .nickname = "ops-bot", .unique_identity = "sdk-ops-bot", .channel_id = domain::ChannelId{3}},
@@ -47,8 +47,8 @@ MockBackend::MockBackend() {
         .server = "127.0.0.1",
         .port = 9987,
         .nickname = "terminal",
-        .identity = "built-test-identity",
-        .profile = "built-test",
+        .identity = "mock-local-identity",
+        .profile = "mock-local",
         .mode = "one-shot",
     };
 
@@ -154,7 +154,7 @@ auto MockBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
         .plugin_version = "development",
         .plugin_available = true,
         .socket_path = bridge::resolve_socket_path(options_.socket_path),
-        .note = "built-test plugin host for local development and CI",
+        .note = "mock bridge host for local development and CI",
     });
 }
 
@@ -320,7 +320,7 @@ void MockBackend::start_event_loop() {
             } else {
                 events_.push(now_event(
                     "heartbeat",
-                    "built-test backend event heartbeat",
+                    "mock backend event heartbeat",
                     {{"backend", "mock"}}
                 ));
             }

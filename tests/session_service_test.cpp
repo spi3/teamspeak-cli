@@ -295,7 +295,7 @@ int main() {
         .server_password = "",
         .channel_password = "",
         .default_channel = "",
-        .profile_name = "built-test",
+        .profile_name = "mock-local",
     },
                                            std::chrono::milliseconds(250));
     tests::expect(connected.ok(), "session connect should succeed");

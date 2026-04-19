@@ -8,7 +8,7 @@
 
 - `ts`: the CLI executable
 - `ts3cli_plugin`: the TeamSpeak 3 client plugin shared library
-- `ts_built_test_plugin_host`: a local mock plugin host used in tests
+- `ts_mock_bridge_host`: a local mock bridge host used in tests
 
 ## Layer Map
 
@@ -24,9 +24,9 @@
 
 ## Runtime Modes
 
-### Built-test mode
+### Mock mode
 
-`ts` talks either directly to the mock backend or to that same mock backend through the socket bridge and `ts_built_test_plugin_host`.
+`ts` talks either directly to the mock backend or to that same mock backend through the socket bridge and `ts_mock_bridge_host`.
 
 This is the stable development path because it is:
 
@@ -67,7 +67,7 @@ The CLI-side plugin backend never calls TeamSpeak APIs directly. It uses a small
 
 The same protocol is used by:
 
-- the built-test plugin host in automated tests
+- the mock bridge host in automated tests
 - the real TeamSpeak client plugin at runtime
 
 ## Event Translation
@@ -94,6 +94,6 @@ The repo has three practical layers of coverage:
 
 - unit tests for config, output, session, and event behavior
 - bridge tests using the mock backend over the same socket protocol used by the live plugin path
-- full CLI end-to-end tests where the built binary talks to `ts_built_test_plugin_host`
+- full CLI end-to-end tests where the built binary talks to `ts_mock_bridge_host`
 
 There is also a TeamSpeak-backed local harness, but it should still be treated as host-sensitive integration tooling rather than the primary stable test surface.

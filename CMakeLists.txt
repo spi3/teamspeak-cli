@@ -111,8 +111,8 @@ add_executable(
 ts_apply_defaults(ts)
 
 add_executable(
-  ts_built_test_plugin_host
-  tests/built_test_plugin_host_main.cpp
+  ts_mock_bridge_host
+  tests/mock_bridge_host_main.cpp
   src/teamspeak_cli/bridge/protocol.cpp
   src/teamspeak_cli/bridge/socket_server.cpp
   src/teamspeak_cli/config/config_store.cpp
@@ -120,7 +120,7 @@ add_executable(
   src/teamspeak_cli/sdk/mock_backend.cpp
   src/teamspeak_cli/util/strings.cpp
 )
-ts_apply_defaults(ts_built_test_plugin_host)
+ts_apply_defaults(ts_mock_bridge_host)
 
 install(TARGETS ts RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/teamspeak-cli")
@@ -195,17 +195,17 @@ if(BUILD_TESTING)
   add_test(NAME ts_socket_backend_test COMMAND ts_socket_backend_test)
 
   add_test(
-    NAME ts_built_test_cli_smoke_test
-    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_cli_smoke.sh" "$<TARGET_FILE:ts>"
+    NAME ts_mock_cli_smoke_test
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_cli_smoke.sh" "$<TARGET_FILE:ts>"
   )
   add_test(
-    NAME ts_built_test_bridge_e2e_test
+    NAME ts_mock_bridge_e2e_test
     COMMAND
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_plugin_bridge_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_bridge_e2e.sh"
       "$<TARGET_FILE:ts>"
-      "$<TARGET_FILE:ts_built_test_plugin_host>"
+      "$<TARGET_FILE:ts_mock_bridge_host>"
   )
-  set_tests_properties(ts_built_test_bridge_e2e_test PROPERTIES TIMEOUT 60)
+  set_tests_properties(ts_mock_bridge_e2e_test PROPERTIES TIMEOUT 60)
 
   add_test(
     NAME ts_e2e_shell_syntax_test
@@ -214,8 +214,8 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package-release.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/uninstall.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_cli_smoke.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_built_test_plugin_bridge_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_cli_smoke.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_bridge_e2e.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/bootstrap_runtime_deps.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_common.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_plugin_server_env.sh"

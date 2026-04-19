@@ -112,7 +112,7 @@ The bootstrap is intentionally pinned in `tests/e2e/runtime_common.sh`. It does 
 - `ts3cli_plugin` inside that client
 - the `ts` CLI against that local plugin bridge
 
-This harness is useful, but it is still best-effort local automation. It is more fragile than the built-test path because it depends on:
+This harness is useful, but it is still best-effort local automation. It is more fragile than the mock path because it depends on:
 
 - Docker access
 - `Xvfb`
@@ -154,9 +154,9 @@ The environment helper prints:
 
 ## Development Without TeamSpeak
 
-For day-to-day work, prefer the built-test path:
+For day-to-day work, prefer the mock path:
 
-- `make build-built-test`
-- `make test-built-test`
+- `make build-mock`
+- `make test-mock`
 
 That path exercises the same CLI, output, config, and socket layers without depending on proprietary TeamSpeak runtime components.

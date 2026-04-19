@@ -15,7 +15,7 @@ int main() {
             .server_password = "",
             .channel_password = "",
             .default_channel = "",
-            .profile_name = "built-test",
+            .profile_name = "mock-local",
         })
             .ok(),
         "connect"

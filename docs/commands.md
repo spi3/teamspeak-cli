@@ -88,10 +88,12 @@ The same commands return one structured result at the end when output is `json` 
 ## Profile And Socket Notes
 
 - the default profile is `plugin-local`
-- the offline fallback profile is `built-test`
+- the offline mock profile is `mock-local`
 - the `plugin` backend expects the TeamSpeak client plugin bridge to already be running
 - the selected profile can be overridden with `--profile`
 - `--server`, `--nickname`, and `--identity` override the active profile for one command
+
+The legacy `built-test` profile name still resolves to `mock-local`.
 
 Socket path resolution for the plugin backend is:
 

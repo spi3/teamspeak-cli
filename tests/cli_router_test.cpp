@@ -165,6 +165,21 @@ int main() {
     tests::expect(init_result.ok(), "config init dispatch should succeed");
     tests::expect(fs::exists(config_path), "config init should write a config file");
 
+    auto use_legacy_mock = parse_command(
+        router, {"profile", "use", "built-test", "--config", config_path.string()}
+    );
+    tests::expect(use_legacy_mock.ok(), "legacy mock profile alias should parse");
+    auto use_legacy_mock_result = router.dispatch(use_legacy_mock.value());
+    tests::expect(use_legacy_mock_result.ok(), "legacy mock profile alias should dispatch");
+
+    auto loaded_after_legacy_mock = config_store.load(config_path);
+    tests::expect(loaded_after_legacy_mock.ok(), "config should load after legacy alias switch");
+    tests::expect_eq(
+        loaded_after_legacy_mock.value().active_profile,
+        std::string("mock-local"),
+        "legacy built-test alias should persist the canonical mock-local name"
+    );
+
     auto use_plugin = parse_command(
         router, {"profile", "use", "plugin-local", "--config", config_path.string()}
     );
@@ -188,7 +203,7 @@ int main() {
         router,
         {
             "--profile",
-            "built-test",
+            "mock-local",
             "--config",
             config_path.string(),
             "--server",
@@ -208,7 +223,7 @@ int main() {
     tests::expect_eq(connect_progress.size(), std::size_t(4), "connect should stream four progress updates");
     tests::expect_contains(
         connect_progress[0],
-        "Connecting to voice.example.com:9987 as cli-tester using profile built-test",
+        "Connecting to voice.example.com:9987 as cli-tester using profile mock-local",
         "connect progress should start with contextual connection info"
     );
     tests::expect_contains(
@@ -254,7 +269,7 @@ int main() {
         router,
         {
             "--profile",
-            "built-test",
+            "mock-local",
             "--config",
             config_path.string(),
             "disconnect",
@@ -342,7 +357,7 @@ int main() {
     );
 
     auto missing_channel = parse_command(
-        router, {"channel", "get", "missing-channel", "--profile", "built-test", "--config", config_path.string()}
+        router, {"channel", "get", "missing-channel", "--profile", "mock-local", "--config", config_path.string()}
     );
     tests::expect(missing_channel.ok(), "missing channel parse should succeed");
     auto missing_channel_result = router.dispatch(missing_channel.value());
@@ -354,7 +369,7 @@ int main() {
     );
 
     auto channel_clients_all = parse_command(
-        router, {"channel", "clients", "--profile", "built-test", "--config", config_path.string()}
+        router, {"channel", "clients", "--profile", "mock-local", "--config", config_path.string()}
     );
     tests::expect(channel_clients_all.ok(), "channel clients parse should succeed");
     auto channel_clients_all_result = router.dispatch(channel_clients_all.value());
@@ -399,7 +414,7 @@ int main() {
 
     auto channel_clients_one = parse_command(
         router,
-        {"channel", "clients", "Engineering", "--profile", "built-test", "--config", config_path.string()}
+        {"channel", "clients", "Engineering", "--profile", "mock-local", "--config", config_path.string()}
     );
     tests::expect(channel_clients_one.ok(), "channel clients with selector parse should succeed");
     auto channel_clients_one_result = router.dispatch(channel_clients_one.value());

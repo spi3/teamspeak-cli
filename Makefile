@@ -16,11 +16,11 @@ TS3_DEPS_ENV ?= $(TS3_MANAGED_DIR)/deps.env
 -include $(TS3_DEPS_MK)
 
 BUILD_DIR ?= build
-BUILT_TEST_BUILD_DIR ?= build-built-test
+MOCK_BUILD_DIR ?= build-mock
 
 TS_BIN ?= $(BUILD_DIR)/ts
 PLUGIN_SO ?= $(BUILD_DIR)/ts3cli_plugin.so
-BUILT_TEST_TS_BIN ?= $(BUILT_TEST_BUILD_DIR)/ts
+MOCK_TS_BIN ?= $(MOCK_BUILD_DIR)/ts
 
 TS3_PLUGIN_SDK_DIR ?=
 TS3_PLUGIN_SDK_INCLUDE_DIR ?=
@@ -87,6 +87,7 @@ define require_env_state
 endef
 
 .PHONY: help configure build test test-e2e test-all ts clean deps package-release \
+	configure-mock build-mock test-mock ts-mock \
 	configure-built-test build-built-test test-built-test ts-built-test \
 	env-up env-info env-ts env-down
 
@@ -129,17 +130,33 @@ package-release: ## Build a release tarball under ./dist (set PACKAGE_VERSION=vX
 ts: build ## Run the CLI from ./build with ARGS='...'
 	"$(TS_BIN)" $(ARGS)
 
-configure-built-test: ## Configure the mock/offline built-test tree in ./build-built-test
-	$(CMAKE) -S . -B $(BUILT_TEST_BUILD_DIR) $(CMAKE_BASE_ARGS)
+configure-mock: ## Configure the mock/offline tree in ./build-mock
+	$(CMAKE) -S . -B $(MOCK_BUILD_DIR) $(CMAKE_BASE_ARGS)
 
-build-built-test: configure-built-test ## Build the mock/offline built-test tree
-	$(CMAKE) --build $(BUILT_TEST_BUILD_DIR)
+build-mock: configure-mock ## Build the mock/offline tree
+	$(CMAKE) --build $(MOCK_BUILD_DIR)
 
-test-built-test: build-built-test ## Run the mock/offline built-test suite
-	$(CTEST) --test-dir $(BUILT_TEST_BUILD_DIR) --output-on-failure
+test-mock: build-mock ## Run the mock/offline test suite
+	$(CTEST) --test-dir $(MOCK_BUILD_DIR) --output-on-failure
 
-ts-built-test: build-built-test ## Run the CLI from ./build-built-test with ARGS='...'
-	"$(BUILT_TEST_TS_BIN)" $(ARGS)
+ts-mock: build-mock ## Run the CLI from ./build-mock with ARGS='...'
+	"$(MOCK_TS_BIN)" $(ARGS)
+
+configure-built-test:
+	@printf '%s\n' "configure-built-test is deprecated; use configure-mock"
+	@$(MAKE) configure-mock
+
+build-built-test:
+	@printf '%s\n' "build-built-test is deprecated; use build-mock"
+	@$(MAKE) build-mock
+
+test-built-test:
+	@printf '%s\n' "test-built-test is deprecated; use test-mock"
+	@$(MAKE) test-mock
+
+ts-built-test:
+	@printf '%s\n' "ts-built-test is deprecated; use ts-mock"
+	@$(MAKE) ts-mock ARGS="$(ARGS)"
 
 env-up: build ## Start the TeamSpeak-backed environment and track its state
 	@mkdir -p "$(TS3_MANAGED_DIR)"
@@ -177,4 +194,4 @@ env-down: ## Stop the tracked TeamSpeak environment
 	rm -f "$(ENV_STATE_REF)" "$(ENV_OUTPUT_REF)"
 
 clean: ## Remove generated build directories, tracked TeamSpeak environment pointers, and managed dependencies
-	rm -rf $(BUILD_DIR) $(BUILT_TEST_BUILD_DIR) $(TS3_MANAGED_DIR)
+	rm -rf $(BUILD_DIR) $(MOCK_BUILD_DIR) build-built-test $(TS3_MANAGED_DIR)
