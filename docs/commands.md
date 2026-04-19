@@ -93,8 +93,6 @@ The same commands return one structured result at the end when output is `json` 
 - the selected profile can be overridden with `--profile`
 - `--server`, `--nickname`, and `--identity` override the active profile for one command
 
-The legacy `built-test` profile name still resolves to `mock-local`.
-
 Socket path resolution for the plugin backend is:
 
 - `control_socket_path=` in the selected profile, if set

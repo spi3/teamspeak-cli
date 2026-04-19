@@ -88,7 +88,6 @@ endef
 
 .PHONY: help configure build test test-e2e test-all ts clean deps package-release \
 	configure-mock build-mock test-mock ts-mock \
-	configure-built-test build-built-test test-built-test ts-built-test \
 	env-up env-info env-ts env-down
 
 help: ## Show available development commands
@@ -142,22 +141,6 @@ test-mock: build-mock ## Run the mock/offline test suite
 ts-mock: build-mock ## Run the CLI from ./build-mock with ARGS='...'
 	"$(MOCK_TS_BIN)" $(ARGS)
 
-configure-built-test:
-	@printf '%s\n' "configure-built-test is deprecated; use configure-mock"
-	@$(MAKE) configure-mock
-
-build-built-test:
-	@printf '%s\n' "build-built-test is deprecated; use build-mock"
-	@$(MAKE) build-mock
-
-test-built-test:
-	@printf '%s\n' "test-built-test is deprecated; use test-mock"
-	@$(MAKE) test-mock
-
-ts-built-test:
-	@printf '%s\n' "ts-built-test is deprecated; use ts-mock"
-	@$(MAKE) ts-mock ARGS="$(ARGS)"
-
 env-up: build ## Start the TeamSpeak-backed environment and track its state
 	@mkdir -p "$(TS3_MANAGED_DIR)"
 	@rm -f "$(ENV_STATE_REF)" "$(ENV_OUTPUT_REF)"
@@ -194,4 +177,4 @@ env-down: ## Stop the tracked TeamSpeak environment
 	rm -f "$(ENV_STATE_REF)" "$(ENV_OUTPUT_REF)"
 
 clean: ## Remove generated build directories, tracked TeamSpeak environment pointers, and managed dependencies
-	rm -rf $(BUILD_DIR) $(MOCK_BUILD_DIR) build-built-test $(TS3_MANAGED_DIR)
+	rm -rf $(BUILD_DIR) $(MOCK_BUILD_DIR) $(TS3_MANAGED_DIR)

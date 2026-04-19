@@ -43,8 +43,6 @@ make test-mock
 
 The `mock-local` profile uses the in-process mock backend. It is the fastest path for normal development and the path exercised in CI.
 
-The legacy `built-test` profile name and `make *-built-test` targets still work as deprecated aliases during the transition.
-
 ### TeamSpeak-backed Development
 
 Use this when you need the real TeamSpeak 3 client plugin and runtime bridge.
@@ -151,8 +149,6 @@ ts config view
 ts profile list
 ts profile use mock-local
 ```
-
-`ts profile use built-test` still resolves to `mock-local` for compatibility with older configs and scripts.
 
 The plugin socket path resolves in this order:
 
