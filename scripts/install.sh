@@ -316,6 +316,7 @@ log "bootstrapping TeamSpeak client bundle and plugin SDK into ${managed_dir}"
 plugin_sdk_dir="$(ts3_runtime_resolve_plugin_sdk_dir)"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
+ts3_runtime_resolve_xdotool >/dev/null
 write_install_marker "${managed_dir}" "managed-dir"
 
 configure_and_build

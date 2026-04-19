@@ -301,6 +301,11 @@ struct ClientHeadlessLaunch {
     std::string display;
 };
 
+struct XdotoolPaths {
+    std::filesystem::path binary_path;
+    std::string library_path;
+};
+
 struct DiscoveredClientProcess {
     pid_t pid = 0;
     std::string process_name;
@@ -311,6 +316,7 @@ auto resolve_client_launch_socket_path(
     const ParsedCommand& command,
     const config::ConfigStore& store
 ) -> domain::Result<std::string>;
+auto process_is_running(pid_t pid) -> bool;
 
 auto is_executable_file(const std::filesystem::path& path) -> bool {
     return !path.empty() && ::access(path.c_str(), X_OK) == 0;
@@ -341,6 +347,338 @@ auto find_executable_on_path(std::string_view executable_name) -> std::optional<
         }
     }
     return std::nullopt;
+}
+
+auto default_teamspeak_cache_dir() -> std::filesystem::path {
+    if (const char* xdg_cache = std::getenv("XDG_CACHE_HOME"); xdg_cache != nullptr && *xdg_cache != '\0') {
+        return std::filesystem::path(xdg_cache) / "teamspeak-cli" / "install";
+    }
+    if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".cache" / "teamspeak-cli" / "install";
+    }
+    return {};
+}
+
+auto installed_share_dir() -> std::optional<std::filesystem::path> {
+    const auto current = current_executable_path();
+    if (!current.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto candidate = current->parent_path().parent_path() / "share" / "teamspeak-cli";
+    std::error_code ec;
+    if (std::filesystem::exists(candidate, ec) && !ec) {
+        return candidate;
+    }
+    return std::nullopt;
+}
+
+auto read_install_receipt_value(std::string_view key) -> std::optional<std::string> {
+    const auto share_dir = installed_share_dir();
+    if (!share_dir.has_value()) {
+        return std::nullopt;
+    }
+
+    std::ifstream input(*share_dir / "install-receipt.env");
+    if (!input) {
+        return std::nullopt;
+    }
+
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto separator = line.find('=');
+        if (separator == std::string::npos) {
+            continue;
+        }
+        const auto line_key = util::trim(line.substr(0, separator));
+        if (line_key != key) {
+            continue;
+        }
+        return util::trim(line.substr(separator + 1));
+    }
+    return std::nullopt;
+}
+
+auto resolve_xdotool_paths() -> std::optional<XdotoolPaths> {
+    std::filesystem::path binary_path;
+    if (const char* explicit_xdotool = std::getenv("TS_CLIENT_XDOTOOL");
+        explicit_xdotool != nullptr && *explicit_xdotool != '\0') {
+        binary_path = explicit_xdotool;
+    } else if (const auto discovered = find_executable_on_path("xdotool"); discovered.has_value()) {
+        binary_path = *discovered;
+    } else {
+        auto managed_dir = default_teamspeak_cache_dir();
+        if (const auto receipt_managed_dir = read_install_receipt_value("managed_dir");
+            receipt_managed_dir.has_value()) {
+            managed_dir = *receipt_managed_dir;
+        }
+        if (!managed_dir.empty()) {
+            const auto managed_xdotool = managed_dir / "xdotool" / "root" / "usr" / "bin" / "xdotool";
+            if (is_executable_file(managed_xdotool)) {
+                binary_path = managed_xdotool;
+            }
+        }
+    }
+
+    if (!is_executable_file(binary_path)) {
+        return std::nullopt;
+    }
+
+    std::string library_path;
+    if (const char* explicit_library = std::getenv("TS_CLIENT_XDOTOOL_LIBRARY_PATH");
+        explicit_library != nullptr && *explicit_library != '\0') {
+        library_path = explicit_library;
+    } else {
+        const auto search_root = binary_path.parent_path().parent_path();
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(search_root, ec)) {
+            if (ec) {
+                break;
+            }
+            if (!entry.is_regular_file(ec)) {
+                continue;
+            }
+            const auto name = entry.path().filename().string();
+            if (name.rfind("libxdo.so", 0) == 0) {
+                library_path = entry.path().parent_path().string();
+                break;
+            }
+        }
+    }
+
+    return XdotoolPaths{
+        .binary_path = std::move(binary_path),
+        .library_path = std::move(library_path),
+    };
+}
+
+auto run_command_capture_stdout(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& env_overrides = {}
+) -> std::optional<std::string> {
+    if (argv.empty()) {
+        return std::nullopt;
+    }
+
+    int pipe_fds[2] = {-1, -1};
+    if (::pipe(pipe_fds) != 0) {
+        return std::nullopt;
+    }
+    auto close_pipe = util::make_scope_exit([&] {
+        if (pipe_fds[0] >= 0) {
+            ::close(pipe_fds[0]);
+        }
+        if (pipe_fds[1] >= 0) {
+            ::close(pipe_fds[1]);
+        }
+    });
+
+    const pid_t child_pid = ::fork();
+    if (child_pid < 0) {
+        return std::nullopt;
+    }
+
+    if (child_pid == 0) {
+        ::close(pipe_fds[0]);
+        const int devnull_fd = ::open("/dev/null", O_WRONLY);
+        if (devnull_fd < 0 || ::dup2(pipe_fds[1], STDOUT_FILENO) == -1 ||
+            ::dup2(devnull_fd, STDERR_FILENO) == -1) {
+            if (devnull_fd >= 0) {
+                ::close(devnull_fd);
+            }
+            _exit(127);
+        }
+        ::close(pipe_fds[1]);
+        ::close(devnull_fd);
+
+        for (const auto& [key, value] : env_overrides) {
+            if (::setenv(key.c_str(), value.c_str(), 1) != 0) {
+                _exit(127);
+            }
+        }
+
+        std::vector<char*> raw_argv;
+        raw_argv.reserve(argv.size() + 1);
+        for (const auto& argument : argv) {
+            raw_argv.push_back(const_cast<char*>(argument.c_str()));
+        }
+        raw_argv.push_back(nullptr);
+        ::execv(argv.front().c_str(), raw_argv.data());
+        _exit(127);
+    }
+
+    ::close(pipe_fds[1]);
+    pipe_fds[1] = -1;
+
+    std::string output;
+    std::array<char, 4096> buffer{};
+    while (true) {
+        const ssize_t bytes_read = ::read(pipe_fds[0], buffer.data(), buffer.size());
+        if (bytes_read > 0) {
+            output.append(buffer.data(), static_cast<std::size_t>(bytes_read));
+            continue;
+        }
+        if (bytes_read == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        output.clear();
+        break;
+    }
+    ::close(pipe_fds[0]);
+    pipe_fds[0] = -1;
+
+    int status = 0;
+    while (::waitpid(child_pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return std::nullopt;
+        }
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return std::nullopt;
+    }
+    return output;
+}
+
+auto split_output_lines(const std::optional<std::string>& output) -> std::vector<std::string> {
+    std::vector<std::string> lines;
+    if (!output.has_value()) {
+        return lines;
+    }
+
+    std::istringstream input(*output);
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto trimmed = util::trim(line);
+        if (!trimmed.empty()) {
+            lines.push_back(trimmed);
+        }
+    }
+    return lines;
+}
+
+auto xdotool_env(const XdotoolPaths& xdotool, std::string_view display)
+    -> std::vector<std::pair<std::string, std::string>> {
+    std::vector<std::pair<std::string, std::string>> env{
+        {"DISPLAY", std::string(display)},
+    };
+    if (!xdotool.library_path.empty()) {
+        std::string library_path = xdotool.library_path;
+        if (const char* existing = std::getenv("LD_LIBRARY_PATH"); existing != nullptr && *existing != '\0') {
+            library_path += ":" + std::string(existing);
+        }
+        env.emplace_back("LD_LIBRARY_PATH", std::move(library_path));
+    }
+    return env;
+}
+
+auto xdotool_window_ids(const XdotoolPaths& xdotool, std::string_view display, std::string_view title)
+    -> std::vector<std::string> {
+    return split_output_lines(run_command_capture_stdout(
+        {xdotool.binary_path.string(), "search", "--name", std::string(title)},
+        xdotool_env(xdotool, display)
+    ));
+}
+
+auto xdotool_run(const XdotoolPaths& xdotool, std::string_view display, const std::vector<std::string>& args)
+    -> void {
+    std::vector<std::string> argv;
+    argv.reserve(args.size() + 1);
+    argv.push_back(xdotool.binary_path.string());
+    argv.insert(argv.end(), args.begin(), args.end());
+    (void)run_command_capture_stdout(argv, xdotool_env(xdotool, display));
+}
+
+auto xdotool_window_size(
+    const XdotoolPaths& xdotool,
+    std::string_view display,
+    std::string_view window_id
+) -> std::optional<std::pair<int, int>> {
+    const auto geometry_lines = split_output_lines(run_command_capture_stdout(
+        {xdotool.binary_path.string(), "getwindowgeometry", "--shell", std::string(window_id)},
+        xdotool_env(xdotool, display)
+    ));
+
+    int width = 0;
+    int height = 0;
+    for (const auto& line : geometry_lines) {
+        const auto separator = line.find('=');
+        if (separator == std::string::npos) {
+            continue;
+        }
+        const auto key = util::trim(line.substr(0, separator));
+        const auto value = util::trim(line.substr(separator + 1));
+        const auto parsed = util::parse_u64(value);
+        if (!parsed.has_value()) {
+            continue;
+        }
+        if (key == "WIDTH") {
+            width = static_cast<int>(*parsed);
+        } else if (key == "HEIGHT") {
+            height = static_cast<int>(*parsed);
+        }
+    }
+
+    if (width <= 0 || height <= 0) {
+        return std::nullopt;
+    }
+    return std::make_pair(width, height);
+}
+
+void dismiss_headless_client_dialogs(const ClientHeadlessLaunch& headless_launch, pid_t client_pid) {
+    const auto xdotool = resolve_xdotool_paths();
+    if (!xdotool.has_value()) {
+        return;
+    }
+
+    const std::array<std::string_view, 4> escape_titles = {
+        "Introducing the next generation of TeamSpeak",
+        "myTeamSpeak Account",
+        "Identities",
+        "Choose Your Nickname",
+    };
+
+    for (int attempt = 0; attempt < 25; ++attempt) {
+        if (!process_is_running(client_pid)) {
+            break;
+        }
+
+        bool handled_window = false;
+        for (const auto& window_id : xdotool_window_ids(*xdotool, headless_launch.display, "License agreement")) {
+            xdotool_run(*xdotool, headless_launch.display, {"key", "--window", window_id, "End"});
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+            int click_x = 573;
+            int click_y = 676;
+            if (const auto geometry = xdotool_window_size(*xdotool, headless_launch.display, window_id);
+                geometry.has_value()) {
+                click_x = geometry->first == 740 ? click_x : geometry->first * 77 / 100;
+                click_y = geometry->second == 700 ? click_y : geometry->second * 97 / 100;
+            }
+            xdotool_run(
+                *xdotool,
+                headless_launch.display,
+                {"mousemove", "--window", window_id, std::to_string(click_x), std::to_string(click_y), "click", "1"}
+            );
+            handled_window = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(700));
+        }
+
+        for (const auto title : escape_titles) {
+            for (const auto& window_id : xdotool_window_ids(*xdotool, headless_launch.display, title)) {
+                xdotool_run(*xdotool, headless_launch.display, {"key", "--window", window_id, "Escape"});
+                handled_window = true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            }
+        }
+
+        if (!handled_window) {
+            break;
+        }
+    }
 }
 
 auto resolve_client_state_dir() -> domain::Result<std::filesystem::path> {
@@ -1089,6 +1427,10 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
     if (!wrote_pid) {
         (void)::kill(child_pid, SIGTERM);
         return domain::fail<output::CommandOutput>(wrote_pid.error());
+    }
+
+    if (headless_launch.value().has_value()) {
+        dismiss_headless_client_dialogs(*headless_launch.value(), child_pid);
     }
 
     return domain::ok(client_process_output(
