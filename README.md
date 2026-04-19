@@ -11,6 +11,7 @@ The goal is a polished CLI in the style of `kubectl` or `gh` for client-side Tea
 - inspect the current TeamSpeak client session
 - connect the client to a server
 - list channels and clients
+- list clients within one channel or across all channels
 - inspect a specific channel or client
 - join channels
 - send text messages
@@ -180,6 +181,7 @@ Talk to the `built-test` backend:
 ./build/ts profile use built-test
 ./build/ts status
 ./build/ts channel list --json
+./build/ts channel clients Engineering
 ./build/ts events watch --count 5
 ```
 
@@ -190,6 +192,7 @@ Talk to the plugin backend after the TeamSpeak client plugin is running:
 ./build/ts plugin info
 ./build/ts status
 ./build/ts channel list
+./build/ts channel clients
 ./build/ts client list
 ./build/ts message send --target channel --id Lobby --text "hello"
 ```

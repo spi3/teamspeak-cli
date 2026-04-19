@@ -32,7 +32,7 @@ auto generate(const std::string& shell) -> domain::Result<std::string> {
             "    config) COMPREPLY=( $(compgen -W \"init view --help\" -- \"$cur\") ) ;;\n"
             "    profile) COMPREPLY=( $(compgen -W \"list use --help\" -- \"$cur\") ) ;;\n"
             "    server) COMPREPLY=( $(compgen -W \"info --help\" -- \"$cur\") ) ;;\n"
-            "    channel) COMPREPLY=( $(compgen -W \"list get join --help\" -- \"$cur\") ) ;;\n"
+            "    channel) COMPREPLY=( $(compgen -W \"list clients get join --help\" -- \"$cur\") ) ;;\n"
             "    client) COMPREPLY=( $(compgen -W \"list get --help\" -- \"$cur\") ) ;;\n"
             "    message) COMPREPLY=( $(compgen -W \"send --help\" -- \"$cur\") ) ;;\n"
             "    events) COMPREPLY=( $(compgen -W \"watch --help\" -- \"$cur\") ) ;;\n"

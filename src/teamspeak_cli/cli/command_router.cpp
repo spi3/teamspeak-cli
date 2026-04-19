@@ -59,6 +59,7 @@ const std::vector<CommandDoc>& command_docs() {
         {{"server", "info"}, "ts server info", "Show server details", {}},
         {{"channel"}, "ts channel <subcommand>", "Inspect and join channels", {}},
         {{"channel", "list"}, "ts channel list", "List channels", {}},
+        {{"channel", "clients"}, "ts channel clients [id-or-name]", "List clients in one channel or across all channels", {}},
         {{"channel", "get"}, "ts channel get <id-or-name>", "Show one channel", {}},
         {{"channel", "join"}, "ts channel join <id-or-name>", "Join a channel if supported", {}},
         {{"client"}, "ts client <subcommand>", "Inspect connected clients and manage the local TeamSpeak client", {}},
@@ -195,6 +196,9 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     if (path == "channel join") {
         return "join the TeamSpeak channel";
     }
+    if (path == "channel clients") {
+        return "list TeamSpeak clients by channel";
+    }
     if (path == "client list") {
         return "list TeamSpeak clients";
     }
@@ -313,6 +317,11 @@ struct DiscoveredClientProcess {
     pid_t pid = 0;
     std::string process_name;
     std::size_t match_count = 0;
+};
+
+struct ChannelClientGroup {
+    domain::Channel channel;
+    std::vector<domain::Client> clients;
 };
 
 auto resolve_client_launch_socket_path(
@@ -1786,6 +1795,76 @@ auto with_session(
     return callback(session, resolved.value());
 }
 
+auto group_clients_by_channel(
+    const std::vector<domain::Channel>& channels,
+    const std::vector<domain::Client>& clients
+) -> std::vector<ChannelClientGroup> {
+    std::vector<ChannelClientGroup> groups;
+    groups.reserve(channels.size());
+
+    for (const auto& channel : channels) {
+        ChannelClientGroup group{
+            .channel = channel,
+            .clients = {},
+        };
+        for (const auto& client : clients) {
+            if (client.channel_id.has_value() && *client.channel_id == channel.id) {
+                group.clients.push_back(client);
+            }
+        }
+        groups.push_back(std::move(group));
+    }
+
+    return groups;
+}
+
+auto to_value(const ChannelClientGroup& group) -> output::ValueHolder {
+    return output::make_object({
+        {"channel", output::to_value(group.channel)},
+        {"clients", output::to_value(group.clients)},
+    });
+}
+
+auto to_value(const std::vector<ChannelClientGroup>& groups) -> output::ValueHolder {
+    std::vector<output::ValueHolder> items;
+    items.reserve(groups.size());
+    for (const auto& group : groups) {
+        items.push_back(to_value(group));
+    }
+    return output::make_array(std::move(items));
+}
+
+auto channel_clients_table(const std::vector<ChannelClientGroup>& groups) -> output::Table {
+    output::Table table{{"ChannelID", "Channel", "ClientID", "Nickname", "Self", "Talking"}, {}};
+
+    for (const auto& group : groups) {
+        if (group.clients.empty()) {
+            table.rows.push_back({
+                domain::to_string(group.channel.id),
+                group.channel.name,
+                "-",
+                "-",
+                "-",
+                "-",
+            });
+            continue;
+        }
+
+        for (const auto& client : group.clients) {
+            table.rows.push_back({
+                domain::to_string(group.channel.id),
+                group.channel.name,
+                domain::to_string(client.id),
+                client.nickname,
+                client.self ? "yes" : "no",
+                client.talking ? "yes" : "no",
+            });
+        }
+    }
+
+    return table;
+}
+
 auto resolve_client_launch_socket_path(
     const ParsedCommand& command,
     const config::ConfigStore& store
@@ -2329,6 +2408,45 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 return domain::ok(output::CommandOutput{
                     .data = output::to_value(channels.value()),
                     .human = output::channel_table(channels.value()),
+                });
+            });
+        }
+
+        if (path == "channel clients") {
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto clients = session.list_clients();
+                if (!clients) {
+                    return domain::fail<output::CommandOutput>(clients.error());
+                }
+
+                if (!command.positionals.empty()) {
+                    auto selector = require_positional(command, 0, "id-or-name");
+                    if (!selector) {
+                        return domain::fail<output::CommandOutput>(selector.error());
+                    }
+
+                    auto channel = session.get_channel(domain::Selector{selector.value()});
+                    if (!channel) {
+                        return domain::fail<output::CommandOutput>(channel.error());
+                    }
+
+                    const std::vector<domain::Channel> channels = {channel.value()};
+                    const auto groups = group_clients_by_channel(channels, clients.value());
+                    return domain::ok(output::CommandOutput{
+                        .data = to_value(groups.front()),
+                        .human = channel_clients_table(groups),
+                    });
+                }
+
+                auto channels = session.list_channels();
+                if (!channels) {
+                    return domain::fail<output::CommandOutput>(channels.error());
+                }
+
+                const auto groups = group_clients_by_channel(channels.value(), clients.value());
+                return domain::ok(output::CommandOutput{
+                    .data = to_value(groups),
+                    .human = channel_clients_table(groups),
                 });
             });
         }

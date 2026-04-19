@@ -112,6 +112,7 @@ int main() {
     tests::expect_contains(channel_help, "ts channel <subcommand>", "channel help usage");
     tests::expect_contains(channel_help, "Subcommands:", "channel help should list subcommands");
     tests::expect_contains(channel_help, "ts channel list", "channel help should include examples");
+    tests::expect_contains(channel_help, "ts channel clients [id-or-name]", "channel help should include channel clients");
 
     const std::vector<std::string> grouped_commands = {
         "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "events"
@@ -350,6 +351,82 @@ int main() {
         output::render_error(missing_channel_result.error(), output::Format::table, false),
         "ts channel list",
         "missing channel should suggest listing channels"
+    );
+
+    auto channel_clients_all = parse_command(
+        router, {"channel", "clients", "--profile", "built-test", "--config", config_path.string()}
+    );
+    tests::expect(channel_clients_all.ok(), "channel clients parse should succeed");
+    auto channel_clients_all_result = router.dispatch(channel_clients_all.value());
+    tests::expect(channel_clients_all_result.ok(), "channel clients dispatch should succeed");
+    const auto channel_clients_all_json = output::render(channel_clients_all_result.value(), output::Format::json);
+    tests::expect_contains(
+        channel_clients_all_json,
+        "\"name\":\"Engineering\"",
+        "channel clients json should include Engineering"
+    );
+    tests::expect_contains(
+        channel_clients_all_json,
+        "\"nickname\":\"bob\"",
+        "channel clients json should include channel members"
+    );
+    tests::expect_contains(
+        channel_clients_all_json,
+        "\"name\":\"Breakout\"",
+        "channel clients json should include empty channels"
+    );
+    tests::expect_contains(
+        channel_clients_all_json,
+        "\"clients\":[]",
+        "channel clients json should preserve empty channel membership lists"
+    );
+    const auto channel_clients_all_table = output::render(channel_clients_all_result.value(), output::Format::table);
+    tests::expect_contains(
+        channel_clients_all_table,
+        "Engineering",
+        "channel clients table should include channel names"
+    );
+    tests::expect_contains(
+        channel_clients_all_table,
+        "bob",
+        "channel clients table should include grouped client rows"
+    );
+    tests::expect_contains(
+        channel_clients_all_table,
+        "Breakout",
+        "channel clients table should include empty channels"
+    );
+
+    auto channel_clients_one = parse_command(
+        router,
+        {"channel", "clients", "Engineering", "--profile", "built-test", "--config", config_path.string()}
+    );
+    tests::expect(channel_clients_one.ok(), "channel clients with selector parse should succeed");
+    auto channel_clients_one_result = router.dispatch(channel_clients_one.value());
+    tests::expect(channel_clients_one_result.ok(), "channel clients with selector dispatch should succeed");
+    const auto channel_clients_one_json = output::render(channel_clients_one_result.value(), output::Format::json);
+    tests::expect_contains(
+        channel_clients_one_json,
+        "\"name\":\"Engineering\"",
+        "channel clients selector json should include the requested channel"
+    );
+    tests::expect_contains(
+        channel_clients_one_json,
+        "\"nickname\":\"alice\"",
+        "channel clients selector json should include matching members"
+    );
+    tests::expect_contains(
+        channel_clients_one_json,
+        "\"nickname\":\"bob\"",
+        "channel clients selector json should include all members in the requested channel"
+    );
+    tests::expect(
+        channel_clients_one_json.find("\"name\":\"Lobby\"") == std::string::npos,
+        "channel clients selector json should not include other channels"
+    );
+    tests::expect(
+        channel_clients_one_json.find("\"nickname\":\"terminal\"") == std::string::npos,
+        "channel clients selector json should not include clients from other channels"
     );
 
     const fs::path launcher_path = temp_dir / "fake-client.sh";

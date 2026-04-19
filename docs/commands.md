@@ -33,6 +33,7 @@
 
 - `ts server info`
 - `ts channel list`
+- `ts channel clients [id-or-name]`
 - `ts channel get <id-or-name>`
 - `ts channel join <id-or-name>`
 - `ts client list`
@@ -54,7 +55,7 @@
 
 - Running a grouped command like `ts channel`, `ts config`, or `ts message` without a nested subcommand now prints contextual help for that command group.
 - `ts <command> --help` prints command-specific usage and available subcommands.
-- `status`, `server info`, `channel list`, and `client list` inspect the current backend session state. They do not auto-connect around each command anymore.
+- `status`, `server info`, `channel list`, `channel clients`, and `client list` inspect the current backend session state. They do not auto-connect around each command anymore.
 - `connect` asks the backend to open a connection, waits up to 15 seconds for it to finish, and streams human-readable progress as TeamSpeak reports it.
 - `disconnect` asks the backend to close the current connection, waits up to 10 seconds for it to finish, and streams human-readable progress as TeamSpeak reports it.
 - `client start` and `client stop` stream human-readable progress while they inspect, launch, and stop the local TeamSpeak client process.
