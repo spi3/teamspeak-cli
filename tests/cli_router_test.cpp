@@ -183,6 +183,124 @@ int main() {
     auto saved_launch_config = config_store.save(config_path, loaded.value());
     tests::expect(saved_launch_config.ok(), "launch test config should save");
 
+    auto connect_command = parse_command(
+        router,
+        {
+            "--profile",
+            "built-test",
+            "--config",
+            config_path.string(),
+            "--server",
+            "voice.example.com:9987",
+            "--nickname",
+            "cli-tester",
+            "connect",
+        }
+    );
+    tests::expect(connect_command.ok(), "connect parse should succeed");
+    std::vector<std::string> connect_progress;
+    auto connect_result = router.dispatch(connect_command.value(), [&](std::string_view message) {
+        connect_progress.emplace_back(message);
+    });
+    tests::expect(connect_result.ok(), "connect dispatch should succeed");
+    tests::expect_eq(connect_result.value().exit_code, domain::ExitCode::ok, "connect exit code");
+    tests::expect_eq(connect_progress.size(), std::size_t(4), "connect should stream four progress updates");
+    tests::expect_contains(
+        connect_progress[0],
+        "Connecting to voice.example.com:9987 as cli-tester using profile built-test",
+        "connect progress should start with contextual connection info"
+    );
+    tests::expect_contains(
+        connect_progress[1],
+        "TeamSpeak accepted the request to connect to voice.example.com:9987.",
+        "connect progress should explain the request acceptance"
+    );
+    tests::expect_contains(
+        connect_progress[2],
+        "started establishing the server connection",
+        "connect progress should describe the connecting phase"
+    );
+    tests::expect_contains(
+        connect_progress[3],
+        "connection is ready",
+        "connect progress should describe the final connected phase"
+    );
+    const auto connect_json = output::render(connect_result.value(), output::Format::json);
+    tests::expect_contains(connect_json, "\"result\":\"connected\"", "connect json should report success");
+    tests::expect_contains(connect_json, "\"lifecycle\":[", "connect json should include the lifecycle");
+    tests::expect_contains(
+        connect_json,
+        "\"type\":\"connection.connected\"",
+        "connect json should include the terminal connection event"
+    );
+    const auto connect_table = output::render(connect_result.value(), output::Format::table);
+    tests::expect_contains(
+        connect_table,
+        "Connected to voice.example.com:9987 as cli-tester.",
+        "connect table should summarize the final result in prose"
+    );
+    tests::expect_contains(connect_table, "Connection Context", "connect table should render contextual details");
+    tests::expect(
+        connect_table.find("connection.requested") == std::string::npos,
+        "connect table should not expose raw lifecycle event codes"
+    );
+    tests::expect(
+        connect_table.find("What Happened") == std::string::npos,
+        "connect table should not repeat streamed lifecycle narration"
+    );
+
+    auto disconnect_command = parse_command(
+        router,
+        {
+            "--profile",
+            "built-test",
+            "--config",
+            config_path.string(),
+            "disconnect",
+        }
+    );
+    tests::expect(disconnect_command.ok(), "disconnect parse should succeed");
+    std::vector<std::string> disconnect_progress;
+    auto disconnect_result = router.dispatch(disconnect_command.value(), [&](std::string_view message) {
+        disconnect_progress.emplace_back(message);
+    });
+    tests::expect(disconnect_result.ok(), "disconnect dispatch should succeed");
+    tests::expect_eq(disconnect_result.value().exit_code, domain::ExitCode::ok, "disconnect exit code");
+    tests::expect_eq(
+        disconnect_progress.size(), std::size_t(2), "disconnect should stream the request and final event"
+    );
+    tests::expect_contains(
+        disconnect_progress[0],
+        "Requesting disconnect from the current TeamSpeak server.",
+        "disconnect should announce the outgoing request"
+    );
+    tests::expect_contains(
+        disconnect_progress[1],
+        "server connection is closed",
+        "disconnect should narrate the disconnection event"
+    );
+    const auto disconnect_json = output::render(disconnect_result.value(), output::Format::json);
+    tests::expect_contains(
+        disconnect_json,
+        "\"result\":\"disconnected\"",
+        "disconnect json should report a disconnected result"
+    );
+    tests::expect_contains(
+        disconnect_json,
+        "\"type\":\"connection.disconnected\"",
+        "disconnect json should include the terminal disconnect event"
+    );
+    const auto disconnect_table = output::render(disconnect_result.value(), output::Format::table);
+    tests::expect_contains(
+        disconnect_table,
+        "Disconnected from 127.0.0.1:9987.",
+        "disconnect table should summarize the outcome in prose"
+    );
+    tests::expect(
+        disconnect_table.find("connection.disconnected") == std::string::npos,
+        "disconnect table should not expose raw event codes"
+    );
+
     auto invalid_message = parse_command(
         router,
         {
@@ -273,15 +391,49 @@ int main() {
         "\"status\":\"not-running\"",
         "client status before start should report not running"
     );
+    const auto client_status_before_table = output::render(client_status_before_start.value(), output::Format::table);
+    tests::expect_contains(
+        client_status_before_table,
+        "The local TeamSpeak client is not running.",
+        "client status should summarize the stopped state in prose"
+    );
+    tests::expect(
+        client_status_before_table.find("Action") == std::string::npos,
+        "client status should not render the old machine-style action field"
+    );
 
     auto client_start = parse_command(router, {"client", "start", "--config", config_path.string()});
     tests::expect(client_start.ok(), "client start parse should succeed");
-    auto client_start_result = router.dispatch(client_start.value());
+    std::vector<std::string> client_start_progress;
+    auto client_start_result = router.dispatch(client_start.value(), [&](std::string_view message) {
+        client_start_progress.emplace_back(message);
+    });
     tests::expect(client_start_result.ok(), "client start dispatch should succeed");
     tests::expect_contains(
         output::render(client_start_result.value(), output::Format::json),
         "\"status\":\"started\"",
         "client start should report started"
+    );
+    tests::expect_contains(
+        client_start_progress.front(),
+        "Checking whether a local TeamSpeak client is already running.",
+        "client start should begin by explaining the preflight check"
+    );
+    tests::expect_contains(
+        client_start_progress[1],
+        launch_socket_path.string(),
+        "client start should mention the chosen control socket path"
+    );
+    tests::expect_contains(
+        client_start_progress.back(),
+        "The TeamSpeak client started as PID ",
+        "client start should report the launched pid as progress"
+    );
+    const auto client_start_table = output::render(client_start_result.value(), output::Format::table);
+    tests::expect_contains(
+        client_start_table,
+        "Started the local TeamSpeak client as PID",
+        "client start should summarize the result in prose"
     );
     tests::expect(fs::exists(pid_file), "client start should write a pid file");
 
@@ -322,12 +474,31 @@ int main() {
 
     auto client_stop = parse_command(router, {"client", "stop"});
     tests::expect(client_stop.ok(), "client stop parse should succeed");
-    auto client_stop_result = router.dispatch(client_stop.value());
+    std::vector<std::string> client_stop_progress;
+    auto client_stop_result = router.dispatch(client_stop.value(), [&](std::string_view message) {
+        client_stop_progress.emplace_back(message);
+    });
     tests::expect(client_stop_result.ok(), "client stop dispatch should succeed");
     tests::expect_contains(
         output::render(client_stop_result.value(), output::Format::json),
         "\"status\":\"stopped\"",
         "client stop should report stopped"
+    );
+    tests::expect_contains(
+        client_stop_progress.front(),
+        "Looking for a running local TeamSpeak client process.",
+        "client stop should explain the initial process lookup"
+    );
+    tests::expect_contains(
+        client_stop_progress.back(),
+        "Sending SIGTERM to the TeamSpeak client process group rooted at PID ",
+        "client stop should narrate the shutdown signal"
+    );
+    const auto client_stop_table = output::render(client_stop_result.value(), output::Format::table);
+    tests::expect_contains(
+        client_stop_table,
+        "Stopped the local TeamSpeak client process rooted at PID",
+        "client stop should summarize the result in prose"
     );
     tests::expect(!fs::exists(pid_file), "client stop should remove the pid file");
 

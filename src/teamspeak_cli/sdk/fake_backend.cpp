@@ -115,6 +115,16 @@ auto FakeBackend::connect(const ConnectRequest& request) -> domain::Result<void>
     clients_[0].channel_id = domain::ChannelId{1};
 
     events_.push(now_event(
+        "connection.requested",
+        "requested new fake TeamSpeak connection",
+        {{"server", request.host}, {"port", std::to_string(request.port)}}
+    ));
+    events_.push(now_event(
+        "connection.connecting",
+        "connection is starting",
+        {{"server", request.host}, {"port", std::to_string(request.port)}}
+    ));
+    events_.push(now_event(
         "connection.connected",
         "connected to fake TeamSpeak server",
         {{"server", request.host}, {"port", std::to_string(request.port)}}

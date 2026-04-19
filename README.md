@@ -203,6 +203,8 @@ Ask the TeamSpeak client plugin to open a new server connection:
   connect
 ```
 
+`ts connect` now waits for the connection attempt to complete, with a 15 second timeout, and streams human-readable progress as TeamSpeak reports it. `ts disconnect`, `ts client start`, and `ts client stop` follow the same default pattern for human-oriented terminal use. Use `--json` or `--output yaml` if you explicitly want one structured result at the end instead of streamed prose.
+
 ## Sample Output
 
 ```text

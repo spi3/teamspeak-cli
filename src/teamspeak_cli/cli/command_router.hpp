@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -36,10 +37,12 @@ struct ParsedCommand {
 class CommandRouter {
   public:
     CommandRouter();
+    using ProgressSink = std::function<void(std::string_view)>;
 
     auto parse(int argc, char** argv) const -> domain::Result<ParsedCommand>;
     auto render_help(const std::vector<std::string>& path) const -> std::string;
-    auto dispatch(const ParsedCommand& command) -> domain::Result<output::CommandOutput>;
+    auto dispatch(const ParsedCommand& command, const ProgressSink& progress = {})
+        -> domain::Result<output::CommandOutput>;
 
   private:
     config::ConfigStore config_store_;

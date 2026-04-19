@@ -18,7 +18,14 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    auto result = router.dispatch(parsed.value());
+    const auto progress = parsed.value().global.format == teamspeak_cli::output::Format::table
+        ? teamspeak_cli::cli::CommandRouter::ProgressSink([](std::string_view message) {
+              std::cout << message << '\n';
+              std::cout.flush();
+          })
+        : teamspeak_cli::cli::CommandRouter::ProgressSink{};
+
+    auto result = router.dispatch(parsed.value(), progress);
     if (!result) {
         std::cerr << teamspeak_cli::output::render_error(
                          result.error(), parsed.value().global.format, parsed.value().global.debug
@@ -28,5 +35,5 @@ int main(int argc, char** argv) {
     }
 
     std::cout << teamspeak_cli::output::render(result.value(), parsed.value().global.format) << '\n';
-    return 0;
+    return static_cast<int>(result.value().exit_code);
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -44,11 +45,13 @@ using HumanView = std::variant<std::monostate, Table, Details, std::string>;
 struct CommandOutput {
     ValueHolder data;
     HumanView human;
+    domain::ExitCode exit_code = domain::ExitCode::ok;
 };
 
 auto parse_format(const std::string& name) -> domain::Result<Format>;
 auto render(const CommandOutput& output, Format format) -> std::string;
 auto render_error(const domain::Error& error, Format format, bool debug) -> std::string;
+auto render_details_block(const Details& details) -> std::string;
 
 auto make_string(std::string value) -> ValueHolder;
 auto make_bool(bool value) -> ValueHolder;
@@ -69,6 +72,25 @@ auto to_value(const std::vector<domain::Event>& events) -> ValueHolder;
 auto to_value(const std::vector<domain::Profile>& profiles) -> ValueHolder;
 
 auto status_view(const domain::ConnectionState& state) -> Details;
+auto connection_status_view(const domain::ConnectionState& state) -> std::string;
+auto connect_progress_message(const domain::Event& event) -> std::string;
+auto connect_view(
+    const domain::ConnectionState& state,
+    const std::vector<domain::Event>& lifecycle,
+    bool connected,
+    bool timed_out,
+    std::chrono::milliseconds timeout,
+    bool include_lifecycle = true
+) -> std::string;
+auto disconnect_progress_message(const domain::Event& event) -> std::string;
+auto disconnect_view(
+    const domain::ConnectionState& state,
+    const std::vector<domain::Event>& lifecycle,
+    bool disconnected,
+    bool timed_out,
+    std::chrono::milliseconds timeout,
+    bool include_lifecycle = true
+) -> std::string;
 auto server_view(const domain::ServerInfo& info) -> Details;
 auto plugin_info_view(const domain::PluginInfo& info) -> Details;
 auto profile_table(const std::vector<domain::Profile>& profiles, const std::string& active_profile) -> Table;

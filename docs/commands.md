@@ -55,7 +55,11 @@
 - Running a grouped command like `ts channel`, `ts config`, or `ts message` without a nested subcommand now prints contextual help for that command group.
 - `ts <command> --help` prints command-specific usage and available subcommands.
 - `status`, `server info`, `channel list`, and `client list` inspect the current backend session state. They do not auto-connect around each command anymore.
-- `connect` asks the backend to open a connection.
+- `connect` asks the backend to open a connection, waits up to 15 seconds for it to finish, and streams human-readable progress as TeamSpeak reports it.
+- `disconnect` asks the backend to close the current connection, waits up to 10 seconds for it to finish, and streams human-readable progress as TeamSpeak reports it.
+- `client start` and `client stop` stream human-readable progress while they inspect, launch, and stop the local TeamSpeak client process.
+- `connect --json` and `connect --output yaml` still return one structured result at the end instead of streaming prose.
+- `disconnect --json`, `client start --json`, and `client stop --json` also return one structured result at the end instead of streaming prose.
 - `disconnect` asks the backend to close the current connection.
 - the default profile is `plugin-local`
 - the `built-test` profile is the offline fallback

@@ -29,6 +29,9 @@
 namespace teamspeak_cli::cli {
 namespace {
 
+constexpr auto kConnectCompletionTimeout = std::chrono::seconds(15);
+constexpr auto kDisconnectCompletionTimeout = std::chrono::seconds(10);
+
 struct CommandDoc {
     std::vector<std::string> path;
     std::string usage;
@@ -49,7 +52,7 @@ const std::vector<CommandDoc>& command_docs() {
         {{"profile"}, "ts profile <subcommand>", "Manage config profiles", {}},
         {{"profile", "list"}, "ts profile list", "List config profiles", {}},
         {{"profile", "use"}, "ts profile use <name>", "Set the active profile", {}},
-        {{"connect"}, "ts connect", "Ask the TeamSpeak client plugin to open a server connection", {}},
+        {{"connect"}, "ts connect", "Open a TeamSpeak server connection and wait for completion", {}},
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"status"}, "ts status", "Show current TeamSpeak client connection status", {}},
         {{"server"}, "ts server <subcommand>", "Inspect the current server session", {}},
@@ -1092,6 +1095,35 @@ auto client_process_output(
     const ClientProcessPaths& paths,
     std::string note
 ) -> output::CommandOutput {
+    auto client_process_human = [&]() -> std::string {
+        std::ostringstream out;
+        if (action == "status" && status == "running") {
+            out << "The local TeamSpeak client is running as PID " << pid << '.';
+        } else if (action == "status") {
+            out << "The local TeamSpeak client is not running.";
+        } else if (action == "start" && status == "started") {
+            out << "Started the local TeamSpeak client as PID " << pid << '.';
+        } else if (action == "start" && status == "already-running") {
+            out << "The local TeamSpeak client is already running as PID " << pid << '.';
+        } else if (action == "stop" && status == "stopped") {
+            out << "Stopped the local TeamSpeak client process rooted at PID " << pid << '.';
+        } else {
+            out << "Updated the local TeamSpeak client process state.";
+        }
+        out << "\n\nClient Context\n";
+        out << output::render_details_block(output::Details{
+            .fields = {
+                {"Status", status},
+                {"PID", pid > 0 ? std::to_string(pid) : "-"},
+                {"Launcher", paths.launcher_path.string()},
+                {"PIDFile", paths.pid_file.string()},
+                {"LogFile", paths.log_file.string()},
+                {"Note", note},
+            },
+        });
+        return out.str();
+    };
+
     return output::CommandOutput{
         .data = output::make_object({
             {"action", output::make_string(action)},
@@ -1102,17 +1134,7 @@ auto client_process_output(
             {"log_file", output::make_string(paths.log_file.string())},
             {"note", output::make_string(note)},
         }),
-        .human = output::Details{
-            .fields = {
-                {"Action", std::move(action)},
-                {"Status", std::move(status)},
-                {"PID", std::to_string(pid)},
-                {"Launcher", paths.launcher_path.string()},
-                {"PIDFile", paths.pid_file.string()},
-                {"LogFile", paths.log_file.string()},
-                {"Note", std::move(note)},
-            },
-        },
+        .human = client_process_human(),
     };
 }
 
@@ -1126,6 +1148,27 @@ auto discovered_process_note(const DiscoveredClientProcess& process, std::string
 
 auto client_process_missing_output(std::string action, const ClientProcessPaths& paths, std::string note)
     -> output::CommandOutput {
+    auto client_process_human = [&]() -> std::string {
+        std::ostringstream out;
+        if (action == "stop") {
+            out << "The local TeamSpeak client is not running, so there was nothing to stop.";
+        } else {
+            out << "The local TeamSpeak client is not running.";
+        }
+        out << "\n\nClient Context\n";
+        out << output::render_details_block(output::Details{
+            .fields = {
+                {"Status", "not-running"},
+                {"PID", "-"},
+                {"Launcher", paths.launcher_path.string()},
+                {"PIDFile", paths.pid_file.string()},
+                {"LogFile", paths.log_file.string()},
+                {"Note", note},
+            },
+        });
+        return out.str();
+    };
+
     return output::CommandOutput{
         .data = output::make_object({
             {"action", output::make_string(action)},
@@ -1136,17 +1179,7 @@ auto client_process_missing_output(std::string action, const ClientProcessPaths&
             {"log_file", output::make_string(paths.log_file.string())},
             {"note", output::make_string(note)},
         }),
-        .human = output::Details{
-            .fields = {
-                {"Action", std::move(action)},
-                {"Status", "not-running"},
-                {"PID", "0"},
-                {"Launcher", paths.launcher_path.string()},
-                {"PIDFile", paths.pid_file.string()},
-                {"LogFile", paths.log_file.string()},
-                {"Note", std::move(note)},
-            },
-        },
+        .human = client_process_human(),
     };
 }
 
@@ -1202,11 +1235,19 @@ auto client_status_process() -> domain::Result<output::CommandOutput> {
     ));
 }
 
-auto start_client_process(const ParsedCommand& command, const config::ConfigStore& store)
+auto start_client_process(
+    const ParsedCommand& command,
+    const config::ConfigStore& store,
+    const CommandRouter::ProgressSink& progress = {}
+)
     -> domain::Result<output::CommandOutput> {
     auto paths = resolve_client_process_paths();
     if (!paths) {
         return domain::fail<output::CommandOutput>(paths.error());
+    }
+
+    if (progress) {
+        progress("Checking whether a local TeamSpeak client is already running.");
     }
 
     auto launch_socket_path = resolve_client_launch_socket_path(command, store);
@@ -1217,6 +1258,16 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
     auto headless_launch = resolve_client_headless_launch();
     if (!headless_launch) {
         return domain::fail<output::CommandOutput>(headless_launch.error());
+    }
+
+    if (progress) {
+        progress("The new TeamSpeak client session will use control socket " + launch_socket_path.value() + ".");
+        if (headless_launch.value().has_value()) {
+            progress(
+                "No GUI display was detected, so the TeamSpeak client will start headlessly on DISPLAY " +
+                headless_launch.value()->display + "."
+            );
+        }
     }
 
     std::error_code ec;
@@ -1250,6 +1301,10 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
             paths.value(),
             discovered_process_note(*discovered, "detected existing TeamSpeak client process")
         ));
+    }
+
+    if (progress) {
+        progress("Launching the TeamSpeak client process.");
     }
 
     int pipe_fds[2] = {-1, -1};
@@ -1433,6 +1488,10 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
         dismiss_headless_client_dialogs(*headless_launch.value(), child_pid);
     }
 
+    if (progress) {
+        progress("The TeamSpeak client started as PID " + std::to_string(child_pid) + ".");
+    }
+
     return domain::ok(client_process_output(
         "start",
         "started",
@@ -1445,10 +1504,15 @@ auto start_client_process(const ParsedCommand& command, const config::ConfigStor
     ));
 }
 
-auto stop_client_process(bool force) -> domain::Result<output::CommandOutput> {
+auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress = {})
+    -> domain::Result<output::CommandOutput> {
     auto paths = resolve_client_process_paths();
     if (!paths) {
         return domain::fail<output::CommandOutput>(paths.error());
+    }
+
+    if (progress) {
+        progress("Looking for a running local TeamSpeak client process.");
     }
 
     auto pid = read_pid_file(paths.value().pid_file);
@@ -1460,6 +1524,9 @@ auto stop_client_process(bool force) -> domain::Result<output::CommandOutput> {
             discovered_note = discovered_process_note(
                 *discovered, "stopping detected TeamSpeak client without a ts pid file"
             );
+            if (progress) {
+                progress("No tracked pid file was available, so the detected TeamSpeak client process will be stopped.");
+            }
         } else {
             return domain::ok(client_process_missing_output(
                 "stop",
@@ -1476,6 +1543,9 @@ auto stop_client_process(bool force) -> domain::Result<output::CommandOutput> {
             discovered_note = discovered_process_note(
                 *discovered, "tracked pid file was stale; stopping detected TeamSpeak client"
             );
+            if (progress) {
+                progress("The tracked pid file was stale, so the detected TeamSpeak client process will be stopped.");
+            }
         } else {
             return domain::ok(client_process_missing_output(
                 "stop",
@@ -1483,6 +1553,10 @@ auto stop_client_process(bool force) -> domain::Result<output::CommandOutput> {
                 "tracked client pid file was stale"
             ));
         }
+    }
+
+    if (progress) {
+        progress("Sending SIGTERM to the TeamSpeak client process group rooted at PID " + std::to_string(*pid) + ".");
     }
 
     if (!signal_client_target(*pid, SIGTERM)) {
@@ -1513,6 +1587,9 @@ auto stop_client_process(bool force) -> domain::Result<output::CommandOutput> {
         discovered_note.empty() ? "client process group stopped with SIGTERM"
                                 : discovered_note + "; stopped with SIGTERM";
     if (process_is_running(*pid) && force) {
+        if (progress) {
+            progress("The TeamSpeak client is still running, so SIGKILL is being sent because --force was set.");
+        }
         if (!signal_client_target(*pid, SIGKILL) && errno != ESRCH) {
             return domain::fail<output::CommandOutput>(client_error(
                 "force_stop_failed",
@@ -1659,6 +1736,16 @@ auto build_connect_request(const domain::Profile& profile) -> sdk::ConnectReques
         .default_channel = profile.default_channel,
         .profile_name = profile.name,
     };
+}
+
+auto format_connect_target(const domain::Profile& profile) -> std::string {
+    return profile.host + ":" + std::to_string(profile.port);
+}
+
+auto connect_start_message(const domain::Profile& profile) -> std::string {
+    const std::string nickname = profile.nickname.empty() ? "the configured nickname" : profile.nickname;
+    return "Connecting to " + format_connect_target(profile) + " as " + nickname +
+           " using profile " + profile.name + "...";
 }
 
 auto build_init_options(const ParsedCommand& command, const domain::Profile& profile) -> sdk::InitOptions {
@@ -1991,7 +2078,8 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
     return out.str();
 }
 
-auto CommandRouter::dispatch(const ParsedCommand& command) -> domain::Result<output::CommandOutput> {
+auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& progress)
+    -> domain::Result<output::CommandOutput> {
     const auto path = util::join(command.path, " ");
 
     const auto result = [&]() -> domain::Result<output::CommandOutput> {
@@ -2120,34 +2208,88 @@ auto CommandRouter::dispatch(const ParsedCommand& command) -> domain::Result<out
 
         if (path == "connect") {
             return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto& resolved) {
-                auto connected = session.connect(build_connect_request(resolved.profile));
+                const bool stream_progress = static_cast<bool>(progress) && command.global.format == output::Format::table;
+                if (stream_progress) {
+                    progress(connect_start_message(resolved.profile));
+                }
+                auto connected = session.connect_and_wait(
+                    build_connect_request(resolved.profile),
+                    kConnectCompletionTimeout,
+                    stream_progress ? session::ConnectEventCallback([&](const domain::Event& event) {
+                        progress(output::connect_progress_message(event));
+                    })
+                                    : session::ConnectEventCallback{}
+                );
                 if (!connected) {
                     return domain::fail<output::CommandOutput>(connected.error());
                 }
-                auto state = session.connection_state();
-                if (!state) {
-                    return domain::fail<output::CommandOutput>(state.error());
-                }
+                const auto result_name = connected.value().connected
+                    ? "connected"
+                    : connected.value().timed_out ? "timeout" : "failed";
+                const auto exit_code = connected.value().connected ? domain::ExitCode::ok
+                                                                   : domain::ExitCode::connection;
                 return domain::ok(output::CommandOutput{
-                    .data = output::to_value(state.value()),
-                    .human = output::status_view(state.value()),
+                    .data = output::make_object({
+                        {"result", output::make_string(result_name)},
+                        {"connected", output::make_bool(connected.value().connected)},
+                        {"timed_out", output::make_bool(connected.value().timed_out)},
+                        {"timeout_ms", output::make_int(connected.value().timeout.count())},
+                        {"state", output::to_value(connected.value().state)},
+                        {"lifecycle", output::to_value(connected.value().lifecycle)},
+                    }),
+                    .human = output::connect_view(
+                        connected.value().state,
+                        connected.value().lifecycle,
+                        connected.value().connected,
+                        connected.value().timed_out,
+                        connected.value().timeout,
+                        !stream_progress
+                    ),
+                    .exit_code = exit_code,
                 });
             });
         }
 
         if (path == "disconnect") {
-            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
-                auto disconnected = session.disconnect("ts disconnect");
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                const bool stream_progress = static_cast<bool>(progress) && command.global.format == output::Format::table;
+                if (stream_progress) {
+                    progress("Requesting disconnect from the current TeamSpeak server.");
+                }
+                auto disconnected = session.disconnect_and_wait(
+                    "ts disconnect",
+                    kDisconnectCompletionTimeout,
+                    stream_progress ? session::ConnectEventCallback([&](const domain::Event& event) {
+                        progress(output::disconnect_progress_message(event));
+                    })
+                                    : session::ConnectEventCallback{}
+                );
                 if (!disconnected) {
                     return domain::fail<output::CommandOutput>(disconnected.error());
                 }
-                auto state = session.connection_state();
-                if (!state) {
-                    return domain::fail<output::CommandOutput>(state.error());
-                }
+                const auto result_name = disconnected.value().disconnected
+                    ? "disconnected"
+                    : disconnected.value().timed_out ? "timeout" : "failed";
+                const auto exit_code = disconnected.value().disconnected ? domain::ExitCode::ok
+                                                                         : domain::ExitCode::connection;
                 return domain::ok(output::CommandOutput{
-                    .data = output::to_value(state.value()),
-                    .human = output::status_view(state.value()),
+                    .data = output::make_object({
+                        {"result", output::make_string(result_name)},
+                        {"disconnected", output::make_bool(disconnected.value().disconnected)},
+                        {"timed_out", output::make_bool(disconnected.value().timed_out)},
+                        {"timeout_ms", output::make_int(disconnected.value().timeout.count())},
+                        {"state", output::to_value(disconnected.value().state)},
+                        {"lifecycle", output::to_value(disconnected.value().lifecycle)},
+                    }),
+                    .human = output::disconnect_view(
+                        disconnected.value().state,
+                        disconnected.value().lifecycle,
+                        disconnected.value().disconnected,
+                        disconnected.value().timed_out,
+                        disconnected.value().timeout,
+                        !stream_progress
+                    ),
+                    .exit_code = exit_code,
                 });
             });
         }
@@ -2160,7 +2302,7 @@ auto CommandRouter::dispatch(const ParsedCommand& command) -> domain::Result<out
                 }
                 return domain::ok(output::CommandOutput{
                     .data = output::to_value(state.value()),
-                    .human = output::status_view(state.value()),
+                    .human = output::connection_status_view(state.value()),
                 });
             });
         }
@@ -2234,11 +2376,18 @@ auto CommandRouter::dispatch(const ParsedCommand& command) -> domain::Result<out
         }
 
         if (path == "client start") {
-            return start_client_process(command, config_store_);
+            return start_client_process(
+                command,
+                config_store_,
+                command.global.format == output::Format::table ? progress : ProgressSink{}
+            );
         }
 
         if (path == "client stop") {
-            return stop_client_process(command.flags.contains("force"));
+            return stop_client_process(
+                command.flags.contains("force"),
+                command.global.format == output::Format::table ? progress : ProgressSink{}
+            );
         }
 
         if (path == "client list") {

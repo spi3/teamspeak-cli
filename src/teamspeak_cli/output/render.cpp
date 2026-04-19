@@ -215,6 +215,47 @@ auto render_details_impl(const Details& details) -> std::string {
     return out.str();
 }
 
+auto ensure_sentence(std::string value) -> std::string {
+    if (value.empty()) {
+        return value;
+    }
+    const char last = value.back();
+    if (last == '.' || last == '!' || last == '?') {
+        return value;
+    }
+    value.push_back('.');
+    return value;
+}
+
+auto endpoint_for(std::string_view server, std::uint16_t port) -> std::string {
+    if (server.empty() && port == 0) {
+        return "the requested server";
+    }
+    if (server.empty()) {
+        return "port " + std::to_string(port);
+    }
+    if (port == 0) {
+        return std::string(server);
+    }
+    return std::string(server) + ":" + std::to_string(port);
+}
+
+auto event_endpoint(const domain::Event& event) -> std::optional<std::string> {
+    const auto server_it = event.fields.find("server");
+    if (server_it == event.fields.end()) {
+        return std::nullopt;
+    }
+
+    std::uint16_t port = 0;
+    if (const auto port_it = event.fields.find("port"); port_it != event.fields.end()) {
+        const auto parsed = util::parse_u64(port_it->second);
+        if (parsed.has_value()) {
+            port = static_cast<std::uint16_t>(*parsed);
+        }
+    }
+    return endpoint_for(server_it->second, port);
+}
+
 auto format_time(std::chrono::system_clock::time_point point) -> std::string {
     const auto time = std::chrono::system_clock::to_time_t(point);
     std::tm tm{};
@@ -346,6 +387,10 @@ auto render_error(const domain::Error& error, Format format, bool debug) -> std:
         .human = HumanView{render_error_human(error, hints, debug)},
     };
     return render(output, format);
+}
+
+auto render_details_block(const Details& details) -> std::string {
+    return render_details_impl(details);
 }
 
 auto make_string(std::string value) -> ValueHolder {
@@ -500,6 +545,182 @@ auto status_view(const domain::ConnectionState& state) -> Details {
         {"Profile", state.profile},
         {"Mode", state.mode},
     }};
+}
+
+auto connection_status_view(const domain::ConnectionState& state) -> std::string {
+    std::ostringstream out;
+    const auto target = endpoint_for(state.server, state.port);
+    const std::string nickname = state.nickname.empty() ? "the configured nickname" : state.nickname;
+
+    if (state.phase == domain::ConnectionPhase::connected) {
+        out << "Connected to " << target << " as " << nickname << '.';
+    } else if (state.phase == domain::ConnectionPhase::connecting) {
+        out << "The TeamSpeak client is still connecting to " << target << " as " << nickname << '.';
+    } else {
+        out << "There is no active TeamSpeak server connection.";
+    }
+
+    out << "\n\nConnection Context\n";
+    out << render_details_impl(Details{{
+        {"State", domain::to_string(state.phase)},
+        {"Server", target},
+        {"Nickname", nickname},
+        {"Profile", state.profile},
+        {"Backend", state.backend},
+        {"Mode", state.mode},
+    }});
+    return out.str();
+}
+
+auto connect_progress_message(const domain::Event& event) -> std::string {
+    if (event.type == "connection.requested") {
+        const auto target = event_endpoint(event).value_or("the requested server");
+        return "TeamSpeak accepted the request to connect to " + target + ".";
+    }
+    if (event.type == "connection.connecting") {
+        return "The TeamSpeak client started establishing the server connection.";
+    }
+    if (event.type == "connection.connected") {
+        return "The TeamSpeak client reported that the connection is ready.";
+    }
+    if (event.type == "connection.disconnected") {
+        return "The connection closed before it became ready.";
+    }
+    if (event.type == "connection.error") {
+        return "TeamSpeak reported a connection error while establishing the server connection.";
+    }
+    if (event.type == "server.error") {
+        if (!event.summary.empty()) {
+            return ensure_sentence("TeamSpeak reported a server error: " + event.summary);
+        }
+        return "TeamSpeak reported a server error.";
+    }
+    if (!event.summary.empty()) {
+        return ensure_sentence(event.summary);
+    }
+    return ensure_sentence("TeamSpeak reported " + event.type);
+}
+
+auto connect_view(
+    const domain::ConnectionState& state,
+    const std::vector<domain::Event>& lifecycle,
+    bool connected,
+    bool timed_out,
+    std::chrono::milliseconds timeout,
+    bool include_lifecycle
+) -> std::string {
+    std::ostringstream out;
+    const auto target = endpoint_for(state.server, state.port);
+    const std::string nickname = state.nickname.empty() ? "the configured nickname" : state.nickname;
+    if (connected) {
+        out << "Connected to " << target << " as " << nickname << '.';
+    } else if (timed_out) {
+        out << "The TeamSpeak client did not finish connecting to " << target << " within "
+            << timeout.count() << " ms.";
+    } else {
+        out << "The TeamSpeak client did not complete the connection to " << target << '.';
+    }
+
+    out << "\n\nConnection Context\n";
+    out << render_details_impl(Details{{
+        {"State", domain::to_string(state.phase)},
+        {"Server", target},
+        {"Nickname", nickname},
+        {"Profile", state.profile},
+        {"Backend", state.backend},
+        {"Mode", state.mode},
+    }});
+
+    if (!include_lifecycle) {
+        return out.str();
+    }
+
+    out << "\n\nWhat Happened\n";
+    if (lifecycle.empty()) {
+        out << "TeamSpeak did not emit any connection updates before the command finished.";
+        return out.str();
+    }
+    for (std::size_t index = 0; index < lifecycle.size(); ++index) {
+        out << "- " << connect_progress_message(lifecycle[index]);
+        if (index + 1 != lifecycle.size()) {
+            out << '\n';
+        }
+    }
+    return out.str();
+}
+
+auto disconnect_progress_message(const domain::Event& event) -> std::string {
+    if (event.type == "connection.disconnected") {
+        return "The TeamSpeak client reported that the server connection is closed.";
+    }
+    if (event.type == "connection.error") {
+        return "TeamSpeak reported an error while closing the server connection.";
+    }
+    if (event.type == "server.error") {
+        if (!event.summary.empty()) {
+            return ensure_sentence("TeamSpeak reported a server error while disconnecting: " + event.summary);
+        }
+        return "TeamSpeak reported a server error while disconnecting.";
+    }
+    if (event.type == "connection.connected") {
+        return "The TeamSpeak client still considers the server connection active.";
+    }
+    if (!event.summary.empty()) {
+        return ensure_sentence(event.summary);
+    }
+    return ensure_sentence("TeamSpeak reported " + event.type);
+}
+
+auto disconnect_view(
+    const domain::ConnectionState& state,
+    const std::vector<domain::Event>& lifecycle,
+    bool disconnected,
+    bool timed_out,
+    std::chrono::milliseconds timeout,
+    bool include_lifecycle
+) -> std::string {
+    std::ostringstream out;
+    const auto target = endpoint_for(state.server, state.port);
+    const std::string nickname = state.nickname.empty() ? "the configured nickname" : state.nickname;
+
+    if (disconnected && lifecycle.empty()) {
+        out << "No active TeamSpeak server connection was present.";
+    } else if (disconnected && !state.server.empty()) {
+        out << "Disconnected from " << target << '.';
+    } else if (disconnected) {
+        out << "Disconnected the TeamSpeak client from the current server.";
+    } else if (timed_out) {
+        out << "The TeamSpeak client did not finish disconnecting within " << timeout.count() << " ms.";
+    } else {
+        out << "The TeamSpeak client did not complete the disconnect request.";
+    }
+
+    out << "\n\nConnection Context\n";
+    out << render_details_impl(Details{{
+        {"State", domain::to_string(state.phase)},
+        {"Server", target},
+        {"Nickname", nickname},
+        {"Profile", state.profile},
+        {"Backend", state.backend},
+        {"Mode", state.mode},
+    }});
+
+    if (!include_lifecycle) {
+        return out.str();
+    }
+
+    out << "\n\nWhat Happened\n";
+    if (lifecycle.empty()) {
+        out << "TeamSpeak did not emit any disconnect updates before the command finished.";
+        return out.str();
+    }
+    for (std::size_t index = 0; index < lifecycle.size(); ++index) {
+        out << "- " << disconnect_progress_message(lifecycle[index]);
+        if (index + 1 != lifecycle.size()) {
+            out << '\n';
+        }
+    }
+    return out.str();
 }
 
 auto server_view(const domain::ServerInfo& info) -> Details {
