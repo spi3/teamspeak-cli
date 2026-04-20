@@ -148,10 +148,11 @@ The CLI is organized into small command groups:
 - `config init`, `config view`
 - `profile list`, `profile use`
 - `connect`, `disconnect`, `status`, `server info`
+- `daemon start`, `daemon stop`, `daemon status`
 - `channel list`, `channel get`, `channel join`, `channel clients`
 - `client status`, `client start`, `client stop`, `client list`, `client get`
-- `message send`
-- `events watch`
+- `message send`, `message inbox`
+- `events watch`, `events hook add`, `events hook list`, `events hook remove`
 - `completion bash|zsh|fish|powershell`
 
 Examples against the offline backend:
@@ -160,6 +161,8 @@ Examples against the offline backend:
 ./build-mock/ts --profile mock-local status
 ./build-mock/ts --profile mock-local channel list --json
 ./build-mock/ts --profile mock-local channel clients Engineering
+./build-mock/ts daemon start
+./build-mock/ts message inbox
 ./build-mock/ts --profile mock-local events watch --count 5
 ```
 
@@ -170,6 +173,8 @@ ts --profile plugin-local plugin info
 ts --profile plugin-local status
 ts --profile plugin-local channel list
 ts --profile plugin-local client list
+ts daemon start
+ts message inbox
 ts --profile plugin-local message send --target channel --id Lobby --text "hello"
 ```
 
@@ -190,6 +195,14 @@ When output is `table`, these commands stream human-readable progress by default
 - `client stop`
 
 When output is `json` or `yaml`, they print one structured result at the end instead.
+
+To capture messages and trigger local scripts without keeping `ts events watch` attached, start the local daemon:
+
+```bash
+ts daemon start
+ts events hook add --type message.received --message-kind client --exec 'notify-send "TeamSpeak DM" "$TS_MESSAGE_FROM: $TS_MESSAGE_TEXT"'
+ts message inbox --count 20
+```
 
 ## Configuration And Profiles
 

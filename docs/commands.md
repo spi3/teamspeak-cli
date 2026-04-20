@@ -24,6 +24,9 @@ Every command accepts these global flags:
 - `ts version`
 - `ts plugin info`
 - `ts sdk info`
+- `ts daemon start [--foreground] [--poll-ms N]`
+- `ts daemon stop [--timeout-ms N]`
+- `ts daemon status`
 - `ts connect`
 - `ts disconnect`
 - `ts status`
@@ -56,7 +59,11 @@ Every command accepts these global flags:
 ### Messaging And Events
 
 - `ts message send --target <client|channel> --id <id-or-name> --text "<message>"`
+- `ts message inbox [--count N]`
 - `ts events watch [--count N] [--timeout-ms N]`
+- `ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]`
+- `ts events hook list`
+- `ts events hook remove <id>`
 
 ### Shell Completion
 
@@ -73,6 +80,9 @@ Every command accepts these global flags:
 - `connect` waits for completion for up to 15 seconds.
 - `disconnect` waits for completion for up to 10 seconds.
 - `client start` and `client stop` inspect, launch, and stop the local TeamSpeak client process tracked by `ts`.
+- `daemon start` launches a local background watcher that polls translated TeamSpeak events, journals incoming messages, and executes matching hook commands.
+- `daemon stop` only stops the local watcher process. It does not disconnect the TeamSpeak client from the current server.
+- `message inbox` reads the daemon-managed message journal, so it can show captured messages even when no `ts` command is actively watching events.
 
 ## Progress Streaming
 
@@ -122,3 +132,21 @@ Client process state is stored under:
 - otherwise `$HOME/.local/state/teamspeak-cli`
 
 The tracked state includes a pid file and client log path that `ts client status` renders back to the user.
+
+## Event Daemon State
+
+The local TeamSpeak event daemon stores its pid file, log, hooks, and message inbox under:
+
+- `TS_DAEMON_STATE_DIR`, if set
+- otherwise `$XDG_STATE_HOME/teamspeak-cli/daemon`
+- otherwise `$HOME/.local/state/teamspeak-cli/daemon`
+
+Hook commands run through `/bin/sh -c` with the event JSON written to `stdin`. Useful environment variables include:
+
+- `TS_HOOK_ID`
+- `TS_EVENT_TYPE`
+- `TS_EVENT_SUMMARY`
+- `TS_EVENT_TIMESTAMP`
+- `TS_MESSAGE_KIND`, when available
+- `TS_MESSAGE_FROM`, when available
+- `TS_MESSAGE_TEXT`, when available

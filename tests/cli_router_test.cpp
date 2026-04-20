@@ -14,6 +14,7 @@
 
 #include "teamspeak_cli/cli/command_router.hpp"
 #include "teamspeak_cli/config/config_store.hpp"
+#include "teamspeak_cli/daemon/runtime.hpp"
 #include "teamspeak_cli/output/render.hpp"
 #include "test_support.hpp"
 
@@ -894,6 +895,74 @@ int main() {
         status_error_json,
         "ts client start",
         "status error json should include the client start hint"
+    );
+
+    const fs::path daemon_state_dir = temp_dir / "daemon-state";
+    EnvGuard daemon_state_env("TS_DAEMON_STATE_DIR", daemon_state_dir.string());
+
+    auto hook_add = parse_command(
+        router,
+        {
+            "events",
+            "hook",
+            "add",
+            "--type",
+            "message.received",
+            "--exec",
+            "printf daemon-hook",
+            "--message-kind",
+            "client",
+        }
+    );
+    tests::expect(hook_add.ok(), "events hook add parse should succeed");
+    auto hook_add_result = router.dispatch(hook_add.value());
+    tests::expect(hook_add_result.ok(), "events hook add dispatch should succeed");
+    const auto hook_add_json = output::render(hook_add_result.value(), output::Format::json);
+    tests::expect_contains(hook_add_json, "\"type\":\"message.received\"", "hook add should return the event type");
+    tests::expect_contains(hook_add_json, "\"message_kind\":\"client\"", "hook add should return the message kind");
+
+    auto hook_list = parse_command(router, {"events", "hook", "list"});
+    tests::expect(hook_list.ok(), "events hook list parse should succeed");
+    auto hook_list_result = router.dispatch(hook_list.value());
+    tests::expect(hook_list_result.ok(), "events hook list dispatch should succeed");
+    const auto hook_list_table = output::render(hook_list_result.value(), output::Format::table);
+    tests::expect_contains(hook_list_table, "message.received", "hook list should include the event type");
+    tests::expect_contains(hook_list_table, "client", "hook list should include the message kind");
+
+    const auto daemon_paths = daemon::state_paths_for(daemon_state_dir);
+    auto appended_inbox = daemon::append_inbox_event(
+        daemon_paths,
+        domain::Event{
+            .type = "message.received",
+            .summary = "received TeamSpeak text message",
+            .at = std::chrono::system_clock::now(),
+            .fields =
+                {
+                    {"from_name", "alice"},
+                    {"message_kind", "client"},
+                    {"text", "hello from inbox"},
+                },
+        }
+    );
+    tests::expect(appended_inbox.ok(), "appending daemon inbox event should succeed");
+
+    auto inbox_command = parse_command(router, {"message", "inbox", "--count", "1"});
+    tests::expect(inbox_command.ok(), "message inbox parse should succeed");
+    auto inbox_result = router.dispatch(inbox_command.value());
+    tests::expect(inbox_result.ok(), "message inbox dispatch should succeed");
+    const auto inbox_table = output::render(inbox_result.value(), output::Format::table);
+    tests::expect_contains(inbox_table, "alice", "message inbox should render the sender");
+    tests::expect_contains(inbox_table, "hello from inbox", "message inbox should render the message text");
+
+    auto daemon_status = parse_command(router, {"daemon", "status"});
+    tests::expect(daemon_status.ok(), "daemon status parse should succeed");
+    auto daemon_status_result = router.dispatch(daemon_status.value());
+    tests::expect(daemon_status_result.ok(), "daemon status dispatch should succeed");
+    const auto daemon_status_table = output::render(daemon_status_result.value(), output::Format::table);
+    tests::expect_contains(
+        daemon_status_table,
+        "not running",
+        "daemon status should explain when the daemon is not running"
     );
 
     fs::remove_all(temp_dir);

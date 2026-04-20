@@ -9,11 +9,13 @@
 - `ts`: the CLI executable
 - `ts3cli_plugin`: the TeamSpeak 3 client plugin shared library
 - `ts_mock_bridge_host`: a local mock bridge host used in tests
+- the optional local event daemon started through `ts daemon start`
 
 ## Layer Map
 
 - `src/teamspeak_cli/cli/`: argument parsing, help, completions, command dispatch, and client-process helpers
 - `src/teamspeak_cli/config/`: config discovery, parsing, persistence, profile selection, and per-command overrides
+- `src/teamspeak_cli/daemon/`: local daemon state, inbox journaling, and hook execution
 - `src/teamspeak_cli/domain/`: shared models, IDs, result types, and event shapes
 - `src/teamspeak_cli/events/`: thread-safe event queue
 - `src/teamspeak_cli/output/`: table, detail, JSON, and YAML rendering
@@ -76,9 +78,19 @@ The TeamSpeak side translates client callbacks into stable domain events and pus
 
 That keeps callback-thread behavior and TeamSpeak-specific details behind the backend boundary.
 
+## Local Event Daemon
+
+`ts daemon start` runs a small local watcher process outside the TeamSpeak client. It reuses the same backend seam as the rest of the CLI, polls `next_event`, and then:
+
+- appends `message.received` events to a local inbox journal
+- loads hook definitions from the daemon state directory
+- executes matching hook commands with the event JSON on `stdin`
+
+That lets a CLI user inspect messages later with `ts message inbox` or trigger external scripts without keeping an interactive `ts events watch` process open.
+
 ## Command Lifecycle
 
-The CLI currently favors one-shot commands:
+Most CLI commands still favor one-shot execution:
 
 1. load config and resolve a profile
 2. create one backend object
@@ -87,6 +99,8 @@ The CLI currently favors one-shot commands:
 5. shut down the CLI-side backend object
 
 For the real plugin backend, this does not stop the TeamSpeak client session. It only tears down the short-lived socket client that served the command.
+
+The main exception is the local event daemon, which intentionally keeps polling in the background so message journaling and hook delivery can continue between one-shot CLI invocations.
 
 ## Testing Shape
 

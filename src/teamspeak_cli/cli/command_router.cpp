@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <string_view>
@@ -22,6 +23,7 @@
 #include "teamspeak_cli/bridge/socket_paths.hpp"
 #include "teamspeak_cli/build/version.hpp"
 #include "teamspeak_cli/cli/completion.hpp"
+#include "teamspeak_cli/daemon/runtime.hpp"
 #include "teamspeak_cli/session/session_service.hpp"
 #include "teamspeak_cli/util/scope_exit.hpp"
 #include "teamspeak_cli/util/strings.hpp"
@@ -32,6 +34,11 @@ namespace {
 constexpr auto kConnectCompletionTimeout = std::chrono::seconds(15);
 constexpr auto kDisconnectCompletionTimeout = std::chrono::seconds(10);
 constexpr std::array<std::string_view, 1> kClientRequiredSharedLibraries = {"libXi.so.6"};
+volatile std::sig_atomic_t g_daemon_stop_requested = 0;
+
+extern "C" void daemon_signal_handler(int) {
+    g_daemon_stop_requested = 1;
+}
 
 struct CommandDoc {
     std::vector<std::string> path;
@@ -69,10 +76,19 @@ const std::vector<CommandDoc>& command_docs() {
         {{"client", "stop"}, "ts client stop [--force]", "Stop the tracked local TeamSpeak client process", {"--force"}},
         {{"client", "list"}, "ts client list", "List connected clients", {}},
         {{"client", "get"}, "ts client get <id-or-name>", "Show one client", {}},
+        {{"daemon"}, "ts daemon <subcommand>", "Manage the local TeamSpeak event daemon", {}},
+        {{"daemon", "start"}, "ts daemon start [--foreground] [--poll-ms N]", "Start the local TeamSpeak event daemon", {"--foreground", "--poll-ms"}},
+        {{"daemon", "stop"}, "ts daemon stop [--timeout-ms N]", "Stop the local TeamSpeak event daemon", {"--timeout-ms"}},
+        {{"daemon", "status"}, "ts daemon status", "Show TeamSpeak event daemon status", {}},
         {{"message"}, "ts message <subcommand>", "Send TeamSpeak text messages", {}},
         {{"message", "send"}, "ts message send --target <client|channel> --id <id-or-name> --text <message>", "Send a text message if supported", {"--target", "--id", "--text"}},
+        {{"message", "inbox"}, "ts message inbox [--count N]", "Show messages captured by the local TeamSpeak event daemon", {"--count"}},
         {{"events"}, "ts events <subcommand>", "Watch translated async events", {}},
         {{"events", "watch"}, "ts events watch [--count N] [--timeout-ms N]", "Watch translated async events", {"--count", "--timeout-ms"}},
+        {{"events", "hook"}, "ts events hook <subcommand>", "Manage daemon hook commands", {}},
+        {{"events", "hook", "add"}, "ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]", "Add a daemon hook command", {"--type", "--exec", "--message-kind"}},
+        {{"events", "hook", "list"}, "ts events hook list", "List daemon hook commands", {}},
+        {{"events", "hook", "remove"}, "ts events hook remove <id>", "Remove one daemon hook command", {}},
         {{"completion"}, "ts completion bash|zsh|fish|powershell", "Emit a shell completion script", {}},
     };
     return docs;
@@ -298,6 +314,14 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
         (error.code == "xvfb_not_found" || error.code == "invalid_xvfb" || error.code == "display_not_found" ||
          error.code == "invalid_display")) {
         add_error_hint(error, "Install Xvfb or set `TS_CLIENT_HEADLESS=0`, then rerun `ts client start`.");
+    }
+
+    if (path == "daemon start" && error.code == "already_running") {
+        add_error_hint(error, "Run `ts daemon status` to inspect the existing TeamSpeak event daemon.");
+    }
+
+    if (path == "events hook remove" && error.code == "hook_not_found") {
+        add_error_hint(error, "Run `ts events hook list` to inspect the currently installed daemon hooks.");
     }
 
     if (error.exit_code == domain::ExitCode::usage) {
@@ -2187,6 +2211,192 @@ auto build_init_options(const ParsedCommand& command, const domain::Profile& pro
     };
 }
 
+auto parse_poll_ms(const std::map<std::string, std::string>& options, std::uint64_t fallback)
+    -> domain::Result<std::chrono::milliseconds> {
+    const auto it = options.find("poll-ms");
+    if (it == options.end()) {
+        return domain::ok(std::chrono::milliseconds(fallback));
+    }
+    const auto parsed = util::parse_u64(it->second);
+    if (!parsed.has_value() || *parsed == 0) {
+        return domain::fail<std::chrono::milliseconds>(cli_error(
+            "invalid_poll_ms", "invalid value for --poll-ms"
+        ));
+    }
+    return domain::ok(std::chrono::milliseconds(*parsed));
+}
+
+auto daemon_command_error(
+    std::string code,
+    std::string message,
+    domain::ExitCode exit_code = domain::ExitCode::internal
+) -> domain::Error {
+    return domain::make_error("daemon", std::move(code), std::move(message), exit_code);
+}
+
+auto resolve_daemon_paths() -> domain::Result<daemon::StatePaths> {
+    auto state_dir = daemon::resolve_state_dir();
+    if (!state_dir) {
+        return domain::fail<daemon::StatePaths>(state_dir.error());
+    }
+    return domain::ok(daemon::state_paths_for(state_dir.value()));
+}
+
+auto ensure_directory(const std::filesystem::path& path, std::string_view what) -> domain::Result<void> {
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec) {
+        return domain::fail(daemon_command_error(
+            "mkdir_failed", "failed to create " + std::string(what) + ": " + ec.message()
+        ));
+    }
+    return domain::ok();
+}
+
+auto write_daemon_pid_file(const std::filesystem::path& pid_file, pid_t pid) -> domain::Result<void> {
+    std::ofstream output(pid_file, std::ios::trunc);
+    if (!output) {
+        return domain::fail(daemon_command_error(
+            "pid_file_write_failed", "failed to write daemon pid file: " + pid_file.string()
+        ));
+    }
+    output << pid << '\n';
+    return domain::ok();
+}
+
+auto daemon_status_value(const daemon::Status& status, const daemon::StatePaths& paths) -> output::ValueHolder {
+    return output::make_object({
+        {"running", output::make_bool(status.running)},
+        {"pid", output::make_int(status.pid)},
+        {"profile", output::make_string(status.profile)},
+        {"backend", output::make_string(status.backend)},
+        {"started_at", output::make_string(status.started_at)},
+        {"last_event_at", output::make_string(status.last_event_at)},
+        {"last_event_type", output::make_string(status.last_event_type)},
+        {"last_error", output::make_string(status.last_error)},
+        {"poll_ms", output::make_int(status.poll_interval.count())},
+        {"inbox_count", output::make_int(static_cast<std::int64_t>(status.inbox_count))},
+        {"hook_count", output::make_int(static_cast<std::int64_t>(status.hook_count))},
+        {"state_dir", output::make_string(paths.state_dir.string())},
+        {"log_file", output::make_string(paths.log_file.string())},
+        {"pid_file", output::make_string(paths.pid_file.string())},
+    });
+}
+
+auto daemon_status_human(const daemon::Status& status, const daemon::StatePaths& paths) -> std::string {
+    std::ostringstream out;
+    if (status.running && status.pid > 0) {
+        out << "The TeamSpeak event daemon is running as PID " << status.pid << '.';
+    } else {
+        out << "The TeamSpeak event daemon is not running.";
+    }
+
+    if (!status.last_error.empty()) {
+        out << "\n\nLast Error\n" << status.last_error;
+    }
+
+    out << "\n\nDaemon Context\n";
+    out << output::render_details_block(output::Details{{
+        {"State", status.running ? "running" : "stopped"},
+        {"PID", status.pid > 0 ? std::to_string(status.pid) : "-"},
+        {"Profile", status.profile.empty() ? "-" : status.profile},
+        {"Backend", status.backend.empty() ? "-" : status.backend},
+        {"StartedAt", status.started_at.empty() ? "-" : status.started_at},
+        {"LastEventAt", status.last_event_at.empty() ? "-" : status.last_event_at},
+        {"LastEventType", status.last_event_type.empty() ? "-" : status.last_event_type},
+        {"PollMS", std::to_string(status.poll_interval.count())},
+        {"InboxMessages", std::to_string(status.inbox_count)},
+        {"Hooks", std::to_string(status.hook_count)},
+        {"StateDir", paths.state_dir.string()},
+        {"LogFile", paths.log_file.string()},
+    }});
+    return out.str();
+}
+
+auto hook_table(const std::vector<daemon::Hook>& hooks) -> output::Table {
+    output::Table table{{"ID", "Event", "Kind", "Exec"}, {}};
+    for (const auto& hook : hooks) {
+        table.rows.push_back({
+            hook.id,
+            hook.event_type,
+            hook.message_kind.empty() ? "*" : hook.message_kind,
+            hook.command,
+        });
+    }
+    return table;
+}
+
+auto message_sender(const domain::Event& event) -> std::string {
+    if (const auto it = event.fields.find("from_name"); it != event.fields.end()) {
+        return it->second;
+    }
+    if (const auto it = event.fields.find("from"); it != event.fields.end()) {
+        return it->second;
+    }
+    return "-";
+}
+
+auto message_kind_text(const domain::Event& event) -> std::string {
+    if (const auto it = event.fields.find("message_kind"); it != event.fields.end()) {
+        return it->second;
+    }
+    if (const auto it = event.fields.find("target_mode"); it != event.fields.end()) {
+        return it->second;
+    }
+    return "-";
+}
+
+auto message_text(const domain::Event& event) -> std::string {
+    if (const auto it = event.fields.find("text"); it != event.fields.end()) {
+        return it->second;
+    }
+    return event.summary;
+}
+
+auto inbox_table(const std::vector<domain::Event>& events) -> output::Table {
+    output::Table table{{"Time", "From", "Kind", "Text"}, {}};
+    for (const auto& event : events) {
+        auto value = output::to_value(event);
+        const auto* object = std::get_if<std::map<std::string, output::ValueHolder>>(&value.value);
+        const auto* timestamp = object == nullptr ? nullptr : std::get_if<std::string>(&object->at("timestamp").value);
+        table.rows.push_back({
+            timestamp == nullptr ? "" : *timestamp,
+            message_sender(event),
+            message_kind_text(event),
+            message_text(event),
+        });
+    }
+    return table;
+}
+
+auto hook_value(const daemon::Hook& hook) -> output::ValueHolder {
+    return output::make_object({
+        {"id", output::make_string(hook.id)},
+        {"type", output::make_string(hook.event_type)},
+        {"message_kind", output::make_string(hook.message_kind)},
+        {"exec", output::make_string(hook.command)},
+    });
+}
+
+auto hooks_value(const std::vector<daemon::Hook>& hooks) -> output::ValueHolder {
+    std::vector<output::ValueHolder> values;
+    values.reserve(hooks.size());
+    for (const auto& hook : hooks) {
+        values.push_back(hook_value(hook));
+    }
+    return output::make_array(std::move(values));
+}
+
+auto next_hook_id(const std::vector<daemon::Hook>& hooks) -> std::string {
+    std::uint64_t best = 0;
+    for (const auto& hook : hooks) {
+        if (const auto parsed = util::parse_u64(hook.id); parsed.has_value()) {
+            best = std::max(best, *parsed);
+        }
+    }
+    return std::to_string(best + 1);
+}
+
 template <typename Func>
 auto with_session(
     const ParsedCommand& command,
@@ -2504,7 +2714,8 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 option == "output" || option == "profile" || option == "server" ||
                 option == "nickname" || option == "identity" || option == "config" ||
                 option == "target" || option == "id" || option == "text" ||
-                option == "count" || option == "timeout-ms";
+                option == "count" || option == "timeout-ms" || option == "poll-ms" ||
+                option == "type" || option == "exec" || option == "message-kind";
 
             if (!takes_value) {
                 parsed.flags.insert(option);
@@ -2680,6 +2891,365 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                     {"path", output::make_string(config_path.string())},
                 }),
                 .human = std::string("active profile set to " + found.value()->name),
+            });
+        }
+
+        if (path == "daemon start") {
+            auto resolved = load_profile(config_store_, command);
+            if (!resolved) {
+                return domain::fail<output::CommandOutput>(resolved.error());
+            }
+            auto poll_interval = parse_poll_ms(command.options, 500);
+            if (!poll_interval) {
+                return domain::fail<output::CommandOutput>(poll_interval.error());
+            }
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto ensured = ensure_directory(paths.value().state_dir, "daemon state directory");
+            if (!ensured) {
+                return domain::fail<output::CommandOutput>(ensured.error());
+            }
+
+            if (const auto pid = read_pid_file(paths.value().pid_file); pid.has_value()) {
+                if (process_is_running(*pid)) {
+                    return domain::fail<output::CommandOutput>(daemon_command_error(
+                        "already_running",
+                        "the TeamSpeak event daemon is already running as PID " + std::to_string(*pid),
+                        domain::ExitCode::unsupported
+                    ));
+                }
+                remove_pid_file(paths.value().pid_file);
+            }
+
+            auto backend = backend_factory_.create(resolved.value().profile.backend);
+            if (!backend) {
+                return domain::fail<output::CommandOutput>(backend.error());
+            }
+
+            const auto init_options = build_init_options(command, resolved.value().profile);
+            const bool foreground = command.flags.contains("foreground");
+
+            if (foreground) {
+                auto wrote_pid = write_daemon_pid_file(paths.value().pid_file, ::getpid());
+                if (!wrote_pid) {
+                    return domain::fail<output::CommandOutput>(wrote_pid.error());
+                }
+                auto pid_guard = util::make_scope_exit([&] { remove_pid_file(paths.value().pid_file); });
+
+                g_daemon_stop_requested = 0;
+                auto* previous_int = std::signal(SIGINT, daemon_signal_handler);
+                auto* previous_term = std::signal(SIGTERM, daemon_signal_handler);
+                auto signal_guard = util::make_scope_exit([&] {
+                    std::signal(SIGINT, previous_int);
+                    std::signal(SIGTERM, previous_term);
+                });
+
+                auto ran = daemon::run_event_daemon(
+                    resolved.value().profile,
+                    init_options,
+                    paths.value(),
+                    poll_interval.value(),
+                    [] { return g_daemon_stop_requested != 0; },
+                    backend_factory_
+                );
+                if (!ran) {
+                    return domain::fail<output::CommandOutput>(ran.error());
+                }
+
+                auto status = daemon::read_status(paths.value());
+                if (!status) {
+                    return domain::fail<output::CommandOutput>(status.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = daemon_status_value(status.value(), paths.value()),
+                    .human = daemon_status_human(status.value(), paths.value()),
+                });
+            }
+
+            const pid_t child_pid = ::fork();
+            if (child_pid < 0) {
+                return domain::fail<output::CommandOutput>(daemon_command_error(
+                    "fork_failed",
+                    "failed to launch the TeamSpeak event daemon: " + std::string(std::strerror(errno))
+                ));
+            }
+
+            if (child_pid == 0) {
+                if (::setsid() < 0) {
+                    _exit(1);
+                }
+
+                const int stdin_fd = ::open("/dev/null", O_RDONLY);
+                const int log_fd =
+                    ::open(paths.value().log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+                if (stdin_fd < 0 || log_fd < 0 || ::dup2(stdin_fd, STDIN_FILENO) == -1 ||
+                    ::dup2(log_fd, STDOUT_FILENO) == -1 || ::dup2(log_fd, STDERR_FILENO) == -1) {
+                    _exit(1);
+                }
+                ::close(stdin_fd);
+                ::close(log_fd);
+
+                auto wrote_pid = write_daemon_pid_file(paths.value().pid_file, ::getpid());
+                if (!wrote_pid) {
+                    _exit(static_cast<int>(wrote_pid.error().exit_code));
+                }
+                auto pid_guard = util::make_scope_exit([&] { remove_pid_file(paths.value().pid_file); });
+
+                g_daemon_stop_requested = 0;
+                std::signal(SIGINT, daemon_signal_handler);
+                std::signal(SIGTERM, daemon_signal_handler);
+
+                auto ran = daemon::run_event_daemon(
+                    resolved.value().profile,
+                    init_options,
+                    paths.value(),
+                    poll_interval.value(),
+                    [] { return g_daemon_stop_requested != 0; },
+                    backend_factory_
+                );
+                if (!ran) {
+                    std::cerr << ran.error().message << '\n';
+                    _exit(static_cast<int>(ran.error().exit_code));
+                }
+                _exit(0);
+            }
+
+            auto wrote_pid = write_daemon_pid_file(paths.value().pid_file, child_pid);
+            if (!wrote_pid) {
+                (void)::kill(child_pid, SIGTERM);
+                return domain::fail<output::CommandOutput>(wrote_pid.error());
+            }
+
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"result", output::make_string("started")},
+                    {"pid", output::make_int(child_pid)},
+                    {"profile", output::make_string(resolved.value().profile.name)},
+                    {"backend", output::make_string(resolved.value().profile.backend)},
+                    {"poll_ms", output::make_int(poll_interval.value().count())},
+                    {"state_dir", output::make_string(paths.value().state_dir.string())},
+                    {"log_file", output::make_string(paths.value().log_file.string())},
+                }),
+                .human = std::string(
+                    "Started the TeamSpeak event daemon as PID " + std::to_string(child_pid) + '.'
+                ),
+            });
+        }
+
+        if (path == "daemon stop") {
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto timeout = parse_timeout_ms(command.options, 3000);
+            if (!timeout) {
+                return domain::fail<output::CommandOutput>(timeout.error());
+            }
+
+            const auto pid = read_pid_file(paths.value().pid_file);
+            if (!pid.has_value()) {
+                auto status = daemon::read_status(paths.value());
+                if (!status) {
+                    return domain::fail<output::CommandOutput>(status.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = daemon_status_value(status.value(), paths.value()),
+                    .human = daemon_status_human(status.value(), paths.value()),
+                });
+            }
+
+            if (!process_is_running(*pid)) {
+                remove_pid_file(paths.value().pid_file);
+            } else if (::kill(*pid, SIGTERM) != 0 && errno != ESRCH) {
+                return domain::fail<output::CommandOutput>(daemon_command_error(
+                    "signal_failed",
+                    "failed to stop the TeamSpeak event daemon: " + std::string(std::strerror(errno))
+                ));
+            }
+
+            const auto deadline = std::chrono::steady_clock::now() + timeout.value();
+            while (process_is_running(*pid) && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+
+            if (process_is_running(*pid)) {
+                return domain::fail<output::CommandOutput>(daemon_command_error(
+                    "stop_timeout",
+                    "the TeamSpeak event daemon did not stop within " +
+                        std::to_string(timeout.value().count()) + " ms",
+                    domain::ExitCode::connection
+                ));
+            }
+
+            remove_pid_file(paths.value().pid_file);
+            auto status = daemon::read_status(paths.value());
+            if (!status) {
+                return domain::fail<output::CommandOutput>(status.error());
+            }
+            status.value().running = false;
+            status.value().pid = 0;
+            const auto wrote = daemon::write_status(paths.value(), status.value());
+            if (!wrote) {
+                return domain::fail<output::CommandOutput>(wrote.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = daemon_status_value(status.value(), paths.value()),
+                .human = daemon_status_human(status.value(), paths.value()),
+            });
+        }
+
+        if (path == "daemon status") {
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto status = daemon::read_status(paths.value());
+            if (!status) {
+                return domain::fail<output::CommandOutput>(status.error());
+            }
+
+            if (const auto pid = read_pid_file(paths.value().pid_file); pid.has_value()) {
+                if (process_is_running(*pid)) {
+                    status.value().running = true;
+                    status.value().pid = *pid;
+                } else {
+                    remove_pid_file(paths.value().pid_file);
+                    status.value().running = false;
+                    status.value().pid = 0;
+                    const auto wrote = daemon::write_status(paths.value(), status.value());
+                    if (!wrote) {
+                        return domain::fail<output::CommandOutput>(wrote.error());
+                    }
+                }
+            } else {
+                status.value().running = false;
+                status.value().pid = 0;
+            }
+
+            return domain::ok(output::CommandOutput{
+                .data = daemon_status_value(status.value(), paths.value()),
+                .human = daemon_status_human(status.value(), paths.value()),
+            });
+        }
+
+        if (path == "message inbox") {
+            auto count = parse_positive_size(command.options, "count", 20);
+            if (!count) {
+                return domain::fail<output::CommandOutput>(count.error());
+            }
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto messages = daemon::read_inbox(paths.value(), count.value());
+            if (!messages) {
+                return domain::fail<output::CommandOutput>(messages.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::to_value(messages.value()),
+                .human = inbox_table(messages.value()),
+            });
+        }
+
+        if (path == "events hook add") {
+            auto type = require_option(command, "type");
+            auto exec = require_option(command, "exec");
+            if (!type) {
+                return domain::fail<output::CommandOutput>(type.error());
+            }
+            if (!exec) {
+                return domain::fail<output::CommandOutput>(exec.error());
+            }
+
+            std::string message_kind;
+            if (const auto it = command.options.find("message-kind"); it != command.options.end()) {
+                if (it->second != "client" && it->second != "channel" && it->second != "server") {
+                    return domain::fail<output::CommandOutput>(cli_error(
+                        "invalid_message_kind", "--message-kind must be client, channel, or server"
+                    ));
+                }
+                message_kind = it->second;
+            }
+
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto hooks = daemon::load_hooks(paths.value());
+            if (!hooks) {
+                return domain::fail<output::CommandOutput>(hooks.error());
+            }
+
+            daemon::Hook hook{
+                .id = next_hook_id(hooks.value()),
+                .event_type = type.value(),
+                .message_kind = std::move(message_kind),
+                .command = exec.value(),
+            };
+            hooks.value().push_back(hook);
+            auto saved = daemon::save_hooks(paths.value(), hooks.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = hook_value(hook),
+                .human = std::string("added daemon hook " + hook.id),
+            });
+        }
+
+        if (path == "events hook list") {
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto hooks = daemon::load_hooks(paths.value());
+            if (!hooks) {
+                return domain::fail<output::CommandOutput>(hooks.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = hooks_value(hooks.value()),
+                .human = hook_table(hooks.value()),
+            });
+        }
+
+        if (path == "events hook remove") {
+            auto id = require_positional(command, 0, "id");
+            if (!id) {
+                return domain::fail<output::CommandOutput>(id.error());
+            }
+            auto paths = resolve_daemon_paths();
+            if (!paths) {
+                return domain::fail<output::CommandOutput>(paths.error());
+            }
+            auto hooks = daemon::load_hooks(paths.value());
+            if (!hooks) {
+                return domain::fail<output::CommandOutput>(hooks.error());
+            }
+
+            const auto original_size = hooks.value().size();
+            hooks.value().erase(
+                std::remove_if(
+                    hooks.value().begin(),
+                    hooks.value().end(),
+                    [&](const daemon::Hook& hook) { return hook.id == id.value(); }
+                ),
+                hooks.value().end()
+            );
+            if (hooks.value().size() == original_size) {
+                return domain::fail<output::CommandOutput>(daemon_command_error(
+                    "hook_not_found", "hook not found: " + id.value(), domain::ExitCode::not_found
+                ));
+            }
+
+            auto saved = daemon::save_hooks(paths.value(), hooks.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({{"id", output::make_string(id.value())}}),
+                .human = std::string("removed daemon hook " + id.value()),
             });
         }
 

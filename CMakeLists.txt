@@ -94,6 +94,7 @@ set(TS_COMMON_SOURCES
   src/teamspeak_cli/cli/completion.cpp
   src/teamspeak_cli/cli/command_router.cpp
   src/teamspeak_cli/config/config_store.cpp
+  src/teamspeak_cli/daemon/runtime.cpp
   src/teamspeak_cli/events/event_queue.cpp
   src/teamspeak_cli/output/render.cpp
   src/teamspeak_cli/sdk/backend_factory.cpp
@@ -147,6 +148,22 @@ if(BUILD_TESTING)
   )
   ts_apply_defaults(ts_output_render_test)
   add_test(NAME ts_output_render_test COMMAND ts_output_render_test)
+
+  add_executable(
+    ts_daemon_runtime_test
+    tests/daemon_runtime_test.cpp
+    tests/test_support.hpp
+    src/teamspeak_cli/bridge/protocol.cpp
+    src/teamspeak_cli/daemon/runtime.cpp
+    src/teamspeak_cli/events/event_queue.cpp
+    src/teamspeak_cli/output/render.cpp
+    src/teamspeak_cli/sdk/backend_factory.cpp
+    src/teamspeak_cli/sdk/mock_backend.cpp
+    src/teamspeak_cli/sdk/socket_backend.cpp
+    src/teamspeak_cli/util/strings.cpp
+  )
+  ts_apply_defaults(ts_daemon_runtime_test)
+  add_test(NAME ts_daemon_runtime_test COMMAND ts_daemon_runtime_test)
 
   add_executable(
     ts_session_service_test
