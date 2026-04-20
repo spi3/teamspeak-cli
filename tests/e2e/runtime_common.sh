@@ -225,6 +225,12 @@ ts3_runtime_client_package_for_soname() {
     libGL.so.1)
       printf '%s\n' "libgl1"
       ;;
+    libGLdispatch.so.0)
+      printf '%s\n' "libglvnd0"
+      ;;
+    libGLX.so.0)
+      printf '%s\n' "libglx0"
+      ;;
     libglib-2.0.so.0|libgthread-2.0.so.0)
       printf '%s\n' "libglib2.0-0"
       ;;

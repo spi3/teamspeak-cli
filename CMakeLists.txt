@@ -208,6 +208,11 @@ if(BUILD_TESTING)
   set_tests_properties(ts_mock_bridge_e2e_test PROPERTIES TIMEOUT 60)
 
   add_test(
+    NAME ts_runtime_dependency_map_test
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_dependency_map_test.sh"
+  )
+
+  add_test(
     NAME ts_e2e_shell_syntax_test
     COMMAND
       bash -n
@@ -217,6 +222,7 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/uninstall.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_cli_smoke.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_bridge_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_dependency_map_test.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/bootstrap_runtime_deps.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_common.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_plugin_server_env.sh"
