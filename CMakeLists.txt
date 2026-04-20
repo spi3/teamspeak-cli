@@ -213,15 +213,22 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME ts_client_wrapper_audio_preflight_test
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/client_wrapper_audio_preflight_test.sh"
+  )
+
+  add_test(
     NAME ts_e2e_shell_syntax_test
     COMMAND
       bash -n
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install-release.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package-release.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/write-client-wrapper.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/uninstall.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_cli_smoke.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_bridge_e2e.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/client_wrapper_audio_preflight_test.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_dependency_map_test.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/bootstrap_runtime_deps.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/runtime_common.sh"

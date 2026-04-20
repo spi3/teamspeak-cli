@@ -130,38 +130,8 @@ ensure_requirements() {
 }
 
 install_client_wrapper() {
-  local client_dir_quoted
-  local wrapper_tmp
-
-  printf -v client_dir_quoted '%q' "${client_install_dir}"
-  wrapper_tmp="$(mktemp)"
-  cat >"${wrapper_tmp}" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-
-client_dir=${client_dir_quoted}
-runtime_root="\${TS3_CLIENT_RUNTIME_ROOT:-\${client_dir}/runtime-libs}"
-runtime_library_path="\${TS3_CLIENT_LIBRARY_PATH:-}"
-
-if [[ -z "\${runtime_library_path}" && -d "\${runtime_root}" ]]; then
-  runtime_library_path="\$(find "\${runtime_root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)"
-fi
-
-launch_library_path="\${client_dir}"
-if [[ -n "\${runtime_library_path}" ]]; then
-  launch_library_path="\${launch_library_path}:\${runtime_library_path}"
-fi
-
-exec env \
-  LD_LIBRARY_PATH="\${launch_library_path}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}" \
-  TS3_CLIENT_DIR="\${client_dir}" \
-  "\${client_dir}/ts3client_runscript.sh" "\$@"
-EOF
-
-  install -d "${prefix}/bin"
-  install -m 0755 "${wrapper_tmp}" "${ts3client_wrapper_path}"
+  "${script_dir}/write-client-wrapper.sh" "${ts3client_wrapper_path}" "${client_install_dir}"
   ln -sfn "ts3client" "${client_alias_path}"
-  rm -f "${wrapper_tmp}"
 }
 
 install_uninstaller() {
