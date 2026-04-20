@@ -163,23 +163,69 @@ ts3_runtime_client_ld_library_path() {
   printf '%s\n' "${client_dir}"
 }
 
+ts3_runtime_client_required_shared_libraries() {
+  printf '%s\n' "libXi.so.6"
+}
+
+ts3_runtime_library_search_path_contains_soname() {
+  local soname="$1"
+  local search_path="$2"
+  local dir
+
+  while IFS= read -r dir; do
+    [[ -n "${dir}" ]] || continue
+    if [[ -e "${dir}/${soname}" ]]; then
+      return 0
+    fi
+  done < <(printf '%s\n' "${search_path}" | tr ':' '\n')
+
+  return 1
+}
+
+ts3_runtime_ldconfig_cache_contains_soname() {
+  local soname="$1"
+
+  command -v ldconfig >/dev/null 2>&1 || return 1
+  ldconfig -p 2>/dev/null | awk -v soname="${soname}" '
+    $1 == soname { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 ts3_runtime_missing_client_shared_libraries() {
   local client_dir="$1"
   local runtime_library_path="${2:-}"
   local launch_library_path
   local binary_path
+  local soname
 
   launch_library_path="$(ts3_runtime_client_ld_library_path "${client_dir}" "${runtime_library_path}")"
 
-  for binary_path in \
-    "${client_dir}/ts3client_linux_amd64" \
-    "${client_dir}/QtWebEngineProcess" \
-    "${client_dir}/platforms/libqxcb.so" \
-    "${client_dir}/xcbglintegrations/libqxcb-egl-integration.so" \
-    "${client_dir}/xcbglintegrations/libqxcb-glx-integration.so"; do
-    [[ -f "${binary_path}" ]] || continue
-    env LD_LIBRARY_PATH="${launch_library_path}" ldd "${binary_path}" 2>/dev/null
-  done | awk '/=> not found/ {print $1}' | sort -u
+  {
+    for binary_path in \
+      "${client_dir}/ts3client_linux_amd64" \
+      "${client_dir}/QtWebEngineProcess" \
+      "${client_dir}/platforms/libqxcb.so" \
+      "${client_dir}/xcbglintegrations/libqxcb-egl-integration.so" \
+      "${client_dir}/xcbglintegrations/libqxcb-glx-integration.so"; do
+      [[ -f "${binary_path}" ]] || continue
+      env LD_LIBRARY_PATH="${launch_library_path}" ldd "${binary_path}" 2>/dev/null
+    done | awk '/=> not found/ {print $1}'
+
+    while IFS= read -r soname; do
+      [[ -n "${soname}" ]] || continue
+      if ts3_runtime_library_search_path_contains_soname "${soname}" "${launch_library_path}"; then
+        continue
+      fi
+      if ts3_runtime_ldconfig_cache_contains_soname "${soname}"; then
+        continue
+      fi
+      if ! command -v ldconfig >/dev/null 2>&1; then
+        continue
+      fi
+      printf '%s\n' "${soname}"
+    done < <(ts3_runtime_client_required_shared_libraries)
+  } | sort -u
 }
 
 ts3_runtime_client_runtime_libraries_ready() {
@@ -266,6 +312,9 @@ ts3_runtime_client_package_for_soname() {
       ;;
     libXext.so.6)
       printf '%s\n' "libxext6"
+      ;;
+    libXi.so.6)
+      printf '%s\n' "libxi6"
       ;;
     libXfixes.so.3)
       printf '%s\n' "libxfixes3"

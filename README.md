@@ -336,6 +336,12 @@ If headless launch fails:
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
 
+If `ts client start` reports a missing shared library such as `libXi.so.6`:
+
+- install a system package that provides that library
+- or add the library under the TeamSpeak client `runtime-libs` tree
+- if you used the bundled installer, rerun it to refresh the managed runtime library bundle
+
 If the installed `ts3client` launcher prints `QCoreApplication::applicationDirPath` and then the TeamSpeak client segfaults:
 
 - this is usually an upstream TeamSpeak Linux audio-stack crash, not a `ts3cli_plugin.so` startup failure

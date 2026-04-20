@@ -662,6 +662,70 @@ int main() {
         "client status after stop should report not running"
     );
 
+    const fs::path missing_library_client_dir = temp_dir / "missing-library-client";
+    const fs::path missing_library_launcher_path = missing_library_client_dir / "ts3client_runscript.sh";
+    const fs::path missing_library_marker_path = temp_dir / "missing-library-runscript.txt";
+    fs::create_directories(missing_library_client_dir);
+    {
+        std::ofstream launcher(missing_library_launcher_path, std::ios::trunc);
+        launcher << "#!/usr/bin/env bash\n";
+        launcher << "set -euo pipefail\n";
+        launcher << "printf 'RUNSCRIPT_EXECUTED\\n' >\"" << missing_library_marker_path.string() << "\"\n";
+    }
+    fs::permissions(
+        missing_library_launcher_path,
+        fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+        fs::perm_options::replace
+    );
+
+    const fs::path fake_ldconfig_dir = temp_dir / "fake-ldconfig-bin";
+    const fs::path fake_ldconfig_path = fake_ldconfig_dir / "ldconfig";
+    fs::create_directories(fake_ldconfig_dir);
+    {
+        std::ofstream ldconfig(fake_ldconfig_path, std::ios::trunc);
+        ldconfig << "#!/usr/bin/env bash\n";
+        ldconfig << "set -euo pipefail\n";
+        ldconfig << "printf '0 libs found in cache `/etc/ld.so.cache`\\n'\n";
+    }
+    fs::permissions(
+        fake_ldconfig_path,
+        fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+        fs::perm_options::replace
+    );
+
+    {
+        const char* current_path = std::getenv("PATH");
+        const std::string fake_path =
+            fake_ldconfig_dir.string() +
+            ((current_path != nullptr && *current_path != '\0') ? ":" + std::string(current_path) : "");
+        EnvGuard missing_library_launcher_env("TS_CLIENT_LAUNCHER", missing_library_launcher_path.string());
+        EnvGuard fake_path_env("PATH", fake_path);
+
+        auto missing_library_start = router.dispatch(client_start.value());
+        tests::expect(!missing_library_start.ok(), "client start should fail when libXi.so.6 is unavailable");
+        tests::expect_eq(
+            missing_library_start.error().code,
+            std::string("missing_runtime_library"),
+            "client start should return the missing runtime library error"
+        );
+        const auto missing_library_table =
+            output::render_error(missing_library_start.error(), output::Format::table, false);
+        tests::expect_contains(
+            missing_library_table,
+            "libXi.so.6",
+            "client start error should name the missing shared library"
+        );
+        tests::expect_contains(
+            missing_library_table,
+            "runtime-libs",
+            "client start error should explain how to provide the runtime library"
+        );
+        tests::expect(
+            !fs::exists(missing_library_marker_path),
+            "client start preflight should stop before executing the TeamSpeak runscript"
+        );
+    }
+
     const fs::path wrapped_launcher_path = temp_dir / "wrapped-client.sh";
     {
         std::ofstream launcher(wrapped_launcher_path, std::ios::trunc);

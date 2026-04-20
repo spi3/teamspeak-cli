@@ -31,6 +31,7 @@ namespace {
 
 constexpr auto kConnectCompletionTimeout = std::chrono::seconds(15);
 constexpr auto kDisconnectCompletionTimeout = std::chrono::seconds(10);
+constexpr std::array<std::string_view, 1> kClientRequiredSharedLibraries = {"libXi.so.6"};
 
 struct CommandDoc {
     std::vector<std::string> path;
@@ -275,6 +276,22 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
 
     if (path == "client start" && error.code == "launcher_not_found") {
         add_error_hint(error, "Install the TeamSpeak client or set `TS_CLIENT_LAUNCHER`, then rerun `ts client start`.");
+    }
+
+    if (path == "client start" && error.code == "missing_runtime_library") {
+        std::string missing_library_hint =
+            "Install a package that provides the missing shared library, or add it under the TeamSpeak client `runtime-libs` directory, then rerun `ts client start`.";
+        if (const auto client_dir = error.details.find("client_dir"); client_dir != error.details.end()) {
+            missing_library_hint =
+                "Install a package that provides the missing shared library, or add it under `" +
+                client_dir->second +
+                "/runtime-libs`, then rerun `ts client start`.";
+        }
+        add_error_hint(error, std::move(missing_library_hint));
+        add_error_hint(
+            error,
+            "If you installed the bundled TeamSpeak client through this project, rerun the installer to refresh the managed runtime libraries."
+        );
     }
 
     if (path == "client start" &&
@@ -783,6 +800,150 @@ auto split_output_lines(const std::optional<std::string>& output) -> std::vector
         }
     }
     return lines;
+}
+
+auto append_unique_path(
+    std::vector<std::filesystem::path>& paths,
+    const std::filesystem::path& candidate
+) -> void {
+    if (candidate.empty()) {
+        return;
+    }
+
+    if (std::find(paths.begin(), paths.end(), candidate) == paths.end()) {
+        paths.push_back(candidate);
+    }
+}
+
+auto append_search_path_entries(
+    std::vector<std::filesystem::path>& paths,
+    std::string_view raw_path_list
+) -> void {
+    for (const auto& entry : util::split(raw_path_list, ':')) {
+        if (!entry.empty()) {
+            append_unique_path(paths, std::filesystem::path(entry));
+        }
+    }
+}
+
+auto append_runtime_library_dirs(
+    std::vector<std::filesystem::path>& paths,
+    const std::filesystem::path& runtime_root
+) -> void {
+    std::error_code exists_ec;
+    if (runtime_root.empty() || !std::filesystem::exists(runtime_root, exists_ec) || exists_ec) {
+        return;
+    }
+
+    std::error_code iterator_ec;
+    for (std::filesystem::recursive_directory_iterator iter(
+             runtime_root,
+             std::filesystem::directory_options::skip_permission_denied,
+             iterator_ec
+         ),
+         end;
+         iter != end;
+         iter.increment(iterator_ec)) {
+        if (iterator_ec) {
+            iterator_ec.clear();
+            continue;
+        }
+
+        const auto filename = iter->path().filename().string();
+        if (filename.find(".so") != std::string::npos) {
+            append_unique_path(paths, iter->path().parent_path());
+        }
+    }
+}
+
+auto has_ldconfig_cache_entry(const std::filesystem::path& ldconfig_path, std::string_view soname) -> bool {
+    const auto cache_lines = split_output_lines(run_command_capture_stdout({ldconfig_path.string(), "-p"}, {}));
+    for (const auto& line : cache_lines) {
+        if (line.size() < soname.size()) {
+            continue;
+        }
+        if (line.compare(0, soname.size(), soname) != 0) {
+            continue;
+        }
+        if (line.size() == soname.size() ||
+            std::isspace(static_cast<unsigned char>(line[soname.size()])) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto required_client_launch_libraries_missing(const ClientProcessPaths& paths) -> std::vector<std::string> {
+    const auto launcher_name = paths.launcher_path.filename().string();
+    if (launcher_name != "ts3client_runscript.sh" && launcher_name != "ts3client_linux_amd64") {
+        return {};
+    }
+
+    const auto client_dir = paths.launcher_path.parent_path();
+    std::vector<std::filesystem::path> search_dirs;
+    append_unique_path(search_dirs, client_dir);
+
+    if (const char* explicit_runtime_path = std::getenv("TS3_CLIENT_LIBRARY_PATH");
+        explicit_runtime_path != nullptr && *explicit_runtime_path != '\0') {
+        append_search_path_entries(search_dirs, explicit_runtime_path);
+    } else {
+        std::filesystem::path runtime_root = client_dir / "runtime-libs";
+        if (const char* explicit_runtime_root = std::getenv("TS3_CLIENT_RUNTIME_ROOT");
+            explicit_runtime_root != nullptr && *explicit_runtime_root != '\0') {
+            runtime_root = explicit_runtime_root;
+        }
+        append_runtime_library_dirs(search_dirs, runtime_root);
+    }
+
+    if (const char* current_ld_library_path = std::getenv("LD_LIBRARY_PATH");
+        current_ld_library_path != nullptr && *current_ld_library_path != '\0') {
+        append_search_path_entries(search_dirs, current_ld_library_path);
+    }
+
+    const auto ldconfig_path = find_executable_on_path("ldconfig");
+    std::vector<std::string> missing_libraries;
+    for (const auto soname : kClientRequiredSharedLibraries) {
+        bool found_in_search_dirs = false;
+        for (const auto& dir : search_dirs) {
+            std::error_code ec;
+            if (std::filesystem::exists(dir / std::string(soname), ec) && !ec) {
+                found_in_search_dirs = true;
+                break;
+            }
+        }
+
+        if (found_in_search_dirs) {
+            continue;
+        }
+        if (ldconfig_path.has_value() && has_ldconfig_cache_entry(*ldconfig_path, soname)) {
+            continue;
+        }
+        if (!ldconfig_path.has_value()) {
+            continue;
+        }
+
+        missing_libraries.emplace_back(soname);
+    }
+
+    return missing_libraries;
+}
+
+auto preflight_client_launch_runtime(const ClientProcessPaths& paths) -> domain::Result<void> {
+    const auto missing_libraries = required_client_launch_libraries_missing(paths);
+    if (missing_libraries.empty()) {
+        return domain::ok();
+    }
+
+    auto error = client_error(
+        "missing_runtime_library",
+        "refusing to start the TeamSpeak client because required shared libraries are unavailable: " +
+            util::join(missing_libraries, ", "),
+        domain::ExitCode::not_found
+    );
+    error.details.emplace("libraries", util::join(missing_libraries, ", "));
+    error.details.emplace("client_dir", paths.launcher_path.parent_path().string());
+    error.details.emplace("launcher", paths.launcher_path.string());
+    return domain::fail(std::move(error));
 }
 
 auto xdotool_env(const XdotoolPaths& xdotool, std::string_view display)
@@ -1480,6 +1641,11 @@ auto start_client_process(
     auto headless_launch = resolve_client_headless_launch();
     if (!headless_launch) {
         return domain::fail<output::CommandOutput>(headless_launch.error());
+    }
+
+    auto launch_preflight = preflight_client_launch_runtime(paths.value());
+    if (!launch_preflight) {
+        return domain::fail<output::CommandOutput>(launch_preflight.error());
     }
 
     if (progress) {
