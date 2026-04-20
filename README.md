@@ -21,6 +21,7 @@ The following flows were checked against the current repository state during thi
 - `make build`
 - `make test`
 - `./scripts/install.sh --help`
+- `./scripts/install-release.sh --help`
 - `./scripts/uninstall.sh --help`
 
 The TeamSpeak-backed Docker and `Xvfb` harness is available, but it is still the least stable path in the repo. Treat `make test-e2e` and `make env-up` as local integration tools, not as the primary always-green workflow.
@@ -64,28 +65,35 @@ If you want to prefetch the managed runtime inputs first, run:
 make deps
 ```
 
-### User Install
+### Install From GitHub
 
-On Linux `x86_64`, install the CLI, TeamSpeak client bundle, plugin, launcher, docs, and starter config for the current user with:
+For normal user installs on Linux `x86_64`, use the published GitHub release installer directly without cloning the repo:
 
 ```bash
-./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/spi3/teamspeak-cli/main/scripts/install-release.sh | bash
 ```
 
-By default the installer:
+That installer:
 
-- caches managed downloads under `~/.cache/teamspeak-cli/install`
-- builds a `Release` tree in `build-install`
+- resolves the latest published GitHub release from `spi3/teamspeak-cli`
+- downloads the release archive and checksum
+- caches release downloads and TeamSpeak runtime assets under `~/.cache/teamspeak-cli/install`
 - installs `ts` and the bundled docs/examples under `~/.local`
 - installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
-Inspect overrides with:
+To pin a specific release instead of the latest one, run:
 
 ```bash
-./scripts/install.sh --help
+curl -fsSL https://raw.githubusercontent.com/spi3/teamspeak-cli/main/scripts/install-release.sh | bash -s -- --release-tag vX.Y.Z
+```
+
+If you already have a checkout and want to inspect or customize the release installer locally first, run:
+
+```bash
+./scripts/install-release.sh --help
 ```
 
 Remove a user-level install later with:
@@ -95,6 +103,30 @@ ts-uninstall
 ```
 
 Use `ts-uninstall --keep-config` if you want to preserve a config file that the installer created.
+
+### Local Checkout Install
+
+If you want the installer to build directly from your local checkout instead of using published release artifacts, run:
+
+```bash
+./scripts/install.sh
+```
+
+By default the local-checkout installer:
+
+- caches managed downloads under `~/.cache/teamspeak-cli/install`
+- builds a `Release` tree in `build-install`
+- installs `ts` and the bundled docs/examples under `~/.local`
+- installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
+- installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
+- installs `~/.local/bin/ts-uninstall`
+- initializes `~/.config/ts/config.ini` when that file does not already exist
+
+Inspect local-build installer overrides with:
+
+```bash
+./scripts/install.sh --help
+```
 
 ## Build Matrix
 

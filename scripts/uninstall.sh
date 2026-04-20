@@ -27,7 +27,8 @@ usage() {
   cat <<EOF
 Usage: ./scripts/uninstall.sh [options]
 
-Remove the files previously installed by ./scripts/install.sh.
+Remove the files previously installed by ./scripts/install.sh or
+./scripts/install-release.sh.
 
 Options:
   --prefix DIR      Resolve the install receipt under DIR/share/teamspeak-cli
@@ -142,12 +143,10 @@ else
   fi
 fi
 
-if [[ "${share_dir_removed}" -eq 0 ]]; then
-  if [[ "${client_install_dir}" != "${share_dir}" && "${client_install_dir}" != "${share_dir}/"* ]]; then
-    remove_owned_dir_if_present "${client_install_dir}" || true
-  elif [[ -d "${client_install_dir}" ]]; then
-    remove_owned_dir_if_present "${client_install_dir}" || true
-  fi
+if [[ "${client_install_dir}" != "${share_dir}" && "${client_install_dir}" != "${share_dir}/"* ]]; then
+  remove_owned_dir_if_present "${client_install_dir}" || true
+elif [[ "${share_dir_removed}" -eq 0 && -d "${client_install_dir}" ]]; then
+  remove_owned_dir_if_present "${client_install_dir}" || true
 fi
 
 remove_owned_dir_if_present "${managed_dir}" || true

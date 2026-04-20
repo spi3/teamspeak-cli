@@ -212,6 +212,7 @@ if(BUILD_TESTING)
     COMMAND
       bash -n
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install-release.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package-release.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/uninstall.sh"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_cli_smoke.sh"
