@@ -7,6 +7,7 @@ repo_root=""
 local_support_available=0
 runtime_common_path=""
 uninstall_source_path=""
+client_wrapper_source_path=""
 support_cache_dir=""
 support_source_repo="${INSTALL_SCRIPT_REPO:-spi3/teamspeak-cli}"
 support_source_ref="${INSTALL_SCRIPT_REF:-main}"
@@ -16,10 +17,11 @@ if [[ -n "${script_source_path}" ]]; then
   script_dir="$(cd "$(dirname "${script_source_path}")" 2>/dev/null && pwd || true)"
   if [[ -n "${script_dir}" ]]; then
     repo_root="$(cd "${script_dir}/.." 2>/dev/null && pwd || true)"
-    if [[ -n "${repo_root}" && -f "${repo_root}/tests/e2e/runtime_common.sh" && -f "${repo_root}/scripts/uninstall.sh" ]]; then
+    if [[ -n "${repo_root}" && -f "${repo_root}/tests/e2e/runtime_common.sh" && -f "${repo_root}/scripts/uninstall.sh" && -f "${repo_root}/scripts/write-client-wrapper.sh" ]]; then
       local_support_available=1
       runtime_common_path="${repo_root}/tests/e2e/runtime_common.sh"
       uninstall_source_path="${repo_root}/scripts/uninstall.sh"
+      client_wrapper_source_path="${repo_root}/scripts/write-client-wrapper.sh"
     fi
   fi
 fi
@@ -201,6 +203,10 @@ extract_json_string() {
   printf '%s' "${json_payload}" | tr -d '\n' | sed -nE "s/.*\"${field_name}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\\1/p" | head -n 1
 }
 
+set_support_base_url() {
+  support_base_url="${INSTALL_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/${support_source_repo}/${support_source_ref}}"
+}
+
 resolve_support_files() {
   if [[ "${local_support_available}" -eq 1 ]]; then
     return 0
@@ -209,6 +215,7 @@ resolve_support_files() {
   support_cache_dir="$(mktemp -d)"
   runtime_common_path="${support_cache_dir}/runtime_common.sh"
   uninstall_source_path="${support_cache_dir}/uninstall.sh"
+  client_wrapper_source_path="${support_cache_dir}/write-client-wrapper.sh"
 
   log "downloading runtime support files from ${support_base_url}"
   download_url_to_path "${support_base_url}/tests/e2e/runtime_common.sh" "${runtime_common_path}" || {
@@ -217,6 +224,10 @@ resolve_support_files() {
   download_url_to_path "${support_base_url}/scripts/uninstall.sh" "${uninstall_source_path}" || {
     die "failed to download uninstall.sh from ${support_base_url}"
   }
+  download_url_to_path "${support_base_url}/scripts/write-client-wrapper.sh" "${client_wrapper_source_path}" || {
+    die "failed to download write-client-wrapper.sh from ${support_base_url}"
+  }
+  chmod 0755 "${client_wrapper_source_path}"
 }
 
 home_dir="${HOME:-}"
@@ -302,7 +313,7 @@ resolve_release_tag() {
 }
 
 install_client_wrapper() {
-  "${script_dir}/write-client-wrapper.sh" "${ts3client_wrapper_path}" "${client_install_dir}"
+  "${client_wrapper_source_path}" "${ts3client_wrapper_path}" "${client_install_dir}"
   ln -sfn "ts3client" "${client_alias_path}"
 }
 
@@ -482,11 +493,14 @@ receipt_path="${share_dir}/install-receipt.env"
 ensure_requirements
 
 export TS3_MANAGED_DIR="${managed_dir}"
+resolve_release_tag
+if [[ "${local_support_available}" -ne 1 && -z "${INSTALL_SCRIPT_BASE_URL:-}" && -z "${INSTALL_SCRIPT_REF:-}" ]]; then
+  support_source_ref="${release_tag}"
+  set_support_base_url
+fi
 resolve_support_files
 # shellcheck source=tests/e2e/runtime_common.sh
 source "${runtime_common_path}"
-
-resolve_release_tag
 download_release_archive
 
 log "bootstrapping TeamSpeak client bundle into ${managed_dir}"
