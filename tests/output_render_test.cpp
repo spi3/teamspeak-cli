@@ -27,6 +27,21 @@ int main() {
     const std::string json = output::render(rendered, output::Format::json);
     teamspeak_cli::tests::expect(json.find("\"name\":\"Lobby\"") != std::string::npos, "json output should include name");
 
+    const std::string control_value =
+        std::string{"A"} + '\0' + '\x01' + '\b' + '\t' + '\n' + '\v' + '\f' + '\r' + '\x1f' + '"' + '\\' + 'Z';
+    const output::CommandOutput control_rendered{
+        .data = output::make_object({{"control", output::make_string(control_value)}}),
+        .human = std::monostate{},
+    };
+    const std::string control_json = output::render(control_rendered, output::Format::json);
+    const std::string expected_control_json =
+        "{\"control\":\"A\\u0000\\u0001\\b\\t\\n\\u000b\\f\\r\\u001f\\\"\\\\Z\"}";
+    teamspeak_cli::tests::expect_eq(
+        control_json,
+        expected_control_json,
+        "json output should escape all control characters below 0x20"
+    );
+
     const std::string yaml = output::render(rendered, output::Format::yaml);
     teamspeak_cli::tests::expect(yaml.find("name: Lobby") != std::string::npos, "yaml output should include name");
 

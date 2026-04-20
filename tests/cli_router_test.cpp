@@ -17,6 +17,10 @@
 #include "teamspeak_cli/output/render.hpp"
 #include "test_support.hpp"
 
+namespace teamspeak_cli::cli {
+auto read_install_receipt_value_for_test(std::string_view value) -> std::string;
+}
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -106,6 +110,17 @@ int main() {
     );
     tests::expect_contains(
         help, "Run `ts <command> --help`", "top-level help should point users at command-specific help"
+    );
+
+    tests::expect_eq(
+        cli::read_install_receipt_value_for_test("/tmp/teamspeak-cli/install dir"),
+        std::string("/tmp/teamspeak-cli/install dir"),
+        "raw receipt values should remain unchanged"
+    );
+    tests::expect_eq(
+        cli::read_install_receipt_value_for_test("/tmp/teamspeak-cli/install\\ dir/xdotool\\\\root"),
+        std::string("/tmp/teamspeak-cli/install dir/xdotool\\root"),
+        "bash-escaped receipt values should be decoded"
     );
 
     const std::string channel_help = router.render_help({"channel"});
@@ -249,6 +264,50 @@ int main() {
         connect_table.find("What Happened") == std::string::npos,
         "connect table should not repeat streamed lifecycle narration"
     );
+
+    auto expect_connect_server = [&](const std::string& server_value, const std::string& expected_target) {
+        auto connect = parse_command(
+            router,
+            {
+                "--profile",
+                "mock-local",
+                "--config",
+                config_path.string(),
+                "--server",
+                server_value,
+                "--nickname",
+                "cli-tester",
+                "connect",
+            }
+        );
+        tests::expect(connect.ok(), "server override parse should succeed");
+
+        std::vector<std::string> progress;
+        auto result = router.dispatch(connect.value(), [&](std::string_view message) {
+            progress.emplace_back(message);
+        });
+        tests::expect(result.ok(), "server override dispatch should succeed");
+        tests::expect_eq(progress.size(), std::size_t(4), "server override should stream four progress updates");
+        tests::expect_contains(
+            progress[0],
+            "Connecting to " + expected_target + " as cli-tester using profile mock-local",
+            "server override progress should start with contextual connection info"
+        );
+        tests::expect_contains(
+            progress[1],
+            "TeamSpeak accepted the request to connect to " + expected_target + ".",
+            "server override progress should explain the request acceptance"
+        );
+        tests::expect_contains(
+            output::render(result.value(), output::Format::table),
+            "Connected to " + expected_target + " as cli-tester.",
+            "server override table should summarize the final result"
+        );
+    };
+
+    expect_connect_server("[2001:db8::1]:10001", "[2001:db8::1]:10001");
+    expect_connect_server("[2001:db8::2]", "[2001:db8::2]:9987");
+    expect_connect_server("2001:db8::3", "2001:db8::3:9987");
 
     auto disconnect_command = parse_command(
         router,

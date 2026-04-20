@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -59,6 +60,21 @@ class FileDescriptor {
   private:
     int fd_;
 };
+
+auto unlink_socket_file(const std::string& path) -> void {
+    if (path.empty()) {
+        return;
+    }
+
+    struct stat file_stat {};
+    if (::lstat(path.c_str(), &file_stat) != 0) {
+        return;
+    }
+
+    if (S_ISSOCK(file_stat.st_mode)) {
+        ::unlink(path.c_str());
+    }
+}
 
 auto send_error(int fd, const domain::Error& error) -> void {
     protocol::write_line(fd, protocol::encode_error(error));
@@ -138,21 +154,29 @@ auto SocketBridgeServer::start(const sdk::InitOptions& options) -> domain::Resul
         return initialized;
     }
 
+    const auto cleanup_start_failure = [this](domain::Error error) -> domain::Result<void> {
+        unlink_socket_file(socket_path_);
+        socket_path_.clear();
+        const auto shutdown = backend_->shutdown();
+        (void)shutdown;
+        return domain::fail(std::move(error));
+    };
+
     std::error_code ec;
     if (const auto parent = std::filesystem::path(socket_path_).parent_path(); !parent.empty()) {
         std::filesystem::create_directories(parent, ec);
         if (ec) {
-            return domain::fail(bridge_error(
+            return cleanup_start_failure(bridge_error(
                 "mkdir_failed", "failed to create socket directory: " + ec.message(), domain::ExitCode::config
             ));
         }
     }
 
-    ::unlink(socket_path_.c_str());
+    unlink_socket_file(socket_path_);
 
     FileDescriptor listen_socket(::socket(AF_UNIX, SOCK_STREAM, 0));
     if (listen_socket.get() < 0) {
-        return domain::fail(bridge_error(
+        return cleanup_start_failure(bridge_error(
             "socket_failed", "failed to create bridge socket: " + std::string(std::strerror(errno))
         ));
     }
@@ -160,7 +184,7 @@ auto SocketBridgeServer::start(const sdk::InitOptions& options) -> domain::Resul
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     if (socket_path_.size() >= sizeof(address.sun_path)) {
-        return domain::fail(bridge_error(
+        return cleanup_start_failure(bridge_error(
             "socket_path_too_long", "control socket path exceeds platform limit", domain::ExitCode::config
         ));
     }
@@ -171,13 +195,13 @@ auto SocketBridgeServer::start(const sdk::InitOptions& options) -> domain::Resul
             reinterpret_cast<const sockaddr*>(&address),
             sizeof(address)
         ) < 0) {
-        return domain::fail(bridge_error(
+        return cleanup_start_failure(bridge_error(
             "bind_failed", "failed to bind control socket: " + std::string(std::strerror(errno))
         ));
     }
 
     if (::listen(listen_socket.get(), 8) < 0) {
-        return domain::fail(bridge_error(
+        return cleanup_start_failure(bridge_error(
             "listen_failed", "failed to listen on control socket: " + std::string(std::strerror(errno))
         ));
     }
@@ -218,7 +242,7 @@ auto SocketBridgeServer::stop() -> domain::Result<void> {
         listen_fd_ = -1;
     }
 
-    ::unlink(socket_path_.c_str());
+    unlink_socket_file(socket_path_);
     running_ = false;
     return backend_->shutdown();
 }

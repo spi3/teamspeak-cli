@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -100,6 +101,82 @@ class HungSocketServer {
     std::jthread thread_;
 };
 
+namespace domain = teamspeak_cli::domain;
+namespace sdk = teamspeak_cli::sdk;
+
+auto counting_backend_error(std::string_view method) -> domain::Error;
+
+class CountingBackend final : public sdk::Backend {
+  public:
+    [[nodiscard]] auto kind() const -> std::string override {
+        return "counting";
+    }
+
+    auto initialize(const sdk::InitOptions&) -> domain::Result<void> override {
+        ++initialize_calls;
+        initialized = true;
+        return domain::ok();
+    }
+
+    auto shutdown() -> domain::Result<void> override {
+        ++shutdown_calls;
+        initialized = false;
+        return domain::ok();
+    }
+
+    auto connect(const sdk::ConnectRequest&) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("connect"));
+    }
+
+    auto disconnect(std::string_view) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("disconnect"));
+    }
+
+    [[nodiscard]] auto plugin_info() const -> domain::Result<domain::PluginInfo> override {
+        return domain::fail<domain::PluginInfo>(counting_backend_error("plugin_info"));
+    }
+
+    [[nodiscard]] auto connection_state() const -> domain::Result<domain::ConnectionState> override {
+        return domain::fail<domain::ConnectionState>(counting_backend_error("connection_state"));
+    }
+
+    [[nodiscard]] auto server_info() const -> domain::Result<domain::ServerInfo> override {
+        return domain::fail<domain::ServerInfo>(counting_backend_error("server_info"));
+    }
+
+    [[nodiscard]] auto list_channels() const -> domain::Result<std::vector<domain::Channel>> override {
+        return domain::fail<std::vector<domain::Channel>>(counting_backend_error("list_channels"));
+    }
+
+    [[nodiscard]] auto list_clients() const -> domain::Result<std::vector<domain::Client>> override {
+        return domain::fail<std::vector<domain::Client>>(counting_backend_error("list_clients"));
+    }
+
+    [[nodiscard]] auto get_channel(const domain::Selector&) const -> domain::Result<domain::Channel> override {
+        return domain::fail<domain::Channel>(counting_backend_error("get_channel"));
+    }
+
+    [[nodiscard]] auto get_client(const domain::Selector&) const -> domain::Result<domain::Client> override {
+        return domain::fail<domain::Client>(counting_backend_error("get_client"));
+    }
+
+    auto join_channel(const domain::Selector&) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("join_channel"));
+    }
+
+    auto send_message(const domain::MessageRequest&) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("send_message"));
+    }
+
+    auto next_event(std::chrono::milliseconds) -> domain::Result<std::optional<domain::Event>> override {
+        return domain::fail<std::optional<domain::Event>>(counting_backend_error("next_event"));
+    }
+
+    int initialize_calls = 0;
+    int shutdown_calls = 0;
+    bool initialized = false;
+};
+
 auto connect_raw_socket(const std::filesystem::path& path) -> int {
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     teamspeak_cli::tests::expect(fd >= 0, "raw client should create a unix socket");
@@ -111,6 +188,15 @@ auto connect_raw_socket(const std::filesystem::path& path) -> int {
     const int connected = ::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
     teamspeak_cli::tests::expect(connected == 0, "raw client should connect to the unix socket");
     return fd;
+}
+
+auto counting_backend_error(std::string_view method) -> domain::Error {
+    return domain::make_error(
+        "sdk",
+        "not_implemented",
+        "counting backend does not implement " + std::string(method),
+        domain::ExitCode::sdk
+    );
 }
 
 }  // namespace
@@ -153,6 +239,7 @@ int main() {
         .text = "hello from socket backend",
     });
     tests::expect(sent.ok(), "send message should succeed");
+    tests::expect(fs::exists(socket_path), "socket bridge server should create the control socket file");
 
     auto event = backend.next_event(std::chrono::milliseconds(500));
     tests::expect(event.ok(), "next event should succeed");
@@ -162,6 +249,60 @@ int main() {
     tests::expect(shutdown.ok(), "backend shutdown should succeed");
     auto stopped = server.stop();
     tests::expect(stopped.ok(), "socket bridge server should stop");
+    tests::expect(
+        !fs::exists(socket_path),
+        "socket bridge server should remove the control socket file on stop"
+    );
+
+    const fs::path regular_file_path = root / "regular-file.sock";
+    {
+        std::ofstream regular_file(regular_file_path);
+        tests::expect(regular_file.is_open(), "test should create a regular file at the socket path");
+        regular_file << "not a unix socket";
+    }
+
+    auto counting_backend = std::make_unique<CountingBackend>();
+    auto* counting_backend_raw = counting_backend.get();
+    bridge::SocketBridgeServer regular_server(std::move(counting_backend));
+    auto regular_started = regular_server.start(sdk::InitOptions{.socket_path = regular_file_path.string()});
+    tests::expect(
+        !regular_started.ok(),
+        "socket bridge server should refuse to unlink a regular file at the configured socket path"
+    );
+    tests::expect_eq(
+        regular_started.error().code,
+        std::string("bind_failed"),
+        "regular file path should fail at bind instead of being removed"
+    );
+    tests::expect_eq(
+        counting_backend_raw->initialize_calls,
+        1,
+        "failed bridge startup should initialize the backend once"
+    );
+    tests::expect_eq(
+        counting_backend_raw->shutdown_calls,
+        1,
+        "failed bridge startup should shut the backend down after initialization"
+    );
+    tests::expect(
+        !counting_backend_raw->initialized,
+        "failed bridge startup should leave the backend uninitialized"
+    );
+    tests::expect(
+        regular_server.socket_path().empty(),
+        "failed bridge startup should clear the socket path state"
+    );
+    tests::expect(
+        fs::exists(regular_file_path),
+        "regular file should remain in place after a failed socket server start"
+    );
+    auto regular_stopped = regular_server.stop();
+    tests::expect(regular_stopped.ok(), "failed bridge server should still stop cleanly");
+    tests::expect_eq(
+        counting_backend_raw->shutdown_calls,
+        1,
+        "failed bridge startup should not require an additional shutdown during stop"
+    );
 
     const fs::path stale_socket_path = root / "stale.sock";
     SocketFile stale_socket(stale_socket_path);

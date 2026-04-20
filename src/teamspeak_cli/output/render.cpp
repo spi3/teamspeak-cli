@@ -12,7 +12,8 @@ namespace {
 
 auto escape_json(const std::string& value) -> std::string {
     std::ostringstream out;
-    for (const char ch : value) {
+    constexpr char hex_digits[] = "0123456789abcdef";
+    for (const unsigned char ch : value) {
         switch (ch) {
             case '\\':
                 out << "\\\\";
@@ -23,11 +24,24 @@ auto escape_json(const std::string& value) -> std::string {
             case '\n':
                 out << "\\n";
                 break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\b':
+                out << "\\b";
+                break;
+            case '\f':
+                out << "\\f";
+                break;
             case '\t':
                 out << "\\t";
                 break;
             default:
-                out << ch;
+                if (ch < 0x20) {
+                    out << "\\u00" << hex_digits[ch >> 4] << hex_digits[ch & 0x0f];
+                } else {
+                    out << static_cast<char>(ch);
+                }
                 break;
         }
     }

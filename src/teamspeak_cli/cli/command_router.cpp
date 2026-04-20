@@ -385,6 +385,215 @@ auto installed_share_dir() -> std::optional<std::filesystem::path> {
     return std::nullopt;
 }
 
+auto is_shell_escape_character(char ch) -> bool {
+    const auto unsigned_ch = static_cast<unsigned char>(ch);
+    return std::isspace(unsigned_ch) != 0 || std::ispunct(unsigned_ch) != 0;
+}
+
+auto looks_shell_escaped(std::string_view value) -> bool {
+    if (value.rfind("$'", 0) == 0) {
+        return true;
+    }
+
+    for (std::size_t index = 0; index + 1 < value.size(); ++index) {
+        if (value[index] == '\\' && is_shell_escape_character(value[index + 1])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+auto decode_ansi_c_escape(char escape) -> std::optional<char> {
+    switch (escape) {
+        case '\\':
+        case '\'':
+        case '"':
+        case '?':
+            return escape;
+        case 'a':
+            return '\a';
+        case 'b':
+            return '\b';
+        case 'e':
+        case 'E':
+            return '\x1b';
+        case 'f':
+            return '\f';
+        case 'n':
+            return '\n';
+        case 'r':
+            return '\r';
+        case 't':
+            return '\t';
+        case 'v':
+            return '\v';
+        default:
+            return std::nullopt;
+    }
+}
+
+auto decode_install_receipt_value(std::string_view value) -> std::optional<std::string> {
+    if (!looks_shell_escaped(value)) {
+        return std::nullopt;
+    }
+
+    std::string decoded;
+    decoded.reserve(value.size());
+
+    enum class Mode {
+        plain,
+        single_quoted,
+        double_quoted,
+        ansi_c_quoted,
+    };
+
+    auto decode_hex_escape = [&](std::size_t& index) -> std::optional<char> {
+        if (index >= value.size() || value[index] != 'x') {
+            return std::nullopt;
+        }
+
+        std::size_t cursor = index + 1;
+        unsigned int parsed = 0;
+        std::size_t digits = 0;
+        while (cursor < value.size() && digits < 2) {
+            const unsigned char ch = static_cast<unsigned char>(value[cursor]);
+            if (!std::isxdigit(ch)) {
+                break;
+            }
+            parsed <<= 4;
+            if (std::isdigit(ch) != 0) {
+                parsed |= static_cast<unsigned int>(ch - '0');
+            } else {
+                parsed |= static_cast<unsigned int>(std::tolower(ch) - 'a' + 10);
+            }
+            ++cursor;
+            ++digits;
+        }
+
+        if (digits == 0) {
+            return std::nullopt;
+        }
+
+        index = cursor - 1;
+        return static_cast<char>(parsed);
+    };
+
+    auto decode_octal_escape = [&](std::size_t& index, char first_digit) -> std::optional<char> {
+        if (first_digit < '0' || first_digit > '7') {
+            return std::nullopt;
+        }
+
+        unsigned int parsed = static_cast<unsigned int>(first_digit - '0');
+        std::size_t cursor = index + 1;
+        std::size_t digits = 1;
+        while (cursor < value.size() && digits < 3) {
+            const char ch = value[cursor];
+            if (ch < '0' || ch > '7') {
+                break;
+            }
+            parsed = (parsed << 3) | static_cast<unsigned int>(ch - '0');
+            ++cursor;
+            ++digits;
+        }
+
+        index = cursor - 1;
+        return static_cast<char>(parsed & 0xffU);
+    };
+
+    Mode mode = Mode::plain;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const char ch = value[index];
+
+        switch (mode) {
+            case Mode::plain:
+                if (ch == '\\') {
+                    if (index + 1 >= value.size()) {
+                        return std::nullopt;
+                    }
+                    const char next = value[++index];
+                    if (const auto decoded_escape = decode_ansi_c_escape(next); decoded_escape.has_value()) {
+                        decoded.push_back(*decoded_escape);
+                    } else if (const auto decoded_octal = decode_octal_escape(index, next);
+                               decoded_octal.has_value()) {
+                        decoded.push_back(*decoded_octal);
+                    } else {
+                        decoded.push_back(next);
+                    }
+                } else if (ch == '\'') {
+                    mode = Mode::single_quoted;
+                } else if (ch == '"') {
+                    mode = Mode::double_quoted;
+                } else if (ch == '$' && index + 1 < value.size() && value[index + 1] == '\'') {
+                    mode = Mode::ansi_c_quoted;
+                    ++index;
+                } else {
+                    decoded.push_back(ch);
+                }
+                break;
+            case Mode::single_quoted:
+                if (ch == '\'') {
+                    mode = Mode::plain;
+                } else {
+                    decoded.push_back(ch);
+                }
+                break;
+            case Mode::double_quoted:
+                if (ch == '"') {
+                    mode = Mode::plain;
+                } else if (ch == '\\') {
+                    if (index + 1 >= value.size()) {
+                        return std::nullopt;
+                    }
+                    const char next = value[++index];
+                    if (next == '\n') {
+                        continue;
+                    }
+                    if (next == '\\' || next == '"' || next == '$' || next == '`') {
+                        decoded.push_back(next);
+                    } else {
+                        decoded.push_back(next);
+                    }
+                } else {
+                    decoded.push_back(ch);
+                }
+                break;
+            case Mode::ansi_c_quoted:
+                if (ch == '\'') {
+                    mode = Mode::plain;
+                    break;
+                }
+                if (ch != '\\') {
+                    decoded.push_back(ch);
+                    break;
+                }
+                if (index + 1 >= value.size()) {
+                    return std::nullopt;
+                }
+                {
+                    const char next = value[++index];
+                    if (const auto decoded_escape = decode_ansi_c_escape(next); decoded_escape.has_value()) {
+                        decoded.push_back(*decoded_escape);
+                    } else if (const auto decoded_hex = decode_hex_escape(index); decoded_hex.has_value()) {
+                        decoded.push_back(*decoded_hex);
+                    } else if (const auto decoded_octal = decode_octal_escape(index, next);
+                               decoded_octal.has_value()) {
+                        decoded.push_back(*decoded_octal);
+                    } else {
+                        decoded.push_back(next);
+                    }
+                }
+                break;
+        }
+    }
+
+    if (mode != Mode::plain) {
+        return std::nullopt;
+    }
+
+    return decoded;
+}
+
 auto read_install_receipt_value(std::string_view key) -> std::optional<std::string> {
     const auto share_dir = installed_share_dir();
     if (!share_dir.has_value()) {
@@ -406,7 +615,11 @@ auto read_install_receipt_value(std::string_view key) -> std::optional<std::stri
         if (line_key != key) {
             continue;
         }
-        return util::trim(line.substr(separator + 1));
+        const auto value = util::trim(line.substr(separator + 1));
+        if (const auto decoded = decode_install_receipt_value(value); decoded.has_value()) {
+            return decoded;
+        }
+        return value;
     }
     return std::nullopt;
 }
@@ -1631,18 +1844,61 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
 }
 
 auto parse_server_override(const std::string& raw, domain::Profile& profile) -> domain::Result<void> {
-    const auto parts = util::split(raw, ':');
-    if (parts.empty()) {
+    if (raw.empty()) {
         return domain::fail(cli_error("invalid_server", "invalid --server value"));
     }
-    profile.host = parts[0];
-    if (parts.size() > 1 && !parts[1].empty()) {
-        const auto port = util::parse_u16(parts[1]);
+
+    if (raw.front() == '[') {
+        const auto close = raw.find(']');
+        if (close == std::string::npos || close == 1) {
+            return domain::fail(cli_error("invalid_server", "invalid --server value"));
+        }
+
+        profile.host = raw.substr(0, close + 1);
+        if (close + 1 == raw.size()) {
+            return domain::ok();
+        }
+
+        if (raw[close + 1] != ':') {
+            return domain::fail(cli_error("invalid_server", "invalid --server value"));
+        }
+
+        const auto port_text = raw.substr(close + 2);
+        if (port_text.empty()) {
+            return domain::fail(cli_error("invalid_server_port", "invalid port in --server"));
+        }
+
+        const auto port = util::parse_u16(port_text);
         if (!port.has_value()) {
             return domain::fail(cli_error("invalid_server_port", "invalid port in --server"));
         }
         profile.port = *port;
+        return domain::ok();
     }
+
+    const auto first_colon = raw.find(':');
+    const auto last_colon = raw.rfind(':');
+    if (first_colon == std::string::npos) {
+        profile.host = raw;
+        return domain::ok();
+    }
+
+    if (first_colon != last_colon) {
+        profile.host = raw;
+        return domain::ok();
+    }
+
+    profile.host = raw.substr(0, first_colon);
+    const auto port_text = raw.substr(first_colon + 1);
+    if (port_text.empty()) {
+        return domain::ok();
+    }
+
+    const auto port = util::parse_u16(port_text);
+    if (!port.has_value()) {
+        return domain::fail(cli_error("invalid_server_port", "invalid port in --server"));
+    }
+    profile.port = *port;
     return domain::ok();
 }
 
@@ -1906,6 +2162,13 @@ auto top_level_help() -> std::string {
 }
 
 }  // namespace
+
+auto read_install_receipt_value_for_test(std::string_view value) -> std::string {
+    if (const auto decoded = decode_install_receipt_value(value); decoded.has_value()) {
+        return *decoded;
+    }
+    return std::string(value);
+}
 
 CommandRouter::CommandRouter() = default;
 

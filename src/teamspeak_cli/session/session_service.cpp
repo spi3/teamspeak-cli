@@ -126,6 +126,9 @@ auto SessionService::connect_and_wait(
         }
         if (next.value().has_value() && is_connection_lifecycle_event(*next.value())) {
             result.lifecycle.push_back(std::move(*next.value()));
+            if (on_event) {
+                on_event(result.lifecycle.back());
+            }
         }
     }
 

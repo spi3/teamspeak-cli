@@ -277,6 +277,133 @@ class FailedConnectionBackend final : public teamspeak_cli::sdk::Backend {
     };
 };
 
+class PollingConnectedBackend final : public teamspeak_cli::sdk::Backend {
+  public:
+    [[nodiscard]] auto kind() const -> std::string override { return "test"; }
+
+    auto initialize(const teamspeak_cli::sdk::InitOptions&) -> teamspeak_cli::domain::Result<void> override {
+        initialized_ = true;
+        return teamspeak_cli::domain::ok();
+    }
+
+    auto shutdown() -> teamspeak_cli::domain::Result<void> override {
+        initialized_ = false;
+        return teamspeak_cli::domain::ok();
+    }
+
+    auto connect(const teamspeak_cli::sdk::ConnectRequest& request) -> teamspeak_cli::domain::Result<void> override {
+        state_ = teamspeak_cli::domain::ConnectionState{
+            .phase = teamspeak_cli::domain::ConnectionPhase::connecting,
+            .backend = "test",
+            .connection = {88},
+            .server = request.host,
+            .port = request.port,
+            .nickname = request.nickname,
+            .identity = request.identity,
+            .profile = request.profile_name,
+            .mode = "test",
+        };
+        connected_event_ready_ = true;
+        return teamspeak_cli::domain::ok();
+    }
+
+    auto disconnect(std::string_view) -> teamspeak_cli::domain::Result<void> override {
+        state_.phase = teamspeak_cli::domain::ConnectionPhase::disconnected;
+        state_.connection = {0};
+        return teamspeak_cli::domain::ok();
+    }
+
+    [[nodiscard]] auto plugin_info() const -> teamspeak_cli::domain::Result<teamspeak_cli::domain::PluginInfo> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::PluginInfo>(stub_error(
+            "unsupported", "plugin_info is not used by this test backend"
+        ));
+    }
+
+    [[nodiscard]] auto connection_state() const
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::ConnectionState> override {
+        return teamspeak_cli::domain::ok(state_);
+    }
+
+    [[nodiscard]] auto server_info() const
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::ServerInfo> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::ServerInfo>(stub_error(
+            "unsupported", "server_info is not used by this test backend"
+        ));
+    }
+
+    [[nodiscard]] auto list_channels() const
+        -> teamspeak_cli::domain::Result<std::vector<teamspeak_cli::domain::Channel>> override {
+        return teamspeak_cli::domain::fail<std::vector<teamspeak_cli::domain::Channel>>(stub_error(
+            "unsupported", "list_channels is not used by this test backend"
+        ));
+    }
+
+    [[nodiscard]] auto list_clients() const
+        -> teamspeak_cli::domain::Result<std::vector<teamspeak_cli::domain::Client>> override {
+        return teamspeak_cli::domain::fail<std::vector<teamspeak_cli::domain::Client>>(stub_error(
+            "unsupported", "list_clients is not used by this test backend"
+        ));
+    }
+
+    [[nodiscard]] auto get_channel(const teamspeak_cli::domain::Selector&) const
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::Channel> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::Channel>(stub_error(
+            "unsupported", "get_channel is not used by this test backend"
+        ));
+    }
+
+    [[nodiscard]] auto get_client(const teamspeak_cli::domain::Selector&) const
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::Client> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::Client>(stub_error(
+            "unsupported", "get_client is not used by this test backend"
+        ));
+    }
+
+    auto join_channel(const teamspeak_cli::domain::Selector&) -> teamspeak_cli::domain::Result<void> override {
+        return teamspeak_cli::domain::fail(stub_error(
+            "unsupported", "join_channel is not used by this test backend"
+        ));
+    }
+
+    auto send_message(const teamspeak_cli::domain::MessageRequest&) -> teamspeak_cli::domain::Result<void> override {
+        return teamspeak_cli::domain::fail(stub_error(
+            "unsupported", "send_message is not used by this test backend"
+        ));
+    }
+
+    auto next_event(std::chrono::milliseconds timeout)
+        -> teamspeak_cli::domain::Result<std::optional<teamspeak_cli::domain::Event>> override {
+        if (connected_event_ready_ && !connected_event_emitted_) {
+            connected_event_emitted_ = true;
+            state_.phase = teamspeak_cli::domain::ConnectionPhase::connected;
+            return teamspeak_cli::domain::ok(std::optional<teamspeak_cli::domain::Event>{teamspeak_cli::domain::Event{
+                .type = "connection.connected",
+                .summary = "test connection completed",
+                .at = std::chrono::system_clock::now(),
+                .fields = {},
+            }});
+        }
+        std::this_thread::sleep_for(timeout);
+        return teamspeak_cli::domain::ok(std::optional<teamspeak_cli::domain::Event>{});
+    }
+
+  private:
+    bool initialized_ = false;
+    bool connected_event_ready_ = false;
+    bool connected_event_emitted_ = false;
+    teamspeak_cli::domain::ConnectionState state_{
+        .phase = teamspeak_cli::domain::ConnectionPhase::disconnected,
+        .backend = "test",
+        .connection = {0},
+        .server = "",
+        .port = 0,
+        .nickname = "",
+        .identity = "",
+        .profile = "",
+        .mode = "test",
+    };
+};
+
 }  // namespace
 
 int main() {
@@ -343,6 +470,48 @@ int main() {
         std::string("connection.disconnected"),
         "disconnect_and_wait should include the disconnected event"
     );
+
+    session::SessionService polling_session(std::make_unique<PollingConnectedBackend>());
+    tests::expect(polling_session.initialize(sdk::InitOptions{}).ok(), "polling backend initialize should succeed");
+    std::vector<std::string> polling_callbacks;
+    auto polling_connect = polling_session.connect_and_wait(
+        sdk::ConnectRequest{
+            .host = "127.0.0.1",
+            .port = 9987,
+            .nickname = "tester",
+            .identity = "test-identity",
+            .server_password = "",
+            .channel_password = "",
+            .default_channel = "",
+            .profile_name = "polling",
+        },
+        std::chrono::milliseconds(250),
+        [&](const domain::Event& event) { polling_callbacks.push_back(event.type); }
+    );
+    tests::expect(polling_connect.ok(), "polling connect_and_wait should succeed");
+    tests::expect(polling_connect.value().connected, "polling connect should report connected");
+    tests::expect_eq(
+        polling_connect.value().lifecycle.size(),
+        std::size_t(1),
+        "polling connect should capture the blocking lifecycle event"
+    );
+    tests::expect_eq(
+        polling_connect.value().lifecycle[0].type,
+        std::string("connection.connected"),
+        "polling connect should record the connected lifecycle event"
+    );
+    tests::expect_eq(
+        polling_callbacks.size(),
+        std::size_t(1),
+        "polling connect should deliver the lifecycle callback exactly once"
+    );
+    tests::expect_eq(
+        polling_callbacks[0],
+        std::string("connection.connected"),
+        "polling connect callback should receive the blocking lifecycle event"
+    );
+    tests::expect(polling_session.shutdown().ok(), "polling backend shutdown should succeed");
+
     auto shutdown = session.shutdown();
     tests::expect(shutdown.ok(), "shutdown should succeed");
 
