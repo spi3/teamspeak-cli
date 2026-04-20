@@ -4,7 +4,11 @@
 
 This project is not ServerQuery, not WebQuery, and not a standalone TeamSpeak `ClientLib` client.
 
-## What You Get
+Quick links: [Highlights](#highlights) • [Project Status](#project-status) • [Quick Start](#quick-start) • [Installation](#installation) • [Usage](#usage) • [Configuration](#configuration-and-profiles) • [Development](#development) • [Troubleshooting](#troubleshooting) • [Documentation](#documentation) • [Contributing](CONTRIBUTING.md) • [Security](SECURITY.md) • [License](#license)
+
+Docs: [Architecture](docs/architecture.md) • [Plugin integration](docs/sdk-integration.md) • [Command reference](docs/commands.md) • [Roadmap](docs/roadmap.md) • [Contributing](CONTRIBUTING.md) • [Security](SECURITY.md)
+
+## Highlights
 
 - `ts`: the CLI users run
 - `ts3cli_plugin.so`: the optional TeamSpeak 3 client plugin used for live integration
@@ -12,21 +16,26 @@ This project is not ServerQuery, not WebQuery, and not a standalone TeamSpeak `C
 - a fully local `mock-local` profile for development without TeamSpeak installed
 - install and uninstall scripts for a user-level Linux `x86_64` setup
 
-## Verified Paths
+## Project Status
 
-The following flows were checked against the current repository state during this documentation audit:
+- the primary supported install surface is user-level Linux `x86_64`
+- `mock-local` is the fastest path for normal development and the most deterministic CI surface
+- GitHub Actions runs `make test` on Ubuntu 22.04 for pushes to `main` and pull requests
+- `make test-e2e` and `make env-up` are available, but they are still host-sensitive local integration tools rather than the primary always-green workflow
 
-- `make build-mock`
-- `make test-mock`
-- `make build`
-- `make test`
-- `./scripts/install.sh --help`
-- `./scripts/install-release.sh --help`
-- `./scripts/uninstall.sh --help`
+## Quick Start
 
-The TeamSpeak-backed Docker and `Xvfb` harness is available, but it is still the least stable path in the repo. Treat `make test-e2e` and `make env-up` as local integration tools, not as the primary always-green workflow.
+### Released Linux Install
 
-## Choose A Path
+Use this when you want a normal user install from the latest published GitHub release without cloning the repo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/spi3/teamspeak-cli/main/scripts/install-release.sh | bash
+
+ts version
+ts client start
+ts --profile plugin-local plugin info
+```
 
 ### Offline Development
 
@@ -37,12 +46,9 @@ make build-mock
 make test-mock
 
 ./build-mock/ts config init
-./build-mock/ts profile use mock-local
-./build-mock/ts status
-./build-mock/ts channel list
+./build-mock/ts --profile mock-local status
+./build-mock/ts --profile mock-local channel list
 ```
-
-The `mock-local` profile uses the in-process mock backend. It is the fastest path for normal development and still the most deterministic CI surface.
 
 ### TeamSpeak-backed Development
 
@@ -51,6 +57,9 @@ Use this when you need the real TeamSpeak 3 client plugin and runtime bridge.
 ```bash
 make build
 make test
+
+ts --profile plugin-local plugin info
+ts --profile plugin-local status
 ```
 
 `make build` does more than raw CMake defaults:
@@ -64,6 +73,8 @@ If you want to prefetch the managed runtime inputs first, run:
 ```bash
 make deps
 ```
+
+## Installation
 
 ### Install From GitHub
 
@@ -128,69 +139,7 @@ Inspect local-build installer overrides with:
 ./scripts/install.sh --help
 ```
 
-## Build Matrix
-
-There are two important build surfaces:
-
-- `make ...`: the repo's high-level workflow for normal use
-- raw `cmake ...`: the low-level workflow when you want precise control
-
-Raw CMake defaults do not build the TeamSpeak plugin target. They build the CLI, the mock bridge host, and the test binaries.
-
-Example plain CMake configure:
-
-```bash
-cmake -S . -B build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=ninja
-```
-
-To build the TeamSpeak plugin with raw CMake, opt in explicitly:
-
-```bash
-cmake -S . -B build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=ninja \
-  -DTS_ENABLE_TS3_PLUGIN=ON \
-  -DTS_ENABLE_TS3_E2E=ON \
-  -DTS3_MANAGED_DIR=third_party/teamspeak/managed
-```
-
-If SDK auto-discovery is not enough, pass `-DTS3_PLUGIN_SDK_INCLUDE_DIR=/path/to/ts3client-pluginsdk/include`.
-
-If `cmake` or `ninja` are not on `PATH`, prefer the top-level `make` targets instead of hardcoding one machine's fallback toolchain path.
-
-## Configuration And Profiles
-
-`ts` uses an INI config file.
-
-- default path: `~/.config/ts/config.ini`
-- override per command with `--config /path/to/config.ini`
-- initialize a starter file with `ts config init`
-
-The starter config ships with two profiles:
-
-- `mock-local`: fully local mock backend
-- `plugin-local`: local socket backend for a real TeamSpeak client plugin
-
-Useful profile commands:
-
-```bash
-ts config init
-ts config view
-ts profile list
-ts profile use mock-local
-```
-
-The plugin socket path resolves in this order:
-
-- `control_socket_path=` in the selected profile, if non-empty
-- `TS_CONTROL_SOCKET_PATH`, if set
-- otherwise a runtime-local default such as `$XDG_RUNTIME_DIR/ts3cli.sock` or `/tmp/ts3cli-<uid>.sock`
-
-Leave `control_socket_path=` blank unless you intentionally want to pin one fixed socket path in config.
-
-## Everyday Commands
+## Usage
 
 The CLI is organized into small command groups:
 
@@ -242,7 +191,81 @@ When output is `table`, these commands stream human-readable progress by default
 
 When output is `json` or `yaml`, they print one structured result at the end instead.
 
-## TeamSpeak-backed Runtime Notes
+## Configuration And Profiles
+
+`ts` uses an INI config file.
+
+- default path: `~/.config/ts/config.ini`
+- override per command with `--config /path/to/config.ini`
+- initialize a starter file with `ts config init`
+
+The starter config ships with two profiles:
+
+- `mock-local`: fully local mock backend
+- `plugin-local`: local socket backend for a real TeamSpeak client plugin
+
+Useful profile commands:
+
+```bash
+ts config init
+ts config view
+ts profile list
+ts profile use mock-local
+```
+
+The plugin socket path resolves in this order:
+
+- `control_socket_path=` in the selected profile, if non-empty
+- `TS_CONTROL_SOCKET_PATH`, if set
+- otherwise a runtime-local default such as `$XDG_RUNTIME_DIR/ts3cli.sock` or `/tmp/ts3cli-<uid>.sock`
+
+Leave `control_socket_path=` blank unless you intentionally want to pin one fixed socket path in config.
+
+## Development
+
+### Common Make Workflows
+
+- `make help`: list the supported top-level workflows
+- `make build-mock`: build the offline development tree
+- `make test-mock`: run the offline suite
+- `make build`: build the TeamSpeak-backed tree and bootstrap managed dependencies
+- `make test`: run the default automated suite without the Docker/`Xvfb` E2E case
+- `make test-e2e`: run the TeamSpeak-backed local integration harness
+- `make env-up`, `make env-info`, `make env-down`: keep the TeamSpeak-backed environment running for manual checks
+
+### Raw CMake
+
+There are two important build surfaces:
+
+- `make ...`: the repo's high-level workflow for normal use
+- raw `cmake ...`: the low-level workflow when you want precise control
+
+Raw CMake defaults do not build the TeamSpeak plugin target. They build the CLI, the mock bridge host, and the test binaries.
+
+Example plain CMake configure:
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=ninja
+```
+
+To build the TeamSpeak plugin with raw CMake, opt in explicitly:
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=ninja \
+  -DTS_ENABLE_TS3_PLUGIN=ON \
+  -DTS_ENABLE_TS3_E2E=ON \
+  -DTS3_MANAGED_DIR=third_party/teamspeak/managed
+```
+
+If SDK auto-discovery is not enough, pass `-DTS3_PLUGIN_SDK_INCLUDE_DIR=/path/to/ts3client-pluginsdk/include`.
+
+If `cmake` or `ninja` are not on `PATH`, prefer the top-level `make` targets instead of hardcoding one machine's fallback toolchain path.
+
+### TeamSpeak-backed Runtime Notes
 
 The repo-managed TeamSpeak runtime is intentionally pinned, not floating:
 
@@ -284,6 +307,14 @@ make env-down
 
 This path is still host-sensitive. TeamSpeak first-run dialogs, display quirks, audio backends, or upstream UI changes can still break automation even when the plugin itself loads correctly.
 
+### Development Notes
+
+- format C++ with `clang-format -i`
+- prefer `rg` for searches
+- keep CLI parsing and command dispatch in `src/teamspeak_cli/cli/`
+- keep TeamSpeak-specific details behind the backend and socket bridge layers
+- prefer extending the backend seam over leaking TeamSpeak callback details into the CLI
+
 ## Troubleshooting
 
 If `ts plugin info` or `ts status` says the plugin bridge is unavailable:
@@ -305,19 +336,18 @@ If headless launch fails:
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
 
+If the installed `ts3client` launcher prints `QCoreApplication::applicationDirPath` and then the TeamSpeak client segfaults:
+
+- this is usually an upstream TeamSpeak Linux audio-stack crash, not a `ts3cli_plugin.so` startup failure
+- check custom PipeWire or PulseAudio sinks and sources for missing `device.description` or `node.description`
+- the generated `ts3client` wrapper now warns when `pactl` reports sinks or sources without a `Description:` field
+- set `TS3CLIENT_SKIP_AUDIO_PREFLIGHT=1` only if you need to suppress that warning and have already ruled audio metadata out
+
 If `make test-e2e` fails after the client starts:
 
 - read the temp directory that the harness prints on failure
 - inspect the client log, visible dialogs, and socket path in that temp dir
 - expect to debug first-run TeamSpeak dialogs and host-specific runtime issues before treating the harness as stable
-
-## Development Notes
-
-- format C++ with `clang-format -i`
-- prefer `rg` for searches
-- keep CLI parsing and command dispatch in `src/teamspeak_cli/cli/`
-- keep TeamSpeak-specific details behind the backend and socket bridge layers
-- prefer extending the backend seam over leaking TeamSpeak callback details into the CLI
 
 ## Documentation
 
@@ -325,3 +355,7 @@ If `make test-e2e` fails after the client starts:
 - [Plugin integration](docs/sdk-integration.md)
 - [Command reference](docs/commands.md)
 - [Roadmap](docs/roadmap.md)
+
+## License
+
+Released under the [MIT License](LICENSE).
