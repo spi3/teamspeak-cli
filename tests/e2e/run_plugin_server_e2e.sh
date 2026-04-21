@@ -219,6 +219,7 @@ dismiss_onboarding_dialogs() {
     for title in \
       'Introducing the next generation of TeamSpeak' \
       'myTeamSpeak Account' \
+      'Warning' \
       'Identities' \
       'Choose Your Nickname'; do
       wid="$(find_window_id "${title}")"

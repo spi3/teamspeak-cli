@@ -751,17 +751,28 @@ auto resolve_xdotool_paths() -> std::optional<XdotoolPaths> {
         library_path = explicit_library;
     } else {
         const auto search_root = binary_path.parent_path().parent_path();
-        std::error_code ec;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(search_root, ec)) {
-            if (ec) {
-                break;
-            }
-            if (!entry.is_regular_file(ec)) {
+        std::error_code iterator_ec;
+        for (std::filesystem::recursive_directory_iterator iter(
+                 search_root,
+                 std::filesystem::directory_options::skip_permission_denied,
+                 iterator_ec
+             ),
+             end;
+             iter != end;
+             iter.increment(iterator_ec)) {
+            if (iterator_ec) {
+                iterator_ec.clear();
                 continue;
             }
-            const auto name = entry.path().filename().string();
+            if (!iter->is_regular_file(iterator_ec)) {
+                if (iterator_ec) {
+                    iterator_ec.clear();
+                }
+                continue;
+            }
+            const auto name = iter->path().filename().string();
             if (name.rfind("libxdo.so", 0) == 0) {
-                library_path = entry.path().parent_path().string();
+                library_path = iter->path().parent_path().string();
                 break;
             }
         }
@@ -1099,9 +1110,10 @@ void dismiss_headless_client_dialogs(const ClientHeadlessLaunch& headless_launch
         return;
     }
 
-    const std::array<std::string_view, 4> escape_titles = {
+    const std::array<std::string_view, 5> escape_titles = {
         "Introducing the next generation of TeamSpeak",
         "myTeamSpeak Account",
+        "Warning",
         "Identities",
         "Choose Your Nickname",
     };

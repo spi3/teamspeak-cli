@@ -131,7 +131,13 @@ Socket path resolution for the plugin backend is:
 - `TS_CLIENT_HEADLESS=1` to force headless launch
 - `TS_CLIENT_XVFB` to point at a specific `Xvfb` binary
 - `TS_CLIENT_HEADLESS_DISPLAY` to choose a specific display such as `:140`
+- `TS_CLIENT_XDOTOOL` to point at a specific `xdotool` binary used to dismiss known onboarding dialogs
+- `TS_CLIENT_XDOTOOL_LIBRARY_PATH` to point at the companion runtime libraries for that `xdotool` binary
 - `TS3_CLIENT_LDCONFIG` to point the runtime preflight at a specific `ldconfig` binary
+
+On the first headless TeamSpeak launch, hidden onboarding dialogs can still block the plugin bridge. `ts client start`
+tries to dismiss known license and identity dialogs with `xdotool` when available. If a headless session still wedges,
+complete the TeamSpeak license and initial identity setup once on a visible display before relying on headless mode.
 
 Client process state is stored under:
 

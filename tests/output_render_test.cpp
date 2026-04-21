@@ -91,6 +91,30 @@ int main() {
         connect_human.find("202") == std::string::npos,
         "connect view should not render machine-style timestamps"
     );
+    const domain::ConnectionState stalled_state{
+        .phase = domain::ConnectionPhase::disconnected,
+        .backend = "plugin",
+        .connection = {0},
+        .server = "voice.example.com",
+        .port = 9987,
+        .nickname = "terminal",
+        .identity = "identity",
+        .profile = "plugin-local",
+        .mode = "plugin-control",
+    };
+    const std::string stalled_connect_human = output::connect_view(
+        stalled_state, lifecycle, false, true, std::chrono::seconds(15), true
+    );
+    teamspeak_cli::tests::expect_contains(
+        stalled_connect_human,
+        "first headless TeamSpeak launch",
+        "timed-out plugin connect view should mention hidden first-run dialogs"
+    );
+    teamspeak_cli::tests::expect_contains(
+        stalled_connect_human,
+        "ts client logs",
+        "timed-out plugin connect view should point at client logs for diagnosis"
+    );
 
     auto error = domain::make_error(
         "bridge",

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -814,6 +815,127 @@ int main() {
         "\"status\":\"not-running\"",
         "client status after stop should report not running"
     );
+    {
+        const fs::path fake_xvfb_path = temp_dir / "fake-xvfb.sh";
+        const fs::path fake_xdotool_path = temp_dir / "fake-xdotool.sh";
+        const fs::path fake_xdotool_log_path = temp_dir / "headless-xdotool.log";
+        const fs::path fake_xdotool_phase_path = temp_dir / "headless-xdotool-phase.txt";
+        const std::string fake_display = ":169";
+        const fs::path fake_x11_socket_path = fs::path("/tmp/.X11-unix") / "X169";
+
+        std::error_code socket_cleanup_ec;
+        fs::remove(fake_x11_socket_path, socket_cleanup_ec);
+
+        {
+            std::ofstream xvfb(fake_xvfb_path, std::ios::trunc);
+            xvfb << "#!/usr/bin/env bash\n";
+            xvfb << "set -euo pipefail\n";
+            xvfb << "display=\"${1:-}\"\n";
+            xvfb << "socket_dir=\"/tmp/.X11-unix\"\n";
+            xvfb << "socket_path=\"${socket_dir}/X${display#:}\"\n";
+            xvfb << "mkdir -p \"${socket_dir}\"\n";
+            xvfb << ": >\"${socket_path}\"\n";
+            xvfb << "trap 'rm -f \"${socket_path}\"; exit 0' TERM INT EXIT\n";
+            xvfb << "while true; do sleep 1; done\n";
+        }
+        fs::permissions(
+            fake_xvfb_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
+        {
+            std::ofstream phase(fake_xdotool_phase_path, std::ios::trunc);
+            phase << "license\n";
+        }
+        {
+            std::ofstream xdotool(fake_xdotool_path, std::ios::trunc);
+            xdotool << "#!/usr/bin/env bash\n";
+            xdotool << "set -euo pipefail\n";
+            xdotool << "log_path=\"" << fake_xdotool_log_path.string() << "\"\n";
+            xdotool << "phase_path=\"" << fake_xdotool_phase_path.string() << "\"\n";
+            xdotool << "printf '%s\\n' \"$*\" >>\"${log_path}\"\n";
+            xdotool << "command=\"$1\"\n";
+            xdotool << "shift || true\n";
+            xdotool << "case \"${command}\" in\n";
+            xdotool << "  search)\n";
+            xdotool << "    title=\"${!#}\"\n";
+            xdotool << "    phase=\"$(cat \"${phase_path}\" 2>/dev/null || printf 'license')\"\n";
+            xdotool << "    case \"${title}:${phase}\" in\n";
+            xdotool << "      'License agreement:license') printf 'headless-license\\n' ;;\n";
+            xdotool << "      'Warning:warning') printf 'headless-warning\\n' ;;\n";
+            xdotool << "      'Identities:identities') printf 'headless-identities\\n' ;;\n";
+            xdotool << "    esac\n";
+            xdotool << "    ;;\n";
+            xdotool << "  getwindowgeometry)\n";
+            xdotool << "    printf 'WIDTH=740\\nHEIGHT=700\\n'\n";
+            xdotool << "    ;;\n";
+            xdotool << "  mousemove)\n";
+            xdotool << "    if [[ \"$*\" == *'headless-license'* ]]; then\n";
+            xdotool << "      printf 'warning\\n' >\"${phase_path}\"\n";
+            xdotool << "    fi\n";
+            xdotool << "    ;;\n";
+            xdotool << "  key)\n";
+            xdotool << "    if [[ \"$*\" == *'headless-warning Escape'* ]]; then\n";
+            xdotool << "      printf 'identities\\n' >\"${phase_path}\"\n";
+            xdotool << "    elif [[ \"$*\" == *'headless-identities Escape'* ]]; then\n";
+            xdotool << "      printf 'done\\n' >\"${phase_path}\"\n";
+            xdotool << "    fi\n";
+            xdotool << "    ;;\n";
+            xdotool << "esac\n";
+        }
+        fs::permissions(
+            fake_xdotool_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
+        EnvGuard forced_headless_env("TS_CLIENT_HEADLESS", "1");
+        EnvGuard fake_xvfb_env("TS_CLIENT_XVFB", fake_xvfb_path.string());
+        EnvGuard fake_display_env("TS_CLIENT_HEADLESS_DISPLAY", fake_display);
+        EnvGuard fake_xdotool_env("TS_CLIENT_XDOTOOL", fake_xdotool_path.string());
+        EnvGuard fake_xdotool_library_env("TS_CLIENT_XDOTOOL_LIBRARY_PATH", temp_dir.string());
+
+        std::vector<std::string> headless_start_progress;
+        auto headless_start_result = router.dispatch(client_start.value(), [&](std::string_view message) {
+            headless_start_progress.emplace_back(message);
+        });
+        tests::expect(headless_start_result.ok(), "headless client start should succeed");
+        tests::expect(
+            headless_start_progress.size() >= std::size_t(4),
+            "headless client start should emit the expected progress updates"
+        );
+        tests::expect_contains(
+            headless_start_progress[2],
+            "DISPLAY :169",
+            "headless client start should report the chosen Xvfb display"
+        );
+
+        std::ifstream xdotool_log_input(fake_xdotool_log_path);
+        const std::string xdotool_log(
+            (std::istreambuf_iterator<char>(xdotool_log_input)),
+            std::istreambuf_iterator<char>()
+        );
+        tests::expect_contains(
+            xdotool_log,
+            "search --name Warning",
+            "headless client start should look for the first-run warning dialog"
+        );
+        tests::expect_contains(
+            xdotool_log,
+            "key --window headless-warning Escape",
+            "headless client start should dismiss the first-run warning dialog"
+        );
+        tests::expect_contains(
+            xdotool_log,
+            "key --window headless-identities Escape",
+            "headless client start should continue dismissing the identities dialog"
+        );
+
+        auto headless_stop_result = router.dispatch(client_stop.value());
+        tests::expect(headless_stop_result.ok(), "headless client stop should succeed");
+        fs::remove(fake_x11_socket_path, socket_cleanup_ec);
+    }
 
     const fs::path missing_library_client_dir = temp_dir / "missing-library-client";
     const fs::path missing_library_launcher_path = missing_library_client_dir / "ts3client_runscript.sh";

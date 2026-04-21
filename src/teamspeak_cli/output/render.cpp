@@ -615,6 +615,16 @@ auto connect_progress_message(const domain::Event& event) -> std::string {
     return ensure_sentence("TeamSpeak reported " + event.type);
 }
 
+auto has_terminal_connect_event(const std::vector<domain::Event>& lifecycle) -> bool {
+    for (const auto& event : lifecycle) {
+        if (event.type == "connection.connected" || event.type == "connection.disconnected" ||
+            event.type == "connection.error" || event.type == "server.error") {
+            return true;
+        }
+    }
+    return false;
+}
+
 auto connect_view(
     const domain::ConnectionState& state,
     const std::vector<domain::Event>& lifecycle,
@@ -631,6 +641,11 @@ auto connect_view(
     } else if (timed_out) {
         out << "The TeamSpeak client did not finish connecting to " << target << " within "
             << timeout.count() << " ms.";
+        if (state.backend == "plugin" && !has_terminal_connect_event(lifecycle)) {
+            out << "\n\nIf this was the first headless TeamSpeak launch, hidden TeamSpeak setup dialogs may still "
+                   "be waiting on the X11 display. Complete the TeamSpeak license and initial identity setup once "
+                   "on a visible display, or inspect ts plugin info and ts client logs before retrying.";
+        }
     } else {
         out << "The TeamSpeak client did not complete the connection to " << target << '.';
     }
