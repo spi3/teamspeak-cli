@@ -138,6 +138,14 @@ int main() {
         "profile help should include the create example"
     );
 
+    const std::string client_help = router.render_help({"client"});
+    tests::expect_contains(client_help, "logs  Show recent TeamSpeak client logs", "client help should list client logs");
+    tests::expect_contains(
+        client_help,
+        "ts client logs [--count N]",
+        "client help should include the client logs example"
+    );
+
     const std::vector<std::string> grouped_commands = {
         "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "events"
     };
@@ -568,11 +576,17 @@ int main() {
 
     EnvGuard launcher_env("TS_CLIENT_LAUNCHER", launcher_path.string());
     EnvGuard state_env("XDG_STATE_HOME", state_home.string());
+    const fs::path home_dir = temp_dir / "home";
+    fs::create_directories(home_dir);
+    EnvGuard home_env("HOME", home_dir.string());
     EnvGuard simple_discovery_env("TS_CLIENT_DISCOVERY_NAME", simple_discovery_name);
     EnvGuard headless_env("TS_CLIENT_HEADLESS", "0");
 
     auto client_status = parse_command(router, {"client", "status"});
     tests::expect(client_status.ok(), "client status parse should succeed");
+    auto client_logs = parse_command(router, {"client", "logs", "--count", "2"});
+    tests::expect(client_logs.ok(), "client logs parse should succeed");
+    tests::expect_eq(client_logs.value().options.at("count"), std::string("2"), "client logs count option");
     auto client_status_before_start = router.dispatch(client_status.value());
     tests::expect(client_status_before_start.ok(), "client status before start should succeed");
     tests::expect_contains(
@@ -651,6 +665,58 @@ int main() {
         output::render(client_status_running.value(), output::Format::json),
         "\"status\":\"running\"",
         "client status while running should report running"
+    );
+
+    const fs::path client_log_path = state_home / "teamspeak-cli" / "client.log";
+    {
+        std::ofstream client_log(client_log_path, std::ios::trunc);
+        client_log << "wrapper line 1\n";
+        client_log << "wrapper line 2\n";
+        client_log << "wrapper line 3\n";
+    }
+    const fs::path teamspeak_log_dir = home_dir / ".ts3client" / "logs";
+    fs::create_directories(teamspeak_log_dir);
+    const fs::path teamspeak_log_path = teamspeak_log_dir / "client_2026-04-21.log";
+    {
+        std::ofstream teamspeak_log(teamspeak_log_path, std::ios::trunc);
+        teamspeak_log << "ts line 1\n";
+        teamspeak_log << "ts line 2\n";
+        teamspeak_log << "ts line 3\n";
+    }
+
+    auto client_logs_result = router.dispatch(client_logs.value());
+    tests::expect(client_logs_result.ok(), "client logs dispatch should succeed");
+    const auto client_logs_json = output::render(client_logs_result.value(), output::Format::json);
+    tests::expect_contains(client_logs_json, "\"status\":\"found\"", "client logs should report found");
+    tests::expect_contains(client_logs_json, "\"kind\":\"launcher\"", "client logs json should include launcher logs");
+    tests::expect_contains(client_logs_json, "\"kind\":\"teamspeak\"", "client logs json should include teamspeak logs");
+    tests::expect_contains(
+        client_logs_json,
+        client_log_path.string(),
+        "client logs json should include the tracked launcher log path"
+    );
+    tests::expect_contains(
+        client_logs_json,
+        teamspeak_log_path.string(),
+        "client logs json should include the TeamSpeak log path"
+    );
+    const auto client_logs_table = output::render(client_logs_result.value(), output::Format::table);
+    tests::expect_contains(
+        client_logs_table,
+        "Recent TeamSpeak client logs (last 2 lines per file)",
+        "client logs should summarize the tail view"
+    );
+    tests::expect_contains(client_logs_table, "wrapper line 2", "client logs should include the wrapper log tail");
+    tests::expect_contains(client_logs_table, "wrapper line 3", "client logs should include the last wrapper line");
+    tests::expect(
+        client_logs_table.find("wrapper line 1") == std::string::npos,
+        "client logs should trim older wrapper lines beyond --count"
+    );
+    tests::expect_contains(client_logs_table, "ts line 2", "client logs should include the TeamSpeak log tail");
+    tests::expect_contains(client_logs_table, "ts line 3", "client logs should include the latest TeamSpeak log line");
+    tests::expect(
+        client_logs_table.find("ts line 1") == std::string::npos,
+        "client logs should trim older TeamSpeak log lines beyond --count"
     );
 
     auto client_start_again_result = router.dispatch(client_start.value());

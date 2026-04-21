@@ -54,6 +54,7 @@ Every command accepts these global flags:
 - `ts client status`
 - `ts client start`
 - `ts client stop [--force]`
+- `ts client logs [--count N]`
 - `ts client list`
 - `ts client get <id-or-name>`
 
@@ -81,6 +82,7 @@ Every command accepts these global flags:
 - `connect` waits for completion for up to 15 seconds.
 - `disconnect` waits for completion for up to 10 seconds.
 - `client start` and `client stop` inspect, launch, and stop the local TeamSpeak client process tracked by `ts`.
+- `client logs` shows the tracked launcher log plus the most recent files under `~/.ts3client/logs`.
 - `daemon start` launches a local background watcher that polls translated TeamSpeak events, journals incoming messages, and executes matching hook commands.
 - `daemon stop` only stops the local watcher process. It does not disconnect the TeamSpeak client from the current server.
 - `message inbox` reads the daemon-managed message journal, so it can show captured messages even when no `ts` command is actively watching events.
@@ -137,6 +139,12 @@ Client process state is stored under:
 - otherwise `$HOME/.local/state/teamspeak-cli`
 
 The tracked state includes a pid file and client log path that `ts client status` renders back to the user.
+
+`ts client logs` reads:
+
+- the tracked launcher log from the client state directory
+- up to three recent TeamSpeak log files from `$HOME/.ts3client/logs`
+- the last 80 lines per file by default, or the last `N` lines with `--count N`
 
 ## Event Daemon State
 

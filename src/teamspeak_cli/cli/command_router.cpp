@@ -7,6 +7,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <deque>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -75,6 +76,7 @@ const std::vector<CommandDoc>& command_docs() {
         {{"client", "status"}, "ts client status", "Show the tracked local TeamSpeak client process status", {}},
         {{"client", "start"}, "ts client start", "Launch the local TeamSpeak client process", {}},
         {{"client", "stop"}, "ts client stop [--force]", "Stop the tracked local TeamSpeak client process", {"--force"}},
+        {{"client", "logs"}, "ts client logs [--count N]", "Show recent TeamSpeak client logs", {"--count"}},
         {{"client", "list"}, "ts client list", "List connected clients", {}},
         {{"client", "get"}, "ts client get <id-or-name>", "Show one client", {}},
         {{"daemon"}, "ts daemon <subcommand>", "Manage the local TeamSpeak event daemon", {}},
@@ -350,6 +352,12 @@ struct ClientProcessPaths {
     std::filesystem::path log_file;
 };
 
+struct ClientStatePaths {
+    std::filesystem::path state_dir;
+    std::filesystem::path pid_file;
+    std::filesystem::path log_file;
+};
+
 struct ClientHeadlessLaunch {
     std::filesystem::path xvfb_path;
     std::string display;
@@ -369,6 +377,13 @@ struct DiscoveredClientProcess {
 struct ChannelClientGroup {
     domain::Channel channel;
     std::vector<domain::Client> clients;
+};
+
+struct ClientLogSource {
+    std::string kind;
+    std::filesystem::path path;
+    std::vector<std::string> lines;
+    std::string error;
 };
 
 auto resolve_client_launch_socket_path(
@@ -1114,6 +1129,19 @@ auto resolve_client_state_dir() -> domain::Result<std::filesystem::path> {
     ));
 }
 
+auto resolve_client_state_paths() -> domain::Result<ClientStatePaths> {
+    auto state_dir = resolve_client_state_dir();
+    if (!state_dir) {
+        return domain::fail<ClientStatePaths>(state_dir.error());
+    }
+
+    return domain::ok(ClientStatePaths{
+        .state_dir = state_dir.value(),
+        .pid_file = state_dir.value() / "client.pid",
+        .log_file = state_dir.value() / "client.log",
+    });
+}
+
 auto resolve_client_process_paths() -> domain::Result<ClientProcessPaths> {
     std::filesystem::path launcher_path;
 
@@ -1168,16 +1196,16 @@ auto resolve_client_process_paths() -> domain::Result<ClientProcessPaths> {
         ));
     }
 
-    auto state_dir = resolve_client_state_dir();
-    if (!state_dir) {
-        return domain::fail<ClientProcessPaths>(state_dir.error());
+    auto state_paths = resolve_client_state_paths();
+    if (!state_paths) {
+        return domain::fail<ClientProcessPaths>(state_paths.error());
     }
 
     return domain::ok(ClientProcessPaths{
         .launcher_path = std::move(launcher_path),
-        .state_dir = state_dir.value(),
-        .pid_file = state_dir.value() / "client.pid",
-        .log_file = state_dir.value() / "client.log",
+        .state_dir = state_paths.value().state_dir,
+        .pid_file = state_paths.value().pid_file,
+        .log_file = state_paths.value().log_file,
     });
 }
 
@@ -1594,6 +1622,208 @@ auto client_process_missing_output(std::string action, const ClientProcessPaths&
         }),
         .human = client_process_human(),
     };
+}
+
+auto resolve_teamspeak_client_logs_dir() -> std::optional<std::filesystem::path> {
+    if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".ts3client" / "logs";
+    }
+    return std::nullopt;
+}
+
+auto read_log_tail(const std::filesystem::path& path, std::size_t count) -> domain::Result<std::vector<std::string>> {
+    std::ifstream input(path);
+    if (!input) {
+        return domain::fail<std::vector<std::string>>(client_error(
+            "log_read_failed",
+            "failed to read client log: " + path.string(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    std::deque<std::string> tail;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        tail.push_back(line);
+        if (tail.size() > count) {
+            tail.pop_front();
+        }
+    }
+
+    if (!input.eof() && input.fail()) {
+        return domain::fail<std::vector<std::string>>(client_error(
+            "log_read_failed",
+            "failed while reading client log: " + path.string(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    return domain::ok(std::vector<std::string>(tail.begin(), tail.end()));
+}
+
+auto record_client_log_source(
+    std::vector<ClientLogSource>& sources,
+    const std::string& kind,
+    const std::filesystem::path& path,
+    std::size_t count
+) -> void {
+    auto lines = read_log_tail(path, count);
+    if (!lines) {
+        sources.push_back(ClientLogSource{
+            .kind = kind,
+            .path = path,
+            .lines = {},
+            .error = lines.error().message,
+        });
+        return;
+    }
+
+    sources.push_back(ClientLogSource{
+        .kind = kind,
+        .path = path,
+        .lines = lines.value(),
+        .error = {},
+    });
+}
+
+auto collect_recent_teamspeak_log_files(const std::filesystem::path& log_dir) -> std::vector<std::filesystem::path> {
+    std::vector<std::filesystem::path> files;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(log_dir, ec)) {
+        if (ec) {
+            return {};
+        }
+        if (entry.is_regular_file(ec) && !ec) {
+            files.push_back(entry.path());
+        }
+    }
+
+    std::sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
+        std::error_code left_ec;
+        std::error_code right_ec;
+        const auto left_time = std::filesystem::last_write_time(left, left_ec);
+        const auto right_time = std::filesystem::last_write_time(right, right_ec);
+        if (!left_ec && !right_ec && left_time != right_time) {
+            return left_time > right_time;
+        }
+        return left.filename().string() > right.filename().string();
+    });
+
+    if (files.size() > 3) {
+        files.resize(3);
+    }
+    return files;
+}
+
+auto client_logs_output(std::size_t count) -> domain::Result<output::CommandOutput> {
+    auto state_paths = resolve_client_state_paths();
+    if (!state_paths) {
+        return domain::fail<output::CommandOutput>(state_paths.error());
+    }
+
+    std::vector<std::filesystem::path> searched;
+    append_unique_path(searched, state_paths.value().log_file);
+    if (const auto teamspeak_logs_dir = resolve_teamspeak_client_logs_dir(); teamspeak_logs_dir.has_value()) {
+        append_unique_path(searched, *teamspeak_logs_dir);
+    }
+
+    std::vector<ClientLogSource> sources;
+    std::error_code ec;
+    if (std::filesystem::exists(state_paths.value().log_file, ec) && !ec) {
+        record_client_log_source(sources, "launcher", state_paths.value().log_file, count);
+    }
+
+    if (const auto teamspeak_logs_dir = resolve_teamspeak_client_logs_dir(); teamspeak_logs_dir.has_value()) {
+        ec.clear();
+        if (std::filesystem::is_directory(*teamspeak_logs_dir, ec) && !ec) {
+            for (const auto& log_file : collect_recent_teamspeak_log_files(*teamspeak_logs_dir)) {
+                record_client_log_source(sources, "teamspeak", log_file, count);
+            }
+        }
+    }
+
+    std::vector<output::ValueHolder> source_values;
+    source_values.reserve(sources.size());
+    for (const auto& source : sources) {
+        std::vector<output::ValueHolder> line_values;
+        line_values.reserve(source.lines.size());
+        for (const auto& line : source.lines) {
+            line_values.push_back(output::make_string(line));
+        }
+
+        std::map<std::string, output::ValueHolder> payload{
+            {"kind", output::make_string(source.kind)},
+            {"lines", output::make_array(std::move(line_values))},
+            {"path", output::make_string(source.path.string())},
+        };
+        if (!source.error.empty()) {
+            payload.emplace("error", output::make_string(source.error));
+        }
+        source_values.push_back(output::make_object(std::move(payload)));
+    }
+
+    std::vector<output::ValueHolder> searched_values;
+    searched_values.reserve(searched.size());
+    for (const auto& path : searched) {
+        searched_values.push_back(output::make_string(path.string()));
+    }
+
+    auto client_logs_human = [&]() -> std::string {
+        std::ostringstream out;
+        if (sources.empty()) {
+            out << "No local TeamSpeak client logs were found.";
+            if (!searched.empty()) {
+                out << "\n\nSearched\n";
+                for (std::size_t index = 0; index < searched.size(); ++index) {
+                    out << searched[index].string();
+                    if (index + 1 != searched.size()) {
+                        out << '\n';
+                    }
+                }
+            }
+            return out.str();
+        }
+
+        out << "Recent TeamSpeak client logs (last " << count << " line";
+        if (count != 1) {
+            out << 's';
+        }
+        out << " per file)\n\n";
+        for (std::size_t index = 0; index < sources.size(); ++index) {
+            const auto& source = sources[index];
+            out << (source.kind == "launcher" ? "Tracked launcher log" : "TeamSpeak client log")
+                << ": " << source.path.string() << '\n';
+            if (!source.error.empty()) {
+                out << source.error;
+            } else if (source.lines.empty()) {
+                out << "(empty)";
+            } else {
+                for (std::size_t line_index = 0; line_index < source.lines.size(); ++line_index) {
+                    out << source.lines[line_index];
+                    if (line_index + 1 != source.lines.size()) {
+                        out << '\n';
+                    }
+                }
+            }
+            if (index + 1 != sources.size()) {
+                out << "\n\n";
+            }
+        }
+        return out.str();
+    };
+
+    return domain::ok(output::CommandOutput{
+        .data = output::make_object({
+            {"count", output::make_int(static_cast<std::int64_t>(count))},
+            {"searched", output::make_array(std::move(searched_values))},
+            {"sources", output::make_array(std::move(source_values))},
+            {"status", output::make_string(sources.empty() ? "not-found" : "found")},
+        }),
+        .human = client_logs_human(),
+    });
 }
 
 auto client_status_process() -> domain::Result<output::CommandOutput> {
@@ -3566,6 +3796,14 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 command.flags.contains("force"),
                 command.global.format == output::Format::table ? progress : ProgressSink{}
             );
+        }
+
+        if (path == "client logs") {
+            auto count = parse_positive_size(command.options, "count", 80);
+            if (!count) {
+                return domain::fail<output::CommandOutput>(count.error());
+            }
+            return client_logs_output(count.value());
         }
 
         if (path == "client list") {
