@@ -58,8 +58,9 @@ const std::vector<CommandDoc>& command_docs() {
         {{"config", "init"}, "ts config init [--force]", "Write a starter config file", {"--force"}},
         {{"config", "view"}, "ts config view", "Render the current config", {}},
         {{"profile"}, "ts profile <subcommand>", "Manage config profiles", {}},
+        {{"profile", "create"}, "ts profile create <name> [--copy-from <name>] [--activate]", "Create a config profile", {"--copy-from", "--activate"}},
         {{"profile", "list"}, "ts profile list", "List config profiles", {}},
-        {{"profile", "use"}, "ts profile use <name>", "Set the active profile", {}},
+        {{"profile", "use"}, "ts profile use <name>", "Set the active default profile", {}},
         {{"connect"}, "ts connect", "Open a TeamSpeak server connection and wait for completion", {}},
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"status"}, "ts status", "Show current TeamSpeak client connection status", {}},
@@ -271,6 +272,11 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
 
     if (error.code == "profile_not_found") {
         add_error_hint(error, "Run `ts profile list` to see the profiles available in the selected config.");
+    }
+
+    if (error.code == "profile_exists") {
+        add_error_hint(error, "Run `ts profile list` to inspect the existing profiles in the selected config.");
+        add_error_hint(error, "Run `ts profile use <name>` if you meant to switch to the existing profile.");
     }
 
     if (error.code == "missing_config") {
@@ -2715,7 +2721,8 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 option == "nickname" || option == "identity" || option == "config" ||
                 option == "target" || option == "id" || option == "text" ||
                 option == "count" || option == "timeout-ms" || option == "poll-ms" ||
-                option == "type" || option == "exec" || option == "message-kind";
+                option == "type" || option == "exec" || option == "message-kind" ||
+                option == "copy-from";
 
             if (!takes_value) {
                 parsed.flags.insert(option);
@@ -2862,6 +2869,60 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 .human = output::profile_table(
                     resolved.value().config.profiles, resolved.value().config.active_profile
                 ),
+            });
+        }
+
+        if (path == "profile create") {
+            auto name = require_positional(command, 0, "name");
+            if (!name) {
+                return domain::fail<output::CommandOutput>(name.error());
+            }
+            const auto config_path =
+                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
+            auto loaded = config_store_.load_or_default(config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+
+            const std::string source_name =
+                command.options.contains("copy-from") ? command.options.at("copy-from")
+                                                      : loaded.value().active_profile;
+            auto source = config_store_.find_profile(loaded.value(), source_name);
+            if (!source) {
+                return domain::fail<output::CommandOutput>(source.error());
+            }
+
+            domain::Profile profile = *source.value();
+            profile.name = name.value();
+
+            auto created = config_store_.create_profile(loaded.value(), std::move(profile));
+            if (!created) {
+                return domain::fail<output::CommandOutput>(created.error());
+            }
+
+            if (command.flags.contains("activate")) {
+                loaded.value().active_profile = created.value()->name;
+            }
+
+            const auto saved = config_store_.save(config_path, loaded.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"path", output::make_string(config_path.string())},
+                    {"active_profile", output::make_string(loaded.value().active_profile)},
+                    {"copied_from", output::make_string(source_name)},
+                    {"profile", output::to_value(*created.value())},
+                }),
+                .human =
+                    command.flags.contains("activate")
+                        ? std::string(
+                              "created profile " + created.value()->name + " from " + source_name +
+                              " and set it as the default"
+                          )
+                        : std::string("created profile " + created.value()->name + " from " + source_name),
             });
         }
 

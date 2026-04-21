@@ -15,6 +15,7 @@ class ConfigStore {
     auto load_or_default(const std::filesystem::path& path) const -> domain::Result<domain::AppConfig>;
     auto save(const std::filesystem::path& path, const domain::AppConfig& config) const -> domain::Result<void>;
     auto init(const std::filesystem::path& path, bool force) const -> domain::Result<domain::AppConfig>;
+    auto create_profile(domain::AppConfig& config, domain::Profile profile) const -> domain::Result<domain::Profile*>;
     auto find_profile(domain::AppConfig& config, const std::string& name) const -> domain::Result<domain::Profile*>;
     auto find_profile(const domain::AppConfig& config, const std::string& name) const
         -> domain::Result<const domain::Profile*>;

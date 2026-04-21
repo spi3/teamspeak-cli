@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 #include "teamspeak_cli/util/strings.hpp"
 
@@ -210,6 +211,25 @@ auto ConfigStore::init(const std::filesystem::path& path, bool force) const
         return domain::fail<domain::AppConfig>(saved.error());
     }
     return domain::ok(std::move(config));
+}
+
+auto ConfigStore::create_profile(domain::AppConfig& config, domain::Profile profile) const
+    -> domain::Result<domain::Profile*> {
+    if (profile.name.empty()) {
+        return domain::fail<domain::Profile*>(config_error(
+            "invalid_profile_name", "profile name cannot be empty"
+        ));
+    }
+
+    auto existing = find_profile(config, profile.name);
+    if (existing) {
+        return domain::fail<domain::Profile*>(config_error(
+            "profile_exists", "profile already exists: " + profile.name
+        ));
+    }
+
+    config.profiles.push_back(std::move(profile));
+    return domain::ok(&config.profiles.back());
 }
 
 auto ConfigStore::find_profile(domain::AppConfig& config, const std::string& name) const

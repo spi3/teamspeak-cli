@@ -30,7 +30,7 @@ auto generate(const std::string& shell) -> domain::Result<std::string> {
             "  case \"${COMP_WORDS[1]}\" in\n"
             "    sdk) COMPREPLY=( $(compgen -W \"info --help\" -- \"$cur\") ) ;;\n"
             "    config) COMPREPLY=( $(compgen -W \"init view --help\" -- \"$cur\") ) ;;\n"
-            "    profile) COMPREPLY=( $(compgen -W \"list use --help\" -- \"$cur\") ) ;;\n"
+            "    profile) COMPREPLY=( $(compgen -W \"create list use --help\" -- \"$cur\") ) ;;\n"
             "    server) COMPREPLY=( $(compgen -W \"info --help\" -- \"$cur\") ) ;;\n"
             "    channel) COMPREPLY=( $(compgen -W \"list clients get join --help\" -- \"$cur\") ) ;;\n"
             "    client) COMPREPLY=( $(compgen -W \"list get --help\" -- \"$cur\") ) ;;\n"

@@ -38,6 +38,7 @@ Every command accepts these global flags:
 
 - `ts config init [--force]`
 - `ts config view`
+- `ts profile create <name> [--copy-from <name>] [--activate]`
 - `ts profile list`
 - `ts profile use <name>`
 
@@ -99,6 +100,10 @@ The same commands return one structured result at the end when output is `json` 
 
 - the default profile is `plugin-local`
 - the offline mock profile is `mock-local`
+- `ts profile create <name>` clones the active profile by default
+- `ts profile create <name> --copy-from <source>` clones a specific existing profile instead
+- `ts profile create <name> --activate` also sets the new profile as the default
+- `ts profile use <name>` sets the default profile without creating a new one
 - the `plugin` backend expects the TeamSpeak client plugin bridge to already be running
 - the selected profile can be overridden with `--profile`
 - `--server`, `--nickname`, and `--identity` override the active profile for one command

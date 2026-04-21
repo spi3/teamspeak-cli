@@ -130,6 +130,14 @@ int main() {
     tests::expect_contains(channel_help, "ts channel list", "channel help should include examples");
     tests::expect_contains(channel_help, "ts channel clients [id-or-name]", "channel help should include channel clients");
 
+    const std::string profile_help = router.render_help({"profile"});
+    tests::expect_contains(profile_help, "create  Create a config profile", "profile help should list profile create");
+    tests::expect_contains(
+        profile_help,
+        "ts profile create <name> [--copy-from <name>] [--activate]",
+        "profile help should include the create example"
+    );
+
     const std::vector<std::string> grouped_commands = {
         "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "events"
     };
@@ -181,6 +189,32 @@ int main() {
     tests::expect(init_result.ok(), "config init dispatch should succeed");
     tests::expect(fs::exists(config_path), "config init should write a config file");
 
+    auto create_profile = parse_command(
+        router,
+        {
+            "profile",
+            "create",
+            "qa",
+            "--copy-from",
+            "mock-local",
+            "--activate",
+            "--config",
+            config_path.string(),
+        }
+    );
+    tests::expect(create_profile.ok(), "profile create parse should succeed");
+    tests::expect_eq(
+        create_profile.value().options.at("copy-from"), std::string("mock-local"), "profile create copy source"
+    );
+    tests::expect(create_profile.value().flags.contains("activate"), "profile create activate flag");
+    auto create_profile_result = router.dispatch(create_profile.value());
+    tests::expect(create_profile_result.ok(), "profile create dispatch should succeed");
+    tests::expect_contains(
+        output::render(create_profile_result.value(), output::Format::table),
+        "created profile qa from mock-local and set it as the default",
+        "profile create table output"
+    );
+
     auto use_plugin = parse_command(
         router, {"profile", "use", "plugin-local", "--config", config_path.string()}
     );
@@ -192,6 +226,12 @@ int main() {
     tests::expect(loaded.ok(), "config should load after profile switch");
     tests::expect_eq(
         loaded.value().active_profile, std::string("plugin-local"), "active profile should persist"
+    );
+    auto created_profile = config_store.find_profile(loaded.value(), "qa");
+    tests::expect(created_profile.ok(), "created profile should persist");
+    tests::expect_eq(created_profile.value()->backend, std::string("mock"), "created profile backend");
+    tests::expect_eq(
+        created_profile.value()->identity, std::string("mock-local-identity"), "created profile copied identity"
     );
     auto plugin_profile = config_store.find_profile(loaded.value(), "plugin-local");
     tests::expect(plugin_profile.ok(), "plugin-local profile should exist for launch testing");
@@ -399,6 +439,18 @@ int main() {
         output::render_error(missing_profile_result.error(), output::Format::table, false),
         "ts profile list",
         "missing profile should suggest listing available profiles"
+    );
+
+    auto duplicate_profile = parse_command(
+        router, {"profile", "create", "qa", "--config", config_path.string()}
+    );
+    tests::expect(duplicate_profile.ok(), "duplicate profile create parse should succeed");
+    auto duplicate_profile_result = router.dispatch(duplicate_profile.value());
+    tests::expect(!duplicate_profile_result.ok(), "duplicate profile create should fail");
+    tests::expect_contains(
+        output::render_error(duplicate_profile_result.error(), output::Format::table, false),
+        "ts profile use <name>",
+        "duplicate profile create should suggest using the existing profile"
     );
 
     auto missing_channel = parse_command(
