@@ -246,6 +246,21 @@ Leave `control_socket_path=` blank unless you intentionally want to pin one fixe
 - `make test-e2e`: run the TeamSpeak-backed local integration harness
 - `make env-up`, `make env-info`, `make env-down`: keep the TeamSpeak-backed environment running for manual checks
 
+### Release
+
+Cut a tagged release from a clean branch with:
+
+```bash
+./scripts/release.sh patch
+./scripts/release.sh minor
+./scripts/release.sh 1.2.3
+```
+
+That script bumps the version in the CMake version files, runs `make test`,
+commits the release change, pushes an annotated `vX.Y.Z` tag, and creates the
+GitHub release entry. The tag push then triggers the release workflow to build
+and upload the packaged release assets.
+
 ### Raw CMake
 
 There are two important build surfaces:
