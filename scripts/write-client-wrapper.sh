@@ -27,6 +27,31 @@ have_command() {
   command -v "\$1" >/dev/null 2>&1
 }
 
+resolve_executable() {
+  local executable_name="\$1"
+  local explicit_path="\$2"
+  local candidate=""
+
+  if [[ -n "\${explicit_path}" && -x "\${explicit_path}" ]]; then
+    printf '%s\n' "\${explicit_path}"
+    return 0
+  fi
+
+  if have_command "\${executable_name}"; then
+    command -v "\${executable_name}"
+    return 0
+  fi
+
+  shift 2
+  for candidate in "\$@"; do
+    [[ -n "\${candidate}" && -x "\${candidate}" ]] || continue
+    printf '%s\n' "\${candidate}"
+    return 0
+  done
+
+  return 1
+}
+
 log_warning() {
   printf '[ts3client] %s\n' "\$*" >&2
 }
@@ -48,9 +73,10 @@ library_search_path_contains_soname() {
 
 ldconfig_cache_contains_soname() {
   local soname="\$1"
+  local ldconfig_path="\$2"
 
-  have_command ldconfig || return 1
-  ldconfig -p 2>/dev/null | awk -v soname="\${soname}" '
+  [[ -n "\${ldconfig_path}" ]] || return 1
+  "\${ldconfig_path}" -p 2>/dev/null | awk -v soname="\${soname}" '
     \$1 == soname { found = 1; exit }
     END { exit(found ? 0 : 1) }
   '
@@ -58,20 +84,22 @@ ldconfig_cache_contains_soname() {
 
 require_runtime_libraries() {
   local search_path="\$1"
+  local ldconfig_path=""
   local missing=()
   local soname=""
 
   [[ "\${TS3CLIENT_SKIP_LIBRARY_PREFLIGHT:-0}" == "1" ]] && return 0
+  ldconfig_path="\$(resolve_executable ldconfig "\${TS3_CLIENT_LDCONFIG:-}" /usr/sbin/ldconfig /sbin/ldconfig || true)"
 
   while IFS= read -r soname; do
     [[ -n "\${soname}" ]] || continue
     if library_search_path_contains_soname "\${soname}" "\${search_path}"; then
       continue
     fi
-    if ldconfig_cache_contains_soname "\${soname}"; then
+    if ldconfig_cache_contains_soname "\${soname}" "\${ldconfig_path}"; then
       continue
     fi
-    if ! have_command ldconfig; then
+    if [[ -z "\${ldconfig_path}" ]]; then
       continue
     fi
     missing+=("\${soname}")

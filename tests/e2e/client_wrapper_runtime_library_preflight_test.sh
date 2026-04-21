@@ -57,10 +57,15 @@ EOF
 chmod +x "${fake_bin_dir}/ldconfig"
 
 "${repo_root}/scripts/write-client-wrapper.sh" "${wrapper_path}" "${client_dir}"
+wrapper_contents="$(<"${wrapper_path}")"
+expect_fragment "${wrapper_contents}" "/usr/sbin/ldconfig" \
+  "wrapper should probe the standard sbin ldconfig fallback path"
+expect_fragment "${wrapper_contents}" "/sbin/ldconfig" \
+  "wrapper should probe the legacy sbin ldconfig fallback path"
 
 set +e
 missing_output="$(
-  PATH="${fake_bin_dir}:${PATH}" LDCONFIG_FIXTURE=missing "${wrapper_path}" --demo 2>&1
+  PATH="/usr/bin:/bin" TS3_CLIENT_LDCONFIG="${fake_bin_dir}/ldconfig" LDCONFIG_FIXTURE=missing "${wrapper_path}" --demo 2>&1
 )"
 missing_status=$?
 set -e
@@ -76,7 +81,7 @@ mkdir -p "${client_dir}/runtime-libs/usr/lib"
 : >"${client_dir}/runtime-libs/usr/lib/libXi.so.6"
 
 local_runtime_output="$(
-  PATH="${fake_bin_dir}:${PATH}" LDCONFIG_FIXTURE=missing "${wrapper_path}" --demo 2>&1
+  PATH="/usr/bin:/bin" TS3_CLIENT_LDCONFIG="${fake_bin_dir}/ldconfig" LDCONFIG_FIXTURE=missing "${wrapper_path}" --demo 2>&1
 )"
 expect_fragment "${local_runtime_output}" "RUNSCRIPT_OK" \
   "wrapper should launch when libXi.so.6 is bundled under runtime-libs"

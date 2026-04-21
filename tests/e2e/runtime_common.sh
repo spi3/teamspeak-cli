@@ -184,22 +184,52 @@ ts3_runtime_library_search_path_contains_soname() {
 
 ts3_runtime_ldconfig_cache_contains_soname() {
   local soname="$1"
+  local ldconfig_path="$2"
 
-  command -v ldconfig >/dev/null 2>&1 || return 1
-  ldconfig -p 2>/dev/null | awk -v soname="${soname}" '
+  [[ -n "${ldconfig_path}" ]] || return 1
+  "${ldconfig_path}" -p 2>/dev/null | awk -v soname="${soname}" '
     $1 == soname { found = 1; exit }
     END { exit(found ? 0 : 1) }
   '
 }
 
+ts3_runtime_resolve_executable() {
+  local executable_name="$1"
+  local explicit_path="$2"
+  local candidate=""
+
+  if [[ -n "${explicit_path}" && -x "${explicit_path}" ]]; then
+    printf '%s\n' "${explicit_path}"
+    return 0
+  fi
+
+  if command -v "${executable_name}" >/dev/null 2>&1; then
+    command -v "${executable_name}"
+    return 0
+  fi
+
+  shift 2
+  for candidate in "$@"; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+
+  return 1
+}
+
 ts3_runtime_missing_client_shared_libraries() {
   local client_dir="$1"
   local runtime_library_path="${2:-}"
+  local ldconfig_path=""
   local launch_library_path
   local binary_path
   local soname
 
   launch_library_path="$(ts3_runtime_client_ld_library_path "${client_dir}" "${runtime_library_path}")"
+  ldconfig_path="$(
+    ts3_runtime_resolve_executable ldconfig "${TS3_CLIENT_LDCONFIG:-}" /usr/sbin/ldconfig /sbin/ldconfig || true
+  )"
 
   {
     for binary_path in \
@@ -217,10 +247,10 @@ ts3_runtime_missing_client_shared_libraries() {
       if ts3_runtime_library_search_path_contains_soname "${soname}" "${launch_library_path}"; then
         continue
       fi
-      if ts3_runtime_ldconfig_cache_contains_soname "${soname}"; then
+      if ts3_runtime_ldconfig_cache_contains_soname "${soname}" "${ldconfig_path}"; then
         continue
       fi
-      if ! command -v ldconfig >/dev/null 2>&1; then
+      if [[ -z "${ldconfig_path}" ]]; then
         continue
       fi
       printf '%s\n' "${soname}"

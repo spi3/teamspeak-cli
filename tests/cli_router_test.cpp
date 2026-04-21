@@ -20,6 +20,10 @@
 
 namespace teamspeak_cli::cli {
 auto read_install_receipt_value_for_test(std::string_view value) -> std::string;
+auto find_executable_with_fallbacks_for_test(
+    std::string_view executable_name,
+    const std::vector<std::filesystem::path>& fallback_paths
+) -> std::optional<std::filesystem::path>;
 }
 
 namespace fs = std::filesystem;
@@ -123,6 +127,36 @@ int main() {
         std::string("/tmp/teamspeak-cli/install dir/xdotool\\root"),
         "bash-escaped receipt values should be decoded"
     );
+    {
+        const fs::path temp_dir = fs::temp_directory_path() / "ts-cli-find-executable-fallback-test";
+        std::error_code cleanup_ec;
+        fs::remove_all(temp_dir, cleanup_ec);
+        fs::create_directories(temp_dir);
+        const fs::path fallback_executable_path = temp_dir / "ldconfig";
+        {
+            std::ofstream executable(fallback_executable_path, std::ios::trunc);
+            executable << "#!/usr/bin/env bash\n";
+            executable << "exit 0\n";
+        }
+        fs::permissions(
+            fallback_executable_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+        EnvGuard empty_path_env("PATH", "");
+        const auto fallback_resolution =
+            cli::find_executable_with_fallbacks_for_test("ldconfig", {fallback_executable_path});
+        tests::expect(
+            fallback_resolution.has_value(),
+            "executable lookup should resolve known fallback paths when PATH is empty"
+        );
+        tests::expect_eq(
+            fallback_resolution->lexically_normal().string(),
+            fallback_executable_path.lexically_normal().string(),
+            "executable lookup should return the fallback executable path"
+        );
+        fs::remove_all(temp_dir, cleanup_ec);
+    }
 
     const std::string channel_help = router.render_help({"channel"});
     tests::expect_contains(channel_help, "ts channel <subcommand>", "channel help usage");
@@ -813,12 +847,9 @@ int main() {
     );
 
     {
-        const char* current_path = std::getenv("PATH");
-        const std::string fake_path =
-            fake_ldconfig_dir.string() +
-            ((current_path != nullptr && *current_path != '\0') ? ":" + std::string(current_path) : "");
         EnvGuard missing_library_launcher_env("TS_CLIENT_LAUNCHER", missing_library_launcher_path.string());
-        EnvGuard fake_path_env("PATH", fake_path);
+        EnvGuard fake_path_env("PATH", "/usr/bin:/bin");
+        EnvGuard fake_ldconfig_env("TS3_CLIENT_LDCONFIG", fake_ldconfig_path.string());
 
         auto missing_library_start = router.dispatch(client_start.value());
         tests::expect(!missing_library_start.ok(), "client start should fail when libXi.so.6 is unavailable");
@@ -841,7 +872,7 @@ int main() {
         );
         tests::expect(
             !fs::exists(missing_library_marker_path),
-            "client start preflight should stop before executing the TeamSpeak runscript"
+            "client start preflight should stop before executing the TeamSpeak runscript when ldconfig is outside PATH"
         );
     }
 

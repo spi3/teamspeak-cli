@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -35,6 +36,10 @@ namespace {
 constexpr auto kConnectCompletionTimeout = std::chrono::seconds(15);
 constexpr auto kDisconnectCompletionTimeout = std::chrono::seconds(10);
 constexpr std::array<std::string_view, 1> kClientRequiredSharedLibraries = {"libXi.so.6"};
+const std::array<std::filesystem::path, 2> kLdconfigFallbackPaths = {
+    "/usr/sbin/ldconfig",
+    "/sbin/ldconfig"
+};
 volatile std::sig_atomic_t g_daemon_stop_requested = 0;
 
 extern "C" void daemon_signal_handler(int) {
@@ -421,6 +426,35 @@ auto find_executable_on_path(std::string_view executable_name) -> std::optional<
         }
     }
     return std::nullopt;
+}
+
+auto find_executable(
+    std::string_view executable_name,
+    std::span<const std::filesystem::path> fallback_paths = {}
+) -> std::optional<std::filesystem::path> {
+    if (const auto discovered = find_executable_on_path(executable_name); discovered.has_value()) {
+        return discovered;
+    }
+
+    for (const auto& fallback_path : fallback_paths) {
+        if (is_executable_file(fallback_path)) {
+            return fallback_path;
+        }
+    }
+
+    return std::nullopt;
+}
+
+auto resolve_ldconfig_path() -> std::optional<std::filesystem::path> {
+    if (const char* explicit_ldconfig = std::getenv("TS3_CLIENT_LDCONFIG");
+        explicit_ldconfig != nullptr && *explicit_ldconfig != '\0') {
+        const std::filesystem::path explicit_path = explicit_ldconfig;
+        if (is_executable_file(explicit_path)) {
+            return explicit_path;
+        }
+    }
+
+    return find_executable("ldconfig", kLdconfigFallbackPaths);
 }
 
 auto default_teamspeak_cache_dir() -> std::filesystem::path {
@@ -945,7 +979,7 @@ auto required_client_launch_libraries_missing(const ClientProcessPaths& paths) -
         append_search_path_entries(search_dirs, current_ld_library_path);
     }
 
-    const auto ldconfig_path = find_executable_on_path("ldconfig");
+    const auto ldconfig_path = resolve_ldconfig_path();
     std::vector<std::string> missing_libraries;
     for (const auto soname : kClientRequiredSharedLibraries) {
         bool found_in_search_dirs = false;
@@ -2780,6 +2814,13 @@ auto read_install_receipt_value_for_test(std::string_view value) -> std::string 
         return *decoded;
     }
     return std::string(value);
+}
+
+auto find_executable_with_fallbacks_for_test(
+    std::string_view executable_name,
+    const std::vector<std::filesystem::path>& fallback_paths
+) -> std::optional<std::filesystem::path> {
+    return find_executable(executable_name, fallback_paths);
 }
 
 CommandRouter::CommandRouter() = default;

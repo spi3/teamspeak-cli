@@ -131,6 +131,7 @@ Socket path resolution for the plugin backend is:
 - `TS_CLIENT_HEADLESS=1` to force headless launch
 - `TS_CLIENT_XVFB` to point at a specific `Xvfb` binary
 - `TS_CLIENT_HEADLESS_DISPLAY` to choose a specific display such as `:140`
+- `TS3_CLIENT_LDCONFIG` to point the runtime preflight at a specific `ldconfig` binary
 
 Client process state is stored under:
 
