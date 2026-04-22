@@ -245,6 +245,16 @@ if(BUILD_TESTING)
     src/teamspeak_cli/util/strings.cpp
   )
   ts_apply_defaults(ts_plugin_host_backend_test)
+  if(TS3_PLUGIN_SDK_INCLUDE_DIR)
+    target_include_directories(ts_plugin_host_backend_test PRIVATE "${TS3_PLUGIN_SDK_INCLUDE_DIR}")
+  elseif(TS3_PLUGIN_SDK_DIR)
+    target_include_directories(
+      ts_plugin_host_backend_test
+      PRIVATE
+        "${TS3_PLUGIN_SDK_DIR}/include"
+        "${TS3_PLUGIN_SDK_DIR}"
+    )
+  endif()
   add_test(NAME ts_plugin_host_backend_test COMMAND ts_plugin_host_backend_test)
 
   add_test(
