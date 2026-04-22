@@ -148,10 +148,16 @@ The plugin media socket resolves in this order:
 - `TS_CLIENT_HEADLESS_DISPLAY` to choose a specific display such as `:140`
 - `TS_CLIENT_XDOTOOL` to point at a specific `xdotool` binary used to dismiss known onboarding dialogs
 - `TS_CLIENT_XDOTOOL_LIBRARY_PATH` to point at the companion runtime libraries for that `xdotool` binary
+- `TS_CLIENT_SYSTEMD_RUN=0|1|auto` to disable, force, or auto-detect the transient user `systemd-run` launch path
 - `TS3_CLIENT_LDCONFIG` to point the runtime preflight at a specific `ldconfig` binary
 - `TS3CLIENT_SKIP_AUDIO_PREFLIGHT=1` to skip the wrapper's PulseAudio/PipeWire metadata and routing preflight entirely
 - `TS3CLIENT_SKIP_AUDIO_ROUTING=1` to keep the wrapper from provisioning isolated virtual audio devices automatically
 - `PULSE_SINK` and `PULSE_SOURCE` to override the TeamSpeak playback and capture devices manually
+
+When headless launch is selected and the current user has a working `systemd-run --user` environment, `ts client start`
+prefers a transient user service so the TeamSpeak client can survive non-interactive session teardown. Set
+`TS_CLIENT_SYSTEMD_RUN=0` to force the legacy detached launcher path, or `TS_CLIENT_SYSTEMD_RUN=1` to require the
+transient service path.
 
 On the first headless TeamSpeak launch, hidden onboarding dialogs can still block the plugin bridge. `ts client start`
 tries to dismiss known license and identity dialogs with `xdotool` when available. If a headless session still wedges,
@@ -169,7 +175,9 @@ Client process state is stored under:
 - otherwise `$XDG_STATE_HOME/teamspeak-cli`
 - otherwise `$HOME/.local/state/teamspeak-cli`
 
-The tracked state includes a pid file and client log path that `ts client status` renders back to the user.
+The tracked state includes a pid file and client log path that `ts client status` renders back to the user. When the
+client was launched through transient user `systemd`, the state directory also records the unit name so `ts client status`
+and `ts client stop` can keep following the managed session reliably.
 
 `ts client logs` reads:
 

@@ -364,6 +364,13 @@ If headless launch fails:
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
 
+If `ts client start` succeeds in a headless non-interactive session but the TeamSpeak client disappears again when that
+session ends:
+
+- leave `TS_CLIENT_SYSTEMD_RUN` unset or set it to `1` so `ts client start` can use a transient `systemd-run --user` unit
+- if your user does not have a working user `systemd` manager, set `TS_CLIENT_SYSTEMD_RUN=0` to fall back to the legacy detached launcher path
+- confirm `systemd-run --user true` works for the current user if you expect the launched client to survive session teardown
+
 If `ts client start` reports a missing shared library such as `libXi.so.6`:
 
 - install a system package that provides that library

@@ -687,6 +687,7 @@ int main() {
     EnvGuard home_env("HOME", home_dir.string());
     EnvGuard simple_discovery_env("TS_CLIENT_DISCOVERY_NAME", simple_discovery_name);
     EnvGuard headless_env("TS_CLIENT_HEADLESS", "0");
+    EnvGuard systemd_run_disabled_env("TS_CLIENT_SYSTEMD_RUN", "0");
 
     auto client_status = parse_command(router, {"client", "status"});
     tests::expect(client_status.ok(), "client status parse should succeed");
@@ -1130,6 +1131,172 @@ int main() {
             "\"status\":\"not-running\"",
             "wrapped client stop should leave no detected process"
         );
+    }
+
+    {
+        const fs::path fake_systemd_dir = temp_dir / "fake-systemd-bin";
+        const fs::path fake_systemd_state_dir = temp_dir / "fake-systemd-state";
+        const fs::path fake_systemd_run_path = fake_systemd_dir / "systemd-run";
+        const fs::path fake_systemctl_path = fake_systemd_dir / "systemctl";
+        fs::create_directories(fake_systemd_dir);
+        fs::create_directories(fake_systemd_state_dir);
+
+        {
+            std::ofstream systemd_run(fake_systemd_run_path, std::ios::trunc);
+            systemd_run << "#!/usr/bin/env bash\n";
+            systemd_run << "set -euo pipefail\n";
+            systemd_run << "state_dir=\"${TS_FAKE_SYSTEMD_STATE_DIR:?}\"\n";
+            systemd_run << "unit_name=\"\"\n";
+            systemd_run << "args=()\n";
+            systemd_run << "while (($#)); do\n";
+            systemd_run << "  case \"$1\" in\n";
+            systemd_run << "    --unit=*) unit_name=\"${1#--unit=}\" ;;\n";
+            systemd_run << "    --setenv=*) export \"${1#--setenv=}\" ;;\n";
+            systemd_run << "    --user|--collect|--quiet|--same-dir) ;;\n";
+            systemd_run << "    --service-type=*|--property=*|--description=*) ;;\n";
+            systemd_run << "    *) args=(\"$@\") ; break ;;\n";
+            systemd_run << "  esac\n";
+            systemd_run << "  shift\n";
+            systemd_run << "done\n";
+            systemd_run << "printf '%s\\n' \"${unit_name}\" >\"${state_dir}/unit\"\n";
+            systemd_run << "\"${args[@]}\" >/dev/null 2>&1 &\n";
+            systemd_run << "child_pid=$!\n";
+            systemd_run << "printf '%s\\n' \"${child_pid}\" >\"${state_dir}/mainpid\"\n";
+            systemd_run << "exit 0\n";
+        }
+        fs::permissions(
+            fake_systemd_run_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
+        {
+            std::ofstream systemctl(fake_systemctl_path, std::ios::trunc);
+            systemctl << "#!/usr/bin/env bash\n";
+            systemctl << "set -euo pipefail\n";
+            systemctl << "state_dir=\"${TS_FAKE_SYSTEMD_STATE_DIR:?}\"\n";
+            systemctl << "if [[ \"${1:-}\" == \"--user\" ]]; then\n";
+            systemctl << "  shift\n";
+            systemctl << "fi\n";
+            systemctl << "command_name=\"${1:-}\"\n";
+            systemctl << "shift || true\n";
+            systemctl << "case \"${command_name}\" in\n";
+            systemctl << "  show-environment)\n";
+            systemctl << "    printf 'XDG_RUNTIME_DIR=/run/user/test\\n'\n";
+            systemctl << "    ;;\n";
+            systemctl << "  show)\n";
+            systemctl << "    while (($#)); do\n";
+            systemctl << "      case \"$1\" in\n";
+            systemctl << "        --property=*|--value) shift ;;\n";
+            systemctl << "        *) unit_name=\"$1\" ; shift ; break ;;\n";
+            systemctl << "      esac\n";
+            systemctl << "    done\n";
+            systemctl << "    pid=0\n";
+            systemctl << "    if [[ -f \"${state_dir}/mainpid\" ]]; then\n";
+            systemctl << "      pid=\"$(cat \"${state_dir}/mainpid\")\"\n";
+            systemctl << "    fi\n";
+            systemctl << "    if [[ \"${pid}\" != \"0\" ]] && kill -0 \"${pid}\" >/dev/null 2>&1; then\n";
+            systemctl << "      printf 'ActiveState=active\\nSubState=running\\nMainPID=%s\\n' \"${pid}\"\n";
+            systemctl << "    else\n";
+            systemctl << "      printf 'ActiveState=inactive\\nSubState=dead\\nMainPID=0\\n'\n";
+            systemctl << "    fi\n";
+            systemctl << "    ;;\n";
+            systemctl << "  stop)\n";
+            systemctl << "    unit_name=\"${1:-}\"\n";
+            systemctl << "    printf '%s\\n' \"${unit_name}\" >\"${state_dir}/stopped-unit\"\n";
+            systemctl << "    if [[ -f \"${state_dir}/mainpid\" ]]; then\n";
+            systemctl << "      pid=\"$(cat \"${state_dir}/mainpid\")\"\n";
+            systemctl << "      kill \"${pid}\" >/dev/null 2>&1 || true\n";
+            systemctl << "      for _ in $(seq 1 100); do\n";
+            systemctl << "        if ! kill -0 \"${pid}\" >/dev/null 2>&1; then\n";
+            systemctl << "          break\n";
+            systemctl << "        fi\n";
+            systemctl << "        sleep 0.05\n";
+            systemctl << "      done\n";
+            systemctl << "      rm -f \"${state_dir}/mainpid\"\n";
+            systemctl << "    fi\n";
+            systemctl << "    ;;\n";
+            systemctl << "  *)\n";
+            systemctl << "    exit 1\n";
+            systemctl << "    ;;\n";
+            systemctl << "esac\n";
+        }
+        fs::permissions(
+            fake_systemctl_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
+        const std::string inherited_path = []() -> std::string {
+            if (const char* current_path = std::getenv("PATH"); current_path != nullptr) {
+                return current_path;
+            }
+            return "/usr/bin:/bin";
+        }();
+        EnvGuard forced_systemd_run_env("TS_CLIENT_SYSTEMD_RUN", "1");
+        EnvGuard fake_systemd_state_env("TS_FAKE_SYSTEMD_STATE_DIR", fake_systemd_state_dir.string());
+        EnvGuard fake_path_env("PATH", fake_systemd_dir.string() + ":" + inherited_path);
+
+        auto systemd_start = router.dispatch(client_start.value());
+        tests::expect(systemd_start.ok(), "systemd-backed client start should succeed");
+        const auto systemd_start_json = output::render(systemd_start.value(), output::Format::json);
+        tests::expect_contains(
+            systemd_start_json,
+            "transient user systemd unit",
+            "systemd-backed client start should explain the launch strategy"
+        );
+        tests::expect(fs::exists(pid_file), "systemd-backed client start should still write a pid file");
+        const fs::path unit_file = state_home / "teamspeak-cli" / "client.unit";
+        tests::expect(fs::exists(unit_file), "systemd-backed client start should write a unit file");
+
+        std::ifstream systemd_pid_input(pid_file);
+        int systemd_pid = 0;
+        systemd_pid_input >> systemd_pid;
+        tests::expect(systemd_pid > 0, "systemd-backed client start should record the unit main pid");
+
+        std::ifstream unit_input(unit_file);
+        std::string unit_name;
+        std::getline(unit_input, unit_name);
+        tests::expect_contains(
+            unit_name,
+            ".service",
+            "systemd-backed client start should persist the transient unit name"
+        );
+
+        auto systemd_status = router.dispatch(client_status.value());
+        tests::expect(systemd_status.ok(), "systemd-backed client status should succeed");
+        const auto systemd_status_json = output::render(systemd_status.value(), output::Format::json);
+        tests::expect_contains(
+            systemd_status_json,
+            "\"status\":\"running\"",
+            "systemd-backed client status should report running"
+        );
+        tests::expect_contains(
+            systemd_status_json,
+            "tracked transient user systemd unit",
+            "systemd-backed client status should mention the tracked unit"
+        );
+
+        auto systemd_stop = router.dispatch(client_stop.value());
+        tests::expect(systemd_stop.ok(), "systemd-backed client stop should succeed");
+        const auto systemd_stop_json = output::render(systemd_stop.value(), output::Format::json);
+        tests::expect_contains(
+            systemd_stop_json,
+            "stopped transient user systemd unit",
+            "systemd-backed client stop should mention the tracked unit"
+        );
+        tests::expect(!fs::exists(pid_file), "systemd-backed client stop should remove the pid file");
+        tests::expect(!fs::exists(unit_file), "systemd-backed client stop should remove the unit file");
+
+        const fs::path stopped_unit_path = fake_systemd_state_dir / "stopped-unit";
+        tests::expect(fs::exists(stopped_unit_path), "systemd-backed client stop should call systemctl stop");
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            if (::kill(systemd_pid, 0) != 0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        tests::expect(::kill(systemd_pid, 0) != 0, "systemd-backed client stop should terminate the tracked process");
     }
 
     const pid_t discovered_child = ::fork();

@@ -345,6 +345,19 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
         add_error_hint(error, "Install Xvfb or set `TS_CLIENT_HEADLESS=0`, then rerun `ts client start`.");
     }
 
+    if (path == "client start" &&
+        (error.code == "systemd_unavailable" || error.code == "systemd_user_unavailable" ||
+         error.code == "systemd_launch_failed")) {
+        add_error_hint(
+            error,
+            "Set `TS_CLIENT_SYSTEMD_RUN=0` to force the legacy detached launcher path, then rerun `ts client start`."
+        );
+        add_error_hint(
+            error,
+            "If this launch needs to survive a non-interactive session teardown, verify that `systemd-run --user` works for the current user."
+        );
+    }
+
     if (path == "daemon start" && error.code == "already_running") {
         add_error_hint(error, "Run `ts daemon status` to inspect the existing TeamSpeak event daemon.");
     }
@@ -371,12 +384,14 @@ struct ClientProcessPaths {
     std::filesystem::path state_dir;
     std::filesystem::path pid_file;
     std::filesystem::path log_file;
+    std::filesystem::path unit_file;
 };
 
 struct ClientStatePaths {
     std::filesystem::path state_dir;
     std::filesystem::path pid_file;
     std::filesystem::path log_file;
+    std::filesystem::path unit_file;
 };
 
 struct ClientHeadlessLaunch {
@@ -405,6 +420,28 @@ struct ClientLogSource {
     std::filesystem::path path;
     std::vector<std::string> lines;
     std::string error;
+};
+
+enum class ClientSystemdRunMode {
+    disabled,
+    auto_detect,
+    enabled,
+};
+
+struct ClientSystemdPaths {
+    std::filesystem::path systemd_run_path;
+    std::filesystem::path systemctl_path;
+};
+
+struct ClientSystemdUnitStatus {
+    std::string active_state;
+    std::string sub_state;
+    pid_t main_pid = 0;
+};
+
+struct ClientLaunchResult {
+    pid_t pid = 0;
+    std::string note;
 };
 
 auto resolve_client_launch_socket_path(
@@ -1201,6 +1238,7 @@ auto resolve_client_state_paths() -> domain::Result<ClientStatePaths> {
         .state_dir = state_dir.value(),
         .pid_file = state_dir.value() / "client.pid",
         .log_file = state_dir.value() / "client.log",
+        .unit_file = state_dir.value() / "client.unit",
     });
 }
 
@@ -1268,6 +1306,7 @@ auto resolve_client_process_paths() -> domain::Result<ClientProcessPaths> {
         .state_dir = state_paths.value().state_dir,
         .pid_file = state_paths.value().pid_file,
         .log_file = state_paths.value().log_file,
+        .unit_file = state_paths.value().unit_file,
     });
 }
 
@@ -1392,6 +1431,189 @@ auto read_pid_file(const std::filesystem::path& pid_file) -> std::optional<pid_t
 void remove_pid_file(const std::filesystem::path& pid_file) {
     std::error_code ec;
     std::filesystem::remove(pid_file, ec);
+}
+
+auto read_client_unit_file(const std::filesystem::path& unit_file) -> std::optional<std::string> {
+    std::ifstream input(unit_file);
+    std::string unit_name;
+    if (!std::getline(input, unit_name)) {
+        return std::nullopt;
+    }
+
+    unit_name = util::trim(unit_name);
+    if (unit_name.empty()) {
+        return std::nullopt;
+    }
+    return unit_name;
+}
+
+auto write_client_unit_file(const std::filesystem::path& unit_file, std::string_view unit_name) -> domain::Result<void> {
+    std::ofstream output(unit_file, std::ios::trunc);
+    if (!output) {
+        return domain::fail(client_error(
+            "unit_file_write_failed",
+            "failed to write client unit file: " + unit_file.string(),
+            domain::ExitCode::internal
+        ));
+    }
+    output << unit_name << '\n';
+    return domain::ok();
+}
+
+void remove_client_unit_file(const std::filesystem::path& unit_file) {
+    std::error_code ec;
+    std::filesystem::remove(unit_file, ec);
+}
+
+auto resolve_client_systemd_run_mode() -> ClientSystemdRunMode {
+    if (const char* raw = std::getenv("TS_CLIENT_SYSTEMD_RUN"); raw != nullptr && *raw != '\0') {
+        if (const auto parsed = util::parse_bool(raw); parsed.has_value()) {
+            return *parsed ? ClientSystemdRunMode::enabled : ClientSystemdRunMode::disabled;
+        }
+
+        const auto normalized = normalize_boolean_env(raw);
+        if (normalized == "auto") {
+            return ClientSystemdRunMode::auto_detect;
+        }
+        if (normalized == "force" || normalized == "always" || normalized == "enabled") {
+            return ClientSystemdRunMode::enabled;
+        }
+        if (normalized == "disable" || normalized == "disabled" || normalized == "never") {
+            return ClientSystemdRunMode::disabled;
+        }
+    }
+
+    return ClientSystemdRunMode::auto_detect;
+}
+
+auto resolve_client_systemd_paths() -> std::optional<ClientSystemdPaths> {
+    const auto systemd_run_path = find_executable_on_path("systemd-run");
+    const auto systemctl_path = find_executable_on_path("systemctl");
+    if (!systemd_run_path.has_value() || !systemctl_path.has_value()) {
+        return std::nullopt;
+    }
+    return ClientSystemdPaths{
+        .systemd_run_path = *systemd_run_path,
+        .systemctl_path = *systemctl_path,
+    };
+}
+
+auto client_systemd_user_manager_available(const ClientSystemdPaths& paths) -> bool {
+    return run_command_capture_stdout({paths.systemctl_path.string(), "--user", "show-environment"}).has_value();
+}
+
+auto read_client_systemd_unit_status(
+    const ClientSystemdPaths& paths,
+    const std::string& unit_name
+) -> std::optional<ClientSystemdUnitStatus> {
+    const auto output = run_command_capture_stdout(
+        {
+            paths.systemctl_path.string(),
+            "--user",
+            "show",
+            "--property=ActiveState,SubState,MainPID",
+            unit_name,
+        }
+    );
+    if (!output.has_value()) {
+        return std::nullopt;
+    }
+
+    ClientSystemdUnitStatus status;
+    std::istringstream input(*output);
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto separator = line.find('=');
+        if (separator == std::string::npos) {
+            continue;
+        }
+
+        const auto key = line.substr(0, separator);
+        const auto value = line.substr(separator + 1);
+        if (key == "ActiveState") {
+            status.active_state = value;
+        } else if (key == "SubState") {
+            status.sub_state = value;
+        } else if (key == "MainPID") {
+            const auto parsed_pid = util::parse_u64(value);
+            if (parsed_pid.has_value() && *parsed_pid <= static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) {
+                status.main_pid = static_cast<pid_t>(*parsed_pid);
+            }
+        }
+    }
+
+    return status;
+}
+
+auto stop_client_systemd_unit(const ClientSystemdPaths& paths, const std::string& unit_name) -> bool {
+    return run_command_capture_stdout({paths.systemctl_path.string(), "--user", "stop", unit_name}).has_value();
+}
+
+auto shell_quote(std::string_view value) -> std::string {
+    std::string quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back('\'');
+    for (const char ch : value) {
+        if (ch == '\'') {
+            quoted.append("'\\''");
+            continue;
+        }
+        quoted.push_back(ch);
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+auto make_client_systemd_unit_name() -> std::string {
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch()
+    )
+                         .count();
+    return "teamspeak-cli-client-" + std::to_string(::getpid()) + "-" + std::to_string(now) + ".service";
+}
+
+auto build_client_systemd_headless_script(
+    const ClientProcessPaths& paths,
+    const ClientHeadlessLaunch& headless_launch
+) -> domain::Result<std::string> {
+    const auto socket_path = x11_socket_path_for_display(headless_launch.display);
+    if (!socket_path.has_value()) {
+        return domain::fail<std::string>(client_error(
+            "invalid_display",
+            "invalid TS_CLIENT_HEADLESS_DISPLAY value: " + headless_launch.display,
+            domain::ExitCode::config
+        ));
+    }
+
+    std::ostringstream script;
+    script << "set -euo pipefail\n";
+    script << "xvfb_pid=''\n";
+    script << "cleanup() {\n";
+    script << "  if [[ -n \"${xvfb_pid}\" ]]; then\n";
+    script << "    kill \"${xvfb_pid}\" >/dev/null 2>&1 || true\n";
+    script << "    wait \"${xvfb_pid}\" >/dev/null 2>&1 || true\n";
+    script << "  fi\n";
+    script << "}\n";
+    script << "trap cleanup EXIT\n";
+    script << "export DISPLAY=" << shell_quote(headless_launch.display) << "\n";
+    script << "export XDG_SESSION_TYPE='x11'\n";
+    script << "unset WAYLAND_DISPLAY\n";
+    script << shell_quote(headless_launch.xvfb_path.string()) << ' '
+           << shell_quote(headless_launch.display) << " -screen 0 1280x1024x24 -ac &\n";
+    script << "xvfb_pid=$!\n";
+    script << "for _ in $(seq 1 100); do\n";
+    script << "  if [[ -e " << shell_quote(socket_path->string()) << " ]]; then\n";
+    script << "    break\n";
+    script << "  fi\n";
+    script << "  if ! kill -0 \"${xvfb_pid}\" >/dev/null 2>&1; then\n";
+    script << "    wait \"${xvfb_pid}\" >/dev/null 2>&1 || true\n";
+    script << "    exit 127\n";
+    script << "  fi\n";
+    script << "  sleep 0.05\n";
+    script << "done\n";
+    script << "[[ -e " << shell_quote(socket_path->string()) << " ]]\n";
+    script << "exec " << shell_quote(paths.launcher_path.string()) << "\n";
+    return domain::ok(script.str());
 }
 
 auto process_is_running(pid_t pid) -> bool {
@@ -1888,10 +2110,321 @@ auto client_logs_output(std::size_t count) -> domain::Result<output::CommandOutp
     });
 }
 
+auto client_should_use_systemd_run(const std::optional<ClientHeadlessLaunch>& headless_launch) -> bool {
+    const auto mode = resolve_client_systemd_run_mode();
+    if (mode == ClientSystemdRunMode::disabled) {
+        return false;
+    }
+    if (mode == ClientSystemdRunMode::enabled) {
+        return true;
+    }
+    return headless_launch.has_value();
+}
+
+auto launch_client_process_direct(
+    const ClientProcessPaths& paths,
+    const std::string& launch_socket_path,
+    const std::optional<ClientHeadlessLaunch>& headless_launch
+) -> domain::Result<ClientLaunchResult> {
+    int pipe_fds[2] = {-1, -1};
+    if (::pipe(pipe_fds) != 0) {
+        return domain::fail<ClientLaunchResult>(client_error(
+            "pipe_failed",
+            "failed to create launcher status pipe: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+    auto close_pipe_fds = util::make_scope_exit([&] {
+        if (pipe_fds[0] >= 0) {
+            ::close(pipe_fds[0]);
+        }
+        if (pipe_fds[1] >= 0) {
+            ::close(pipe_fds[1]);
+        }
+    });
+
+    if (::fcntl(pipe_fds[1], F_SETFD, FD_CLOEXEC) == -1) {
+        return domain::fail<ClientLaunchResult>(client_error(
+            "pipe_cloexec_failed",
+            "failed to mark launcher status pipe close-on-exec: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    const pid_t child_pid = ::fork();
+    if (child_pid < 0) {
+        return domain::fail<ClientLaunchResult>(client_error(
+            "fork_failed",
+            "failed to fork TeamSpeak client process: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    if (child_pid == 0) {
+        ::close(pipe_fds[0]);
+
+        if (::setsid() == -1) {
+            const int child_errno = errno;
+            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+
+        const int stdin_fd = ::open("/dev/null", O_RDONLY);
+        const int log_fd = ::open(paths.log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (stdin_fd < 0 || log_fd < 0) {
+            const int child_errno = errno;
+            if (stdin_fd >= 0) {
+                ::close(stdin_fd);
+            }
+            if (log_fd >= 0) {
+                ::close(log_fd);
+            }
+            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+
+        if (::dup2(stdin_fd, STDIN_FILENO) == -1 || ::dup2(log_fd, STDOUT_FILENO) == -1 ||
+            ::dup2(log_fd, STDERR_FILENO) == -1) {
+            const int child_errno = errno;
+            ::close(stdin_fd);
+            ::close(log_fd);
+            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+
+        ::close(stdin_fd);
+        ::close(log_fd);
+
+        if (::setenv("TS_CONTROL_SOCKET_PATH", launch_socket_path.c_str(), 1) != 0) {
+            const int child_errno = errno;
+            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+
+        if (headless_launch.has_value()) {
+            const auto& headless = *headless_launch;
+            const pid_t xvfb_pid = ::fork();
+            if (xvfb_pid < 0) {
+                const int child_errno = errno;
+                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+                _exit(127);
+            }
+
+            if (xvfb_pid == 0) {
+                char* const xvfb_argv[] = {
+                    const_cast<char*>(headless.xvfb_path.c_str()),
+                    const_cast<char*>(headless.display.c_str()),
+                    const_cast<char*>("-screen"),
+                    const_cast<char*>("0"),
+                    const_cast<char*>("1280x1024x24"),
+                    const_cast<char*>("-ac"),
+                    nullptr,
+                };
+                ::execv(headless.xvfb_path.c_str(), xvfb_argv);
+
+                const int child_errno = errno;
+                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+                _exit(127);
+            }
+
+            const auto socket_path = x11_socket_path_for_display(headless.display);
+            if (!socket_path.has_value()) {
+                const int child_errno = EINVAL;
+                terminate_and_reap_process(xvfb_pid);
+                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+                _exit(127);
+            }
+
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            bool display_ready = false;
+            while (std::chrono::steady_clock::now() < deadline) {
+                std::error_code socket_ec;
+                if (std::filesystem::exists(*socket_path, socket_ec) && !socket_ec) {
+                    display_ready = true;
+                    break;
+                }
+
+                int xvfb_status = 0;
+                const pid_t wait_result = ::waitpid(xvfb_pid, &xvfb_status, WNOHANG);
+                if (wait_result == xvfb_pid) {
+                    _exit(127);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+
+            if (!display_ready) {
+                const int child_errno = ETIMEDOUT;
+                terminate_and_reap_process(xvfb_pid);
+                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+                _exit(127);
+            }
+
+            if (::setenv("DISPLAY", headless.display.c_str(), 1) != 0 ||
+                ::setenv("XDG_SESSION_TYPE", "x11", 1) != 0) {
+                const int child_errno = errno;
+                terminate_and_reap_process(xvfb_pid);
+                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+                _exit(127);
+            }
+            (void)::unsetenv("WAYLAND_DISPLAY");
+        }
+
+        char* const argv[] = {const_cast<char*>(paths.launcher_path.c_str()), nullptr};
+        ::execv(paths.launcher_path.c_str(), argv);
+
+        const int child_errno = errno;
+        (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+        _exit(127);
+    }
+
+    ::close(pipe_fds[1]);
+    pipe_fds[1] = -1;
+
+    int child_errno = 0;
+    const auto bytes_read = ::read(pipe_fds[0], &child_errno, sizeof(child_errno));
+    ::close(pipe_fds[0]);
+    pipe_fds[0] = -1;
+
+    if (bytes_read > 0) {
+        int ignored_status = 0;
+        (void)::waitpid(child_pid, &ignored_status, 0);
+        return domain::fail<ClientLaunchResult>(client_error(
+            "launch_failed",
+            "failed to launch TeamSpeak client: " + std::string(std::strerror(child_errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    return domain::ok(ClientLaunchResult{
+        .pid = child_pid,
+        .note = headless_launch.has_value()
+                    ? "client process launched headlessly on DISPLAY " + headless_launch->display +
+                          " using socket " + launch_socket_path
+                    : "client process launched using socket " + launch_socket_path,
+    });
+}
+
+auto launch_client_process_via_systemd(
+    const ClientProcessPaths& paths,
+    const std::string& launch_socket_path,
+    const std::optional<ClientHeadlessLaunch>& headless_launch
+) -> domain::Result<ClientLaunchResult> {
+    const auto systemd_paths = resolve_client_systemd_paths();
+    if (!systemd_paths.has_value()) {
+        return domain::fail<ClientLaunchResult>(client_error(
+            "systemd_unavailable",
+            "systemd-run is not available on PATH for this launch",
+            domain::ExitCode::not_found
+        ));
+    }
+    if (!client_systemd_user_manager_available(*systemd_paths)) {
+        return domain::fail<ClientLaunchResult>(client_error(
+            "systemd_user_unavailable",
+            "the user systemd manager is not available for this launch",
+            domain::ExitCode::unsupported
+        ));
+    }
+
+    const std::string unit_name = make_client_systemd_unit_name();
+    std::vector<std::string> argv = {
+        systemd_paths->systemd_run_path.string(),
+        "--user",
+        "--collect",
+        "--quiet",
+        "--same-dir",
+        "--unit=" + unit_name,
+        "--service-type=exec",
+        "--property=StandardInput=null",
+        "--property=StandardOutput=append:" + paths.log_file.string(),
+        "--property=StandardError=append:" + paths.log_file.string(),
+        "--setenv=TS_CONTROL_SOCKET_PATH=" + launch_socket_path,
+    };
+
+    if (headless_launch.has_value()) {
+        auto headless_script = build_client_systemd_headless_script(paths, *headless_launch);
+        if (!headless_script) {
+            return domain::fail<ClientLaunchResult>(headless_script.error());
+        }
+
+        argv.push_back("/bin/bash");
+        argv.push_back("-lc");
+        argv.push_back(headless_script.value());
+    } else {
+        argv.push_back(paths.launcher_path.string());
+    }
+
+    if (!run_command_capture_stdout(argv).has_value()) {
+        return domain::fail<ClientLaunchResult>(client_error(
+            "systemd_launch_failed",
+            "failed to launch TeamSpeak client through systemd-run --user",
+            domain::ExitCode::internal
+        ));
+    }
+
+    std::optional<ClientSystemdUnitStatus> unit_status;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        unit_status = read_client_systemd_unit_status(*systemd_paths, unit_name);
+        if (unit_status.has_value() && unit_status->main_pid > 0) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    if (!unit_status.has_value() || unit_status->main_pid <= 0) {
+        (void)stop_client_systemd_unit(*systemd_paths, unit_name);
+        return domain::fail<ClientLaunchResult>(client_error(
+            "systemd_launch_failed",
+            "systemd-run started a transient unit but no main client pid was reported",
+            domain::ExitCode::internal
+        ));
+    }
+
+    auto wrote_unit = write_client_unit_file(paths.unit_file, unit_name);
+    if (!wrote_unit) {
+        (void)stop_client_systemd_unit(*systemd_paths, unit_name);
+        return domain::fail<ClientLaunchResult>(wrote_unit.error());
+    }
+
+    return domain::ok(ClientLaunchResult{
+        .pid = unit_status->main_pid,
+        .note = headless_launch.has_value()
+                    ? "client process launched headlessly on DISPLAY " + headless_launch->display +
+                          " using socket " + launch_socket_path + " via transient user systemd unit " + unit_name
+                    : "client process launched using socket " + launch_socket_path +
+                          " via transient user systemd unit " + unit_name,
+    });
+}
+
 auto client_status_process() -> domain::Result<output::CommandOutput> {
     auto paths = resolve_client_process_paths();
     if (!paths) {
         return domain::fail<output::CommandOutput>(paths.error());
+    }
+
+    if (const auto unit_name = read_client_unit_file(paths.value().unit_file); unit_name.has_value()) {
+        if (const auto systemd_paths = resolve_client_systemd_paths(); systemd_paths.has_value()) {
+            if (const auto unit_status = read_client_systemd_unit_status(*systemd_paths, *unit_name);
+                unit_status.has_value()) {
+                const bool unit_active =
+                    unit_status->active_state == "active" || unit_status->active_state == "activating";
+                if (unit_active && unit_status->main_pid > 0 && process_is_running(unit_status->main_pid)) {
+                    auto wrote_pid = write_pid_file(paths.value().pid_file, unit_status->main_pid);
+                    (void)wrote_pid;
+                    return domain::ok(client_process_output(
+                        "status",
+                        "running",
+                        unit_status->main_pid,
+                        paths.value(),
+                        "tracked transient user systemd unit " + *unit_name + " is " + unit_status->active_state
+                    ));
+                }
+                if (!unit_active) {
+                    remove_pid_file(paths.value().pid_file);
+                    remove_client_unit_file(paths.value().unit_file);
+                }
+            }
+        }
     }
 
     const auto pid = read_pid_file(paths.value().pid_file);
@@ -1990,6 +2523,31 @@ auto start_client_process(
         ));
     }
 
+    if (const auto unit_name = read_client_unit_file(paths.value().unit_file); unit_name.has_value()) {
+        if (const auto systemd_paths = resolve_client_systemd_paths(); systemd_paths.has_value()) {
+            if (const auto unit_status = read_client_systemd_unit_status(*systemd_paths, *unit_name);
+                unit_status.has_value()) {
+                const bool unit_active =
+                    unit_status->active_state == "active" || unit_status->active_state == "activating";
+                if (unit_active && unit_status->main_pid > 0 && process_is_running(unit_status->main_pid)) {
+                    auto wrote_pid = write_pid_file(paths.value().pid_file, unit_status->main_pid);
+                    (void)wrote_pid;
+                    return domain::ok(client_process_output(
+                        "start",
+                        "already-running",
+                        unit_status->main_pid,
+                        paths.value(),
+                        "tracked transient user systemd unit " + *unit_name + " is " + unit_status->active_state
+                    ));
+                }
+                if (!unit_active) {
+                    remove_pid_file(paths.value().pid_file);
+                    remove_client_unit_file(paths.value().unit_file);
+                }
+            }
+        }
+    }
+
     if (const auto pid = read_pid_file(paths.value().pid_file); pid.has_value()) {
         if (process_is_running(*pid)) {
             return domain::ok(client_process_output(
@@ -2017,200 +2575,69 @@ auto start_client_process(
         progress("Launching the TeamSpeak client process.");
     }
 
-    int pipe_fds[2] = {-1, -1};
-    if (::pipe(pipe_fds) != 0) {
-        return domain::fail<output::CommandOutput>(client_error(
-            "pipe_failed",
-            "failed to create launcher status pipe: " + std::string(std::strerror(errno)),
-            domain::ExitCode::internal
-        ));
-    }
-    auto close_pipe_fds = util::make_scope_exit([&] {
-        if (pipe_fds[0] >= 0) {
-            ::close(pipe_fds[0]);
+    remove_client_unit_file(paths.value().unit_file);
+
+    domain::Result<ClientLaunchResult> launched = domain::fail<ClientLaunchResult>(client_error(
+        "launch_failed",
+        "failed to launch TeamSpeak client",
+        domain::ExitCode::internal
+    ));
+    bool used_systemd_launch = false;
+    const bool prefer_systemd = client_should_use_systemd_run(headless_launch.value());
+    if (prefer_systemd) {
+        if (progress) {
+            progress("Launching the TeamSpeak client through a transient user systemd unit.");
         }
-        if (pipe_fds[1] >= 0) {
-            ::close(pipe_fds[1]);
-        }
-    });
-
-    if (::fcntl(pipe_fds[1], F_SETFD, FD_CLOEXEC) == -1) {
-        return domain::fail<output::CommandOutput>(client_error(
-            "pipe_cloexec_failed",
-            "failed to mark launcher status pipe close-on-exec: " + std::string(std::strerror(errno)),
-            domain::ExitCode::internal
-        ));
-    }
-
-    const pid_t child_pid = ::fork();
-    if (child_pid < 0) {
-        return domain::fail<output::CommandOutput>(client_error(
-            "fork_failed",
-            "failed to fork TeamSpeak client process: " + std::string(std::strerror(errno)),
-            domain::ExitCode::internal
-        ));
-    }
-
-    if (child_pid == 0) {
-        ::close(pipe_fds[0]);
-
-        if (::setsid() == -1) {
-            const int child_errno = errno;
-            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-            _exit(127);
-        }
-
-        const int stdin_fd = ::open("/dev/null", O_RDONLY);
-        const int log_fd = ::open(
-            paths.value().log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644
+        launched = launch_client_process_via_systemd(
+            paths.value(), launch_socket_path.value(), headless_launch.value()
         );
-        if (stdin_fd < 0 || log_fd < 0) {
-            const int child_errno = errno;
-            if (stdin_fd >= 0) {
-                ::close(stdin_fd);
-            }
-            if (log_fd >= 0) {
-                ::close(log_fd);
-            }
-            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-            _exit(127);
+        if (launched) {
+            used_systemd_launch = true;
+        } else if (resolve_client_systemd_run_mode() == ClientSystemdRunMode::enabled) {
+            return domain::fail<output::CommandOutput>(launched.error());
+        } else if (progress) {
+            progress(
+                "The transient user systemd launch path was unavailable, so the TeamSpeak client will be started as a local detached process instead."
+            );
         }
-
-        if (::dup2(stdin_fd, STDIN_FILENO) == -1 || ::dup2(log_fd, STDOUT_FILENO) == -1 ||
-            ::dup2(log_fd, STDERR_FILENO) == -1) {
-            const int child_errno = errno;
-            ::close(stdin_fd);
-            ::close(log_fd);
-            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-            _exit(127);
-        }
-
-        ::close(stdin_fd);
-        ::close(log_fd);
-
-        if (::setenv("TS_CONTROL_SOCKET_PATH", launch_socket_path.value().c_str(), 1) != 0) {
-            const int child_errno = errno;
-            (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-            _exit(127);
-        }
-
-        if (headless_launch.value().has_value()) {
-            const auto& headless = *headless_launch.value();
-            const pid_t xvfb_pid = ::fork();
-            if (xvfb_pid < 0) {
-                const int child_errno = errno;
-                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-                _exit(127);
-            }
-
-            if (xvfb_pid == 0) {
-                char* const xvfb_argv[] = {
-                    const_cast<char*>(headless.xvfb_path.c_str()),
-                    const_cast<char*>(headless.display.c_str()),
-                    const_cast<char*>("-screen"),
-                    const_cast<char*>("0"),
-                    const_cast<char*>("1280x1024x24"),
-                    const_cast<char*>("-ac"),
-                    nullptr,
-                };
-                ::execv(headless.xvfb_path.c_str(), xvfb_argv);
-
-                const int child_errno = errno;
-                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-                _exit(127);
-            }
-
-            const auto socket_path = x11_socket_path_for_display(headless.display);
-            if (!socket_path.has_value()) {
-                const int child_errno = EINVAL;
-                terminate_and_reap_process(xvfb_pid);
-                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-                _exit(127);
-            }
-
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            bool display_ready = false;
-            while (std::chrono::steady_clock::now() < deadline) {
-                std::error_code socket_ec;
-                if (std::filesystem::exists(*socket_path, socket_ec) && !socket_ec) {
-                    display_ready = true;
-                    break;
-                }
-
-                int xvfb_status = 0;
-                const pid_t wait_result = ::waitpid(xvfb_pid, &xvfb_status, WNOHANG);
-                if (wait_result == xvfb_pid) {
-                    _exit(127);
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-
-            if (!display_ready) {
-                const int child_errno = ETIMEDOUT;
-                terminate_and_reap_process(xvfb_pid);
-                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-                _exit(127);
-            }
-
-            if (::setenv("DISPLAY", headless.display.c_str(), 1) != 0 ||
-                ::setenv("XDG_SESSION_TYPE", "x11", 1) != 0) {
-                const int child_errno = errno;
-                terminate_and_reap_process(xvfb_pid);
-                (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-                _exit(127);
-            }
-            (void)::unsetenv("WAYLAND_DISPLAY");
-        }
-
-        char* const argv[] = {const_cast<char*>(paths.value().launcher_path.c_str()), nullptr};
-        ::execv(paths.value().launcher_path.c_str(), argv);
-
-        const int child_errno = errno;
-        (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
-        _exit(127);
     }
 
-    ::close(pipe_fds[1]);
-    pipe_fds[1] = -1;
-
-    int child_errno = 0;
-    const auto bytes_read = ::read(pipe_fds[0], &child_errno, sizeof(child_errno));
-    ::close(pipe_fds[0]);
-    pipe_fds[0] = -1;
-
-    if (bytes_read > 0) {
-        int ignored_status = 0;
-        (void)::waitpid(child_pid, &ignored_status, 0);
-        return domain::fail<output::CommandOutput>(client_error(
-            "launch_failed",
-            "failed to launch TeamSpeak client: " + std::string(std::strerror(child_errno)),
-            domain::ExitCode::internal
-        ));
+    if (!launched) {
+        launched = launch_client_process_direct(paths.value(), launch_socket_path.value(), headless_launch.value());
+        if (!launched) {
+            return domain::fail<output::CommandOutput>(launched.error());
+        }
     }
 
-    auto wrote_pid = write_pid_file(paths.value().pid_file, child_pid);
+    auto wrote_pid = write_pid_file(paths.value().pid_file, launched.value().pid);
     if (!wrote_pid) {
-        (void)::kill(child_pid, SIGTERM);
+        if (used_systemd_launch) {
+            if (const auto unit_name = read_client_unit_file(paths.value().unit_file); unit_name.has_value()) {
+                if (const auto systemd_paths = resolve_client_systemd_paths(); systemd_paths.has_value()) {
+                    (void)stop_client_systemd_unit(*systemd_paths, *unit_name);
+                }
+            }
+            remove_client_unit_file(paths.value().unit_file);
+        } else {
+            (void)::kill(launched.value().pid, SIGTERM);
+        }
         return domain::fail<output::CommandOutput>(wrote_pid.error());
     }
 
     if (headless_launch.value().has_value()) {
-        dismiss_headless_client_dialogs(*headless_launch.value(), child_pid);
+        dismiss_headless_client_dialogs(*headless_launch.value(), launched.value().pid);
     }
 
     if (progress) {
-        progress("The TeamSpeak client started as PID " + std::to_string(child_pid) + ".");
+        progress("The TeamSpeak client started as PID " + std::to_string(launched.value().pid) + ".");
     }
 
     return domain::ok(client_process_output(
         "start",
         "started",
-        child_pid,
+        launched.value().pid,
         paths.value(),
-        headless_launch.value().has_value()
-            ? "client process launched headlessly on DISPLAY " + headless_launch.value()->display +
-                  " using socket " + launch_socket_path.value()
-            : "client process launched using socket " + launch_socket_path.value()
+        launched.value().note
     ));
 }
 
@@ -2223,6 +2650,37 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
 
     if (progress) {
         progress("Looking for a running local TeamSpeak client process.");
+    }
+
+    if (const auto unit_name = read_client_unit_file(paths.value().unit_file); unit_name.has_value()) {
+        if (const auto systemd_paths = resolve_client_systemd_paths(); systemd_paths.has_value()) {
+            const auto unit_status = read_client_systemd_unit_status(*systemd_paths, *unit_name);
+            const bool unit_active = unit_status.has_value() &&
+                                     (unit_status->active_state == "active" ||
+                                      unit_status->active_state == "activating");
+            if (unit_active) {
+                if (progress) {
+                    progress("Stopping the transient user systemd unit " + *unit_name + ".");
+                }
+                if (stop_client_systemd_unit(*systemd_paths, *unit_name)) {
+                    const pid_t stopped_pid = unit_status->main_pid > 0 ? unit_status->main_pid : 0;
+                    remove_pid_file(paths.value().pid_file);
+                    remove_client_unit_file(paths.value().unit_file);
+                    return domain::ok(client_process_output(
+                        "stop",
+                        "stopped",
+                        stopped_pid,
+                        paths.value(),
+                        "stopped transient user systemd unit " + *unit_name
+                    ));
+                }
+            } else if (!unit_status.has_value() ||
+                       unit_status->active_state == "inactive" ||
+                       unit_status->active_state == "failed") {
+                remove_client_unit_file(paths.value().unit_file);
+                remove_pid_file(paths.value().pid_file);
+            }
+        }
     }
 
     auto pid = read_pid_file(paths.value().pid_file);
