@@ -1,3 +1,6 @@
+#include <chrono>
+#include <thread>
+
 #include "teamspeak_cli/sdk/mock_backend.hpp"
 #include "test_support.hpp"
 
@@ -6,6 +9,7 @@ int main() {
 
     sdk::MockBackend backend;
     tests::expect(backend.initialize(sdk::InitOptions{}).ok(), "init");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
     tests::expect(
         backend.connect(sdk::ConnectRequest{
             .host = "127.0.0.1",

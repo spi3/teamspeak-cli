@@ -43,6 +43,7 @@ class MockBackend final : public Backend, public bridge::MediaBridgeHost, public
     auto require_connected() const -> domain::Result<void>;
     auto find_channel(const domain::Selector& selector) const -> domain::Result<domain::Channel>;
     auto find_client(const domain::Selector& selector) const -> domain::Result<domain::Client>;
+    void clear_pending_events();
     void start_event_loop();
     void stop_event_loop();
 

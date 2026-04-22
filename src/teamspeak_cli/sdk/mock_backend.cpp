@@ -74,6 +74,7 @@ auto MockBackend::kind() const -> std::string {
 
 auto MockBackend::initialize(const InitOptions& options) -> domain::Result<void> {
     stop_event_loop();
+    clear_pending_events();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         options_ = options;
@@ -87,6 +88,7 @@ auto MockBackend::initialize(const InitOptions& options) -> domain::Result<void>
 
 auto MockBackend::shutdown() -> domain::Result<void> {
     stop_event_loop();
+    clear_pending_events();
     std::lock_guard<std::mutex> lock(mutex_);
     initialized_ = false;
     state_.phase = domain::ConnectionPhase::disconnected;
@@ -96,6 +98,7 @@ auto MockBackend::shutdown() -> domain::Result<void> {
 
 auto MockBackend::connect(const ConnectRequest& request) -> domain::Result<void> {
     stop_event_loop();
+    clear_pending_events();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_) {
@@ -142,6 +145,7 @@ auto MockBackend::connect(const ConnectRequest& request) -> domain::Result<void>
 
 auto MockBackend::disconnect(std::string_view reason) -> domain::Result<void> {
     stop_event_loop();
+    clear_pending_events();
 
     std::lock_guard<std::mutex> lock(mutex_);
     state_.phase = domain::ConnectionPhase::disconnected;
@@ -315,11 +319,18 @@ auto MockBackend::find_client(const domain::Selector& selector) const -> domain:
     ));
 }
 
+void MockBackend::clear_pending_events() {
+    (void)events_.drain();
+}
+
 void MockBackend::start_event_loop() {
     event_thread_ = std::jthread([this](std::stop_token stop_token) {
         std::size_t tick = 0;
         while (!stop_token.stop_requested()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            if (stop_token.stop_requested()) {
+                break;
+            }
             const std::size_t slot = tick % 4;
             if (slot == 0) {
                 events_.push(now_event(
