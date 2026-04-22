@@ -1,5 +1,6 @@
 #include "teamspeak_cli/sdk/mock_backend.hpp"
 
+#include <array>
 #include <chrono>
 
 #include "teamspeak_cli/bridge/socket_paths.hpp"
@@ -72,11 +73,14 @@ auto MockBackend::kind() const -> std::string {
 }
 
 auto MockBackend::initialize(const InitOptions& options) -> domain::Result<void> {
-    std::lock_guard<std::mutex> lock(mutex_);
-    options_ = options;
-    initialized_ = true;
-    state_.phase = domain::ConnectionPhase::connected;
-    state_.connection = {42};
+    stop_event_loop();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        options_ = options;
+        initialized_ = true;
+        state_.phase = domain::ConnectionPhase::connected;
+        state_.connection = {42};
+    }
     start_event_loop();
     return domain::ok();
 }
@@ -91,46 +95,47 @@ auto MockBackend::shutdown() -> domain::Result<void> {
 }
 
 auto MockBackend::connect(const ConnectRequest& request) -> domain::Result<void> {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!initialized_) {
-        return domain::fail(sdk_error("not_initialized", "backend is not initialized"));
-    }
-
-    state_.phase = domain::ConnectionPhase::connected;
-    state_.connection = {42};
-    state_.server = request.host;
-    state_.port = request.port;
-    state_.nickname = request.nickname.empty() ? "terminal" : request.nickname;
-    state_.identity = request.identity.empty() ? "mock-generated-identity" : request.identity;
-    state_.profile = request.profile_name;
-
-    server_.host = request.host;
-    server_.port = request.port;
-    server_.current_channel = domain::ChannelId{1};
-    server_.channel_count = channels_.size();
-    server_.client_count = clients_.size();
-
-    clients_[0].nickname = state_.nickname;
-    clients_[0].unique_identity = state_.identity;
-    clients_[0].channel_id = domain::ChannelId{1};
-
-    events_.push(now_event(
-        "connection.requested",
-        "requested new mock TeamSpeak connection",
-        {{"server", request.host}, {"port", std::to_string(request.port)}}
-    ));
-    events_.push(now_event(
-        "connection.connecting",
-        "connection is starting",
-        {{"server", request.host}, {"port", std::to_string(request.port)}}
-    ));
-    events_.push(now_event(
-        "connection.connected",
-        "connected to mock TeamSpeak server",
-        {{"server", request.host}, {"port", std::to_string(request.port)}}
-    ));
-
     stop_event_loop();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            return domain::fail(sdk_error("not_initialized", "backend is not initialized"));
+        }
+
+        state_.phase = domain::ConnectionPhase::connected;
+        state_.connection = {42};
+        state_.server = request.host;
+        state_.port = request.port;
+        state_.nickname = request.nickname.empty() ? "terminal" : request.nickname;
+        state_.identity = request.identity.empty() ? "mock-generated-identity" : request.identity;
+        state_.profile = request.profile_name;
+
+        server_.host = request.host;
+        server_.port = request.port;
+        server_.current_channel = domain::ChannelId{1};
+        server_.channel_count = channels_.size();
+        server_.client_count = clients_.size();
+
+        clients_[0].nickname = state_.nickname;
+        clients_[0].unique_identity = state_.identity;
+        clients_[0].channel_id = domain::ChannelId{1};
+
+        events_.push(now_event(
+            "connection.requested",
+            "requested new mock TeamSpeak connection",
+            {{"server", request.host}, {"port", std::to_string(request.port)}}
+        ));
+        events_.push(now_event(
+            "connection.connecting",
+            "connection is starting",
+            {{"server", request.host}, {"port", std::to_string(request.port)}}
+        ));
+        events_.push(now_event(
+            "connection.connected",
+            "connected to mock TeamSpeak server",
+            {{"server", request.host}, {"port", std::to_string(request.port)}}
+        ));
+    }
     start_event_loop();
     return domain::ok();
 }
@@ -147,6 +152,7 @@ auto MockBackend::disconnect(std::string_view reason) -> domain::Result<void> {
 
 auto MockBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
     std::lock_guard<std::mutex> lock(mutex_);
+    const std::string media_socket_path = media_bridge_ == nullptr ? std::string{} : media_bridge_->socket_path();
     return domain::ok(domain::PluginInfo{
         .backend = "mock",
         .transport = "in-process",
@@ -154,6 +160,9 @@ auto MockBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
         .plugin_version = "development",
         .plugin_available = true,
         .socket_path = bridge::resolve_socket_path(options_.socket_path),
+        .media_transport = media_socket_path.empty() ? std::string{} : "unix-stream/frame-v1",
+        .media_socket_path = media_socket_path,
+        .media_format = bridge::media_format_description(),
         .note = "mock bridge host for local development and CI",
     });
 }
@@ -245,6 +254,19 @@ auto MockBackend::next_event(std::chrono::milliseconds timeout)
     return domain::ok(events_.pop_for(timeout));
 }
 
+void MockBackend::set_media_bridge(const std::shared_ptr<bridge::MediaBridge>& media_bridge) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    media_bridge_ = media_bridge;
+}
+
+auto MockBackend::activate_media_playback() -> domain::Result<void> {
+    return domain::ok();
+}
+
+auto MockBackend::deactivate_media_playback() -> domain::Result<void> {
+    return domain::ok();
+}
+
 auto MockBackend::require_connected() const -> domain::Result<void> {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_.phase != domain::ConnectionPhase::connected) {
@@ -327,12 +349,76 @@ void MockBackend::start_event_loop() {
             ++tick;
         }
     });
+
+    media_thread_ = std::jthread([this](std::stop_token stop_token) {
+        std::size_t tick = 0;
+        bool speaker_active = false;
+        while (!stop_token.stop_requested()) {
+            std::shared_ptr<bridge::MediaBridge> media_bridge;
+            domain::ConnectionState state;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                media_bridge = media_bridge_;
+                state = state_;
+            }
+
+            if (media_bridge != nullptr && state.phase == domain::ConnectionPhase::connected) {
+                const bridge::MediaSpeaker speaker{
+                    .handler_id = state.connection.value,
+                    .client_id = domain::ClientId{3},
+                    .unique_identity = "sdk-bob",
+                    .nickname = "bob",
+                    .channel_id = domain::ChannelId{2},
+                };
+                const bool now_active = (tick % 10) < 6;
+                if (now_active && !speaker_active) {
+                    media_bridge->publish_speaker_start(speaker);
+                }
+                if (!now_active && speaker_active) {
+                    media_bridge->publish_speaker_stop(speaker);
+                }
+                speaker_active = now_active;
+
+                if (speaker_active) {
+                    std::array<short, 480> ingress_samples{};
+                    for (std::size_t index = 0; index < ingress_samples.size(); ++index) {
+                        const int wave = static_cast<int>((tick + index) % 64U) - 32;
+                        ingress_samples[index] = static_cast<short>(wave * 256);
+                    }
+                    media_bridge->publish_audio_chunk(
+                        speaker,
+                        bridge::kMediaSampleRate,
+                        1,
+                        ingress_samples.data(),
+                        static_cast<int>(ingress_samples.size())
+                    );
+                }
+
+                std::array<short, 480> playback_samples{};
+                (void)media_bridge->fill_playback_samples(
+                    bridge::kMediaSampleRate,
+                    1,
+                    playback_samples.data(),
+                    static_cast<int>(playback_samples.size())
+                );
+            } else if (speaker_active) {
+                speaker_active = false;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            ++tick;
+        }
+    });
 }
 
 void MockBackend::stop_event_loop() {
     if (event_thread_.joinable()) {
         event_thread_.request_stop();
         event_thread_.join();
+    }
+    if (media_thread_.joinable()) {
+        media_thread_.request_stop();
+        media_thread_.join();
     }
 }
 

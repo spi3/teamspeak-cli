@@ -435,6 +435,9 @@ auto to_value(const domain::PluginInfo& info) -> ValueHolder {
         {"plugin_version", make_string(info.plugin_version)},
         {"plugin_available", make_bool(info.plugin_available)},
         {"socket_path", make_string(info.socket_path)},
+        {"media_transport", make_string(info.media_transport)},
+        {"media_socket_path", make_string(info.media_socket_path)},
+        {"media_format", make_string(info.media_format)},
         {"note", make_string(info.note)},
     });
 }
@@ -772,6 +775,9 @@ auto plugin_info_view(const domain::PluginInfo& info) -> Details {
         {"Version", info.plugin_version},
         {"Available", info.plugin_available ? "yes" : "no"},
         {"SocketPath", info.socket_path},
+        {"MediaTransport", info.media_transport},
+        {"MediaSocketPath", info.media_socket_path},
+        {"MediaFormat", info.media_format},
         {"Note", info.note},
     }};
 }

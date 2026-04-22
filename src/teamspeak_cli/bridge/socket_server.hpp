@@ -6,6 +6,7 @@
 #include <thread>
 #include <chrono>
 
+#include "teamspeak_cli/bridge/media_bridge.hpp"
 #include "teamspeak_cli/sdk/backend.hpp"
 
 namespace teamspeak_cli::bridge {
@@ -19,6 +20,7 @@ class SocketBridgeServer {
     auto stop() -> domain::Result<void>;
 
     [[nodiscard]] auto socket_path() const -> std::string;
+    [[nodiscard]] auto media_socket_path() const -> std::string;
 
   private:
     void accept_loop(std::stop_token stop_token);
@@ -27,6 +29,7 @@ class SocketBridgeServer {
     std::unique_ptr<sdk::Backend> backend_;
     mutable std::mutex mutex_;
     std::string socket_path_;
+    std::shared_ptr<MediaBridgeServer> media_bridge_;
     int listen_fd_ = -1;
     bool running_ = false;
     std::chrono::milliseconds client_timeout_{std::chrono::seconds(5)};

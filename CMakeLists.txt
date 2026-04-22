@@ -90,6 +90,7 @@ set(TS_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(cmake/version.hpp.in "${TS_GENERATED_INCLUDE_DIR}/teamspeak_cli/build/version.hpp" @ONLY)
 
 set(TS_COMMON_SOURCES
+  src/teamspeak_cli/bridge/media_bridge.cpp
   src/teamspeak_cli/bridge/protocol.cpp
   src/teamspeak_cli/cli/completion.cpp
   src/teamspeak_cli/cli/command_router.cpp
@@ -114,6 +115,7 @@ ts_apply_defaults(ts)
 add_executable(
   ts_mock_bridge_host
   tests/mock_bridge_host_main.cpp
+  src/teamspeak_cli/bridge/media_bridge.cpp
   src/teamspeak_cli/bridge/protocol.cpp
   src/teamspeak_cli/bridge/socket_server.cpp
   src/teamspeak_cli/config/config_store.cpp
@@ -153,6 +155,7 @@ if(BUILD_TESTING)
     ts_daemon_runtime_test
     tests/daemon_runtime_test.cpp
     tests/test_support.hpp
+    src/teamspeak_cli/bridge/media_bridge.cpp
     src/teamspeak_cli/bridge/protocol.cpp
     src/teamspeak_cli/daemon/runtime.cpp
     src/teamspeak_cli/events/event_queue.cpp
@@ -169,6 +172,8 @@ if(BUILD_TESTING)
     ts_session_service_test
     tests/session_service_test.cpp
     tests/test_support.hpp
+    src/teamspeak_cli/bridge/media_bridge.cpp
+    src/teamspeak_cli/bridge/protocol.cpp
     src/teamspeak_cli/events/event_queue.cpp
     src/teamspeak_cli/sdk/mock_backend.cpp
     src/teamspeak_cli/session/session_service.cpp
@@ -181,6 +186,8 @@ if(BUILD_TESTING)
     ts_event_translation_test
     tests/event_translation_test.cpp
     tests/test_support.hpp
+    src/teamspeak_cli/bridge/media_bridge.cpp
+    src/teamspeak_cli/bridge/protocol.cpp
     src/teamspeak_cli/events/event_queue.cpp
     src/teamspeak_cli/sdk/mock_backend.cpp
     src/teamspeak_cli/util/strings.cpp
@@ -198,9 +205,25 @@ if(BUILD_TESTING)
   add_test(NAME ts_cli_router_test COMMAND ts_cli_router_test)
 
   add_executable(
+    ts_media_bridge_test
+    tests/media_bridge_test.cpp
+    tests/test_support.hpp
+    src/teamspeak_cli/bridge/media_bridge.cpp
+    src/teamspeak_cli/bridge/protocol.cpp
+    src/teamspeak_cli/bridge/socket_server.cpp
+    src/teamspeak_cli/events/event_queue.cpp
+    src/teamspeak_cli/sdk/mock_backend.cpp
+    src/teamspeak_cli/sdk/socket_backend.cpp
+    src/teamspeak_cli/util/strings.cpp
+  )
+  ts_apply_defaults(ts_media_bridge_test)
+  add_test(NAME ts_media_bridge_test COMMAND ts_media_bridge_test)
+
+  add_executable(
     ts_socket_backend_test
     tests/socket_backend_test.cpp
     tests/test_support.hpp
+    src/teamspeak_cli/bridge/media_bridge.cpp
     src/teamspeak_cli/bridge/protocol.cpp
     src/teamspeak_cli/bridge/socket_server.cpp
     src/teamspeak_cli/events/event_queue.cpp
@@ -300,6 +323,7 @@ if(TS_ENABLE_TS3_PLUGIN)
   add_library(
     ts3cli_plugin
     SHARED
+    src/teamspeak_cli/bridge/media_bridge.cpp
     src/teamspeak_cli/bridge/protocol.cpp
     src/teamspeak_cli/bridge/socket_server.cpp
     src/teamspeak_cli/events/event_queue.cpp

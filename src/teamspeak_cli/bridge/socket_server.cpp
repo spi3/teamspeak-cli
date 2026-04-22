@@ -149,18 +149,41 @@ auto SocketBridgeServer::start(const sdk::InitOptions& options) -> domain::Resul
     }
 
     socket_path_ = resolve_socket_path(options.socket_path);
-    const auto initialized = backend_->initialize(options);
-    if (!initialized) {
-        return initialized;
+    auto* media_host = dynamic_cast<MediaBridgeHost*>(backend_.get());
+    auto* media_playback_control = dynamic_cast<MediaPlaybackControl*>(backend_.get());
+    if (media_host != nullptr) {
+        media_bridge_ = std::make_shared<MediaBridgeServer>();
+        media_host->set_media_bridge(media_bridge_);
+        auto media_started = media_bridge_->start(resolve_media_socket_path(options.socket_path), media_playback_control);
+        if (!media_started) {
+            media_host->set_media_bridge({});
+            media_bridge_.reset();
+            socket_path_.clear();
+            return media_started;
+        }
     }
 
     const auto cleanup_start_failure = [this](domain::Error error) -> domain::Result<void> {
         unlink_socket_file(socket_path_);
+        if (media_bridge_) {
+            const auto media_stop = media_bridge_->stop();
+            (void)media_stop;
+            if (auto* media_bridge_host = dynamic_cast<MediaBridgeHost*>(backend_.get());
+                media_bridge_host != nullptr) {
+                media_bridge_host->set_media_bridge({});
+            }
+            media_bridge_.reset();
+        }
         socket_path_.clear();
         const auto shutdown = backend_->shutdown();
         (void)shutdown;
         return domain::fail(std::move(error));
     };
+
+    const auto initialized = backend_->initialize(options);
+    if (!initialized) {
+        return cleanup_start_failure(initialized.error());
+    }
 
     std::error_code ec;
     if (const auto parent = std::filesystem::path(socket_path_).parent_path(); !parent.empty()) {
@@ -216,40 +239,76 @@ auto SocketBridgeServer::start(const sdk::InitOptions& options) -> domain::Resul
 }
 
 auto SocketBridgeServer::stop() -> domain::Result<void> {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_) {
+    std::shared_ptr<MediaBridgeServer> media_bridge;
+    bool running = false;
+    int listen_fd = -1;
+    std::string socket_path;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        running = running_;
+        listen_fd = listen_fd_;
+        socket_path = socket_path_;
+        media_bridge = media_bridge_;
+        if (auto* media_host = dynamic_cast<MediaBridgeHost*>(backend_.get()); media_host != nullptr) {
+            media_host->set_media_bridge({});
+        }
+        media_bridge_.reset();
+        if (accept_thread_.joinable()) {
+            accept_thread_.request_stop();
+        }
+    }
+
+    if (!running) {
+        if (media_bridge) {
+            const auto media_stopped = media_bridge->stop();
+            if (!media_stopped) {
+                return media_stopped;
+            }
+        }
         return domain::ok();
     }
 
-    if (accept_thread_.joinable()) {
-        accept_thread_.request_stop();
-    }
-
-    if (listen_fd_ >= 0 && !socket_path_.empty()) {
+    if (listen_fd >= 0 && !socket_path.empty()) {
         FileDescriptor wake_socket(::socket(AF_UNIX, SOCK_STREAM, 0));
         if (wake_socket.get() >= 0) {
             sockaddr_un address{};
             address.sun_family = AF_UNIX;
-            std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path_.c_str());
+            std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path.c_str());
             ::connect(wake_socket.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address));
         }
     }
     if (accept_thread_.joinable()) {
         accept_thread_.join();
     }
-    if (listen_fd_ >= 0) {
-        ::close(listen_fd_);
-        listen_fd_ = -1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (listen_fd_ >= 0) {
+            ::close(listen_fd_);
+            listen_fd_ = -1;
+        }
+        unlink_socket_file(socket_path_);
+        running_ = false;
+        socket_path_.clear();
     }
+    auto shutdown = backend_->shutdown();
 
-    unlink_socket_file(socket_path_);
-    running_ = false;
-    return backend_->shutdown();
+    if (media_bridge) {
+        const auto media_stopped = media_bridge->stop();
+        if (!media_stopped) {
+            return media_stopped;
+        }
+    }
+    return shutdown;
 }
 
 auto SocketBridgeServer::socket_path() const -> std::string {
     std::lock_guard<std::mutex> lock(mutex_);
     return socket_path_;
+}
+
+auto SocketBridgeServer::media_socket_path() const -> std::string {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return media_bridge_ == nullptr ? std::string{} : media_bridge_->socket_path();
 }
 
 void SocketBridgeServer::accept_loop(std::stop_token stop_token) {

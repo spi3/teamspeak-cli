@@ -7,8 +7,9 @@ This project targets the TeamSpeak 3 Client Plugin SDK.
 The live runtime model is:
 
 - the official TeamSpeak 3 client loads `ts3cli_plugin`
-- the plugin exposes a local control socket
-- `ts` talks to the plugin over that socket
+- the plugin exposes a local control socket plus a dedicated local media socket
+- `ts` talks to the plugin over the control socket
+- local media consumers talk to the plugin over the media socket
 - the plugin talks to regular TeamSpeak servers through the official TeamSpeak client APIs
 
 This project does not target ServerQuery, WebQuery, or a standalone `ClientLib` application.
@@ -62,10 +63,11 @@ The plugin target:
 - starts the local bridge server in `ts3plugin_init`
 - exposes status, channel, client, join, message, and event operations to the CLI
 - translates selected TeamSpeak callbacks into domain events for `ts events watch`
+- exposes a dedicated media bridge for speaker events, ingress voice chunks, and half-duplex playback injection
 
-## Control Socket
+## Control And Media Sockets
 
-The plugin and CLI must agree on one socket path.
+The plugin and CLI must agree on the control socket path, and media consumers must discover the companion media socket path.
 
 Resolution order on the CLI side is:
 
@@ -74,6 +76,16 @@ Resolution order on the CLI side is:
 - otherwise the runtime default socket path
 
 The starter `plugin-local` profile intentionally leaves `control_socket_path=` blank so tests, harnesses, and local environments can override it cleanly.
+
+The media socket path resolves in this order:
+
+- `TS_MEDIA_SOCKET_PATH`, if set
+- otherwise a path derived from the resolved control socket by replacing `.sock` with `-media.sock`
+- if the control socket does not end in `.sock`, `.media` is appended instead
+
+`ts plugin info` reports both socket paths plus the accepted playback media format.
+
+See [media-bridge.md](media-bridge.md) for the dedicated media frame contract.
 
 ## Local Runtime Checklist
 
@@ -145,12 +157,15 @@ The environment helper prints:
 - the control socket path
 - the chosen server port
 
+The media socket path is derived from that control socket path unless `TS_MEDIA_SOCKET_PATH` overrides it.
+
 ## Current Limitations
 
 - the TeamSpeak-backed build now runs in CI, but the Docker and `Xvfb` harness is still local-only
 - the TeamSpeak-backed harness is still host-sensitive
-- the first socket transport is Unix-domain-socket focused
-- voice and audio controls are intentionally out of scope for the first version
+- both local transports are Unix-domain-socket focused
+- the media bridge is V1 half-duplex and single-consumer
+- playback injection currently accepts `pcm_s16le @ 48000 Hz mono`
 
 ## Development Without TeamSpeak
 
@@ -159,4 +174,5 @@ For day-to-day work, prefer the mock path:
 - `make build-mock`
 - `make test-mock`
 
-That path exercises the same CLI, output, config, and socket layers without depending on proprietary TeamSpeak runtime components.
+That path exercises the same CLI, output, config, control socket, and media bridge contract without depending on
+proprietary TeamSpeak runtime components.

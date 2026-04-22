@@ -12,6 +12,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "teamspeak_cli/bridge/media_bridge.hpp"
 #include "teamspeak_cli/bridge/protocol.hpp"
 #include "teamspeak_cli/bridge/socket_paths.hpp"
 
@@ -325,6 +326,9 @@ auto SocketBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
                 .plugin_version = "unavailable",
                 .plugin_available = false,
                 .socket_path = socket_path_,
+                .media_transport = "unix-stream/frame-v1",
+                .media_socket_path = bridge::resolve_media_socket_path(socket_path_),
+                .media_format = bridge::media_format_description(),
                 .note = response.error().message,
             });
         }

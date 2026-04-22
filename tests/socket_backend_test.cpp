@@ -220,6 +220,16 @@ int main() {
     auto info = backend.plugin_info();
     tests::expect(info.ok(), "plugin info should succeed");
     tests::expect_eq(info.value().plugin_available, true, "plugin bridge should be available");
+    tests::expect_eq(
+        info.value().media_socket_path,
+        server.media_socket_path(),
+        "plugin info should report the media bridge socket path"
+    );
+    tests::expect_eq(
+        info.value().media_format,
+        bridge::media_format_description(),
+        "plugin info should report the documented media format"
+    );
 
     auto state = backend.connection_state();
     tests::expect(state.ok(), "connection state should succeed");

@@ -116,6 +116,14 @@ Socket path resolution for the plugin backend is:
 - `TS_CONTROL_SOCKET_PATH`, if set
 - otherwise the runtime default path
 
+The plugin media socket resolves in this order:
+
+- `TS_MEDIA_SOCKET_PATH`, if set
+- otherwise a path derived from the resolved control socket by replacing `.sock` with `-media.sock`
+- if the control socket does not end in `.sock`, `.media` is appended instead
+
+`ts plugin info` reports the control socket path, media socket path, media transport, and accepted playback format.
+
 ## Client Process Management
 
 `ts client start` looks for a launcher in this order:

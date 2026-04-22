@@ -134,6 +134,17 @@ void PluginHostBackend::on_connect_status_change(
             ));
             break;
         case STATUS_DISCONNECTED:
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                media_playback_active_ = false;
+                for (auto it = media_speakers_.begin(); it != media_speakers_.end();) {
+                    if (it->first.first == server_connection_handler_id) {
+                        it = media_speakers_.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
             events_.push(now_event(
                 "connection.disconnected",
                 "connection closed",
@@ -182,6 +193,27 @@ void PluginHostBackend::on_talk_status_change(
     int status,
     std::uint16_t client_id
 ) {
+    std::shared_ptr<bridge::MediaBridge> media_bridge;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        media_bridge = media_bridge_;
+    }
+    auto speaker = resolve_media_speaker(server_connection_handler_id, client_id);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (status == STATUS_NOT_TALKING) {
+            media_speakers_.erase({server_connection_handler_id, client_id});
+        } else {
+            media_speakers_[{server_connection_handler_id, client_id}] = speaker;
+        }
+    }
+    if (media_bridge != nullptr) {
+        if (status == STATUS_NOT_TALKING) {
+            media_bridge->publish_speaker_stop(speaker);
+        } else {
+            media_bridge->publish_speaker_start(speaker);
+        }
+    }
     events_.push(now_event(
         "client.talking",
         status == STATUS_NOT_TALKING ? "client stopped talking" : "client is talking",
@@ -191,6 +223,54 @@ void PluginHostBackend::on_talk_status_change(
             {"status", std::to_string(status)},
         }
     ));
+}
+
+void PluginHostBackend::on_playback_voice_data(
+    std::uint64_t server_connection_handler_id,
+    std::uint16_t client_id,
+    short* samples,
+    int sample_count,
+    int channels
+) {
+    std::shared_ptr<bridge::MediaBridge> media_bridge;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        media_bridge = media_bridge_;
+    }
+    if (media_bridge == nullptr) {
+        return;
+    }
+    const auto speaker = resolve_media_speaker(server_connection_handler_id, client_id);
+    media_bridge->publish_audio_chunk(
+        speaker,
+        bridge::kMediaSampleRate,
+        channels,
+        samples,
+        sample_count
+    );
+}
+
+void PluginHostBackend::on_captured_voice_data(
+    std::uint64_t server_connection_handler_id,
+    short* samples,
+    int sample_count,
+    int channels,
+    int* edited
+) {
+    (void)server_connection_handler_id;
+
+    std::shared_ptr<bridge::MediaBridge> media_bridge;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        media_bridge = media_bridge_;
+    }
+    if (media_bridge == nullptr) {
+        return;
+    }
+    if (media_bridge->fill_playback_samples(bridge::kMediaSampleRate, channels, samples, sample_count) &&
+        edited != nullptr) {
+        *edited = 1;
+    }
 }
 
 void PluginHostBackend::on_client_move(
@@ -211,6 +291,12 @@ void PluginHostBackend::on_client_move(
             {"message", move_message == nullptr ? "" : move_message},
         }
     ));
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (const auto it = media_speakers_.find({server_connection_handler_id, client_id}); it != media_speakers_.end()) {
+        it->second.channel_id =
+            new_channel_id == 0 ? std::optional<domain::ChannelId>{}
+                                : std::optional<domain::ChannelId>{domain::ChannelId{new_channel_id}};
+    }
 }
 
 void PluginHostBackend::on_server_error(
@@ -380,6 +466,7 @@ auto PluginHostBackend::plugin_info() const -> domain::Result<domain::PluginInfo
         clientlib_version = raw_version;
     }
 
+    const std::string media_socket_path = media_bridge_ == nullptr ? std::string{} : media_bridge_->socket_path();
     return domain::ok(domain::PluginInfo{
         .backend = "plugin",
         .transport = "ts3-plugin/unix-socket",
@@ -387,6 +474,9 @@ auto PluginHostBackend::plugin_info() const -> domain::Result<domain::PluginInfo
         .plugin_version = TSCLI_VERSION,
         .plugin_available = true,
         .socket_path = bridge::resolve_socket_path(options_.socket_path),
+        .media_transport = media_socket_path.empty() ? std::string{} : "unix-stream/frame-v1",
+        .media_socket_path = media_socket_path,
+        .media_format = bridge::media_format_description(),
         .note = "running inside the TeamSpeak client; linked client library version " + clientlib_version,
     });
 }
@@ -671,6 +761,77 @@ auto PluginHostBackend::next_event(std::chrono::milliseconds timeout)
     return domain::ok(events_.pop_for(timeout));
 }
 
+void PluginHostBackend::set_media_bridge(const std::shared_ptr<bridge::MediaBridge>& media_bridge) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    media_bridge_ = media_bridge;
+}
+
+auto PluginHostBackend::activate_media_playback() -> domain::Result<void> {
+    auto handler_id = resolve_handler_id(true);
+    if (!handler_id) {
+        return domain::fail(handler_id.error());
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        if (media_playback_active_) {
+            return domain::ok();
+        }
+        functions = *functions_;
+    }
+
+    if (functions.startVoiceRecording == nullptr) {
+        return domain::fail(backend_error(
+            "voice_recording_unavailable",
+            "TeamSpeak voice recording control is not available in the loaded plugin host"
+        ));
+    }
+
+    const unsigned int error = functions.startVoiceRecording(handler_id.value());
+    if (error != ERROR_ok) {
+        return domain::fail(translate_error(error, "failed to start TeamSpeak voice recording"));
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    media_playback_active_ = true;
+    return domain::ok();
+}
+
+auto PluginHostBackend::deactivate_media_playback() -> domain::Result<void> {
+    TS3Functions functions{};
+    bool media_playback_active = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            media_playback_active_ = false;
+            return domain::ok();
+        }
+        functions = *functions_;
+        media_playback_active = media_playback_active_;
+    }
+    if (!media_playback_active) {
+        return domain::ok();
+    }
+
+    auto handler_id = resolve_handler_id(false);
+    if (handler_id && handler_id.value() != 0 && functions.stopVoiceRecording != nullptr) {
+        const unsigned int error = functions.stopVoiceRecording(handler_id.value());
+        if (error != ERROR_ok) {
+            return domain::fail(translate_error(error, "failed to stop TeamSpeak voice recording"));
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    media_playback_active_ = false;
+    return domain::ok();
+}
+
 auto PluginHostBackend::resolve_handler_id(bool require_connection) const -> domain::Result<std::uint64_t> {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!functions_.has_value()) {
@@ -694,6 +855,50 @@ auto PluginHostBackend::resolve_handler_id(bool require_connection) const -> dom
         return domain::ok(static_cast<std::uint64_t>(0));
     }
     return domain::ok(handler_id);
+}
+
+auto PluginHostBackend::resolve_media_speaker(
+    std::uint64_t server_connection_handler_id,
+    std::uint16_t client_id
+) -> bridge::MediaSpeaker {
+    bridge::MediaSpeaker speaker{
+        .handler_id = server_connection_handler_id,
+        .client_id = domain::ClientId{client_id},
+        .unique_identity = "",
+        .nickname = "",
+        .channel_id = std::nullopt,
+    };
+    std::optional<TS3Functions> functions;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (const auto it = media_speakers_.find({server_connection_handler_id, client_id});
+            it != media_speakers_.end()) {
+            speaker = it->second;
+        }
+        functions = functions_;
+    }
+
+    const auto nickname = client_string(server_connection_handler_id, client_id, CLIENT_NICKNAME);
+    if (nickname) {
+        speaker.nickname = nickname.value();
+    }
+    const auto unique_identity = client_string(
+        server_connection_handler_id, client_id, CLIENT_UNIQUE_IDENTIFIER
+    );
+    if (unique_identity) {
+        speaker.unique_identity = unique_identity.value();
+    }
+    if (functions.has_value()) {
+        uint64_t channel_id = 0;
+        if ((*functions).getChannelOfClient(server_connection_handler_id, client_id, &channel_id) == ERROR_ok &&
+            channel_id != 0) {
+            speaker.channel_id = domain::ChannelId{channel_id};
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    media_speakers_[{server_connection_handler_id, client_id}] = speaker;
+    return speaker;
 }
 
 auto PluginHostBackend::translate_error(unsigned int error_code, std::string_view fallback) const -> domain::Error {

@@ -165,6 +165,42 @@ void ts3plugin_onTalkStatusChangeEvent(uint64 serverConnectionHandlerID, int sta
     }
 }
 
+void ts3plugin_onEditPlaybackVoiceDataEvent(
+    uint64 serverConnectionHandlerID,
+    anyID clientID,
+    short* samples,
+    int sampleCount,
+    int channels
+) {
+    if (backend_handle() != nullptr) {
+        backend_handle()->on_playback_voice_data(
+            serverConnectionHandlerID,
+            static_cast<std::uint16_t>(clientID),
+            samples,
+            sampleCount,
+            channels
+        );
+    }
+}
+
+void ts3plugin_onEditCapturedVoiceDataEvent(
+    uint64 serverConnectionHandlerID,
+    short* samples,
+    int sampleCount,
+    int channels,
+    int* edited
+) {
+    if (backend_handle() != nullptr) {
+        backend_handle()->on_captured_voice_data(
+            serverConnectionHandlerID,
+            samples,
+            sampleCount,
+            channels,
+            edited
+        );
+    }
+}
+
 void ts3plugin_onClientMoveEvent(
     uint64 serverConnectionHandlerID,
     anyID clientID,

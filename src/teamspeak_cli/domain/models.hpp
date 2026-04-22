@@ -62,6 +62,9 @@ struct PluginInfo {
     std::string plugin_version;
     bool plugin_available = false;
     std::string socket_path;
+    std::string media_transport;
+    std::string media_socket_path;
+    std::string media_format;
     std::string note;
 };
 

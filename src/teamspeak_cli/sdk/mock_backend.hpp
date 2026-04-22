@@ -4,12 +4,13 @@
 #include <mutex>
 #include <thread>
 
+#include "teamspeak_cli/bridge/media_bridge.hpp"
 #include "teamspeak_cli/events/event_queue.hpp"
 #include "teamspeak_cli/sdk/backend.hpp"
 
 namespace teamspeak_cli::sdk {
 
-class MockBackend final : public Backend {
+class MockBackend final : public Backend, public bridge::MediaBridgeHost, public bridge::MediaPlaybackControl {
   public:
     MockBackend();
     ~MockBackend() override;
@@ -34,6 +35,10 @@ class MockBackend final : public Backend {
     auto next_event(std::chrono::milliseconds timeout)
         -> domain::Result<std::optional<domain::Event>> override;
 
+    void set_media_bridge(const std::shared_ptr<bridge::MediaBridge>& media_bridge) override;
+    [[nodiscard]] auto activate_media_playback() -> domain::Result<void> override;
+    [[nodiscard]] auto deactivate_media_playback() -> domain::Result<void> override;
+
   private:
     auto require_connected() const -> domain::Result<void>;
     auto find_channel(const domain::Selector& selector) const -> domain::Result<domain::Channel>;
@@ -50,6 +55,8 @@ class MockBackend final : public Backend {
     InitOptions options_;
     bool initialized_ = false;
     std::jthread event_thread_;
+    std::jthread media_thread_;
+    std::shared_ptr<bridge::MediaBridge> media_bridge_;
 };
 
 }  // namespace teamspeak_cli::sdk

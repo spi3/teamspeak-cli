@@ -24,7 +24,7 @@
 ## Later
 
 - TUI mode
-- voice capture and playback controls
+- full-duplex realtime media bridge behavior on top of the current half-duplex V1
 - push-to-talk and VAD controls
 - plugin-side auth and session helpers such as identity management
 

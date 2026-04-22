@@ -241,12 +241,15 @@ auto encode(const domain::PluginInfo& info) -> std::vector<Fields> {
         hex_encode(info.plugin_version),
         info.plugin_available ? "1" : "0",
         hex_encode(info.socket_path),
+        hex_encode(info.media_transport),
+        hex_encode(info.media_socket_path),
+        hex_encode(info.media_format),
         hex_encode(info.note),
     }};
 }
 
 auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<domain::PluginInfo> {
-    if (lines.size() != 1 || lines[0].size() != 8 || lines[0][0] != "plugin_info") {
+    if (lines.size() != 1 || lines[0].size() != 11 || lines[0][0] != "plugin_info") {
         return domain::fail<domain::PluginInfo>(protocol_error(
             "invalid_plugin_info", "invalid plugin info payload"
         ));
@@ -257,7 +260,10 @@ auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<doma
     auto plugin_version = decode_string_field(lines[0], 4, "plugin_version");
     auto available = parse_bool(lines[0][5]);
     auto socket_path = decode_string_field(lines[0], 6, "socket_path");
-    auto note = decode_string_field(lines[0], 7, "note");
+    auto media_transport = decode_string_field(lines[0], 7, "media_transport");
+    auto media_socket_path = decode_string_field(lines[0], 8, "media_socket_path");
+    auto media_format = decode_string_field(lines[0], 9, "media_format");
+    auto note = decode_string_field(lines[0], 10, "note");
     if (!backend) {
         return domain::fail<domain::PluginInfo>(backend.error());
     }
@@ -276,6 +282,15 @@ auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<doma
     if (!socket_path) {
         return domain::fail<domain::PluginInfo>(socket_path.error());
     }
+    if (!media_transport) {
+        return domain::fail<domain::PluginInfo>(media_transport.error());
+    }
+    if (!media_socket_path) {
+        return domain::fail<domain::PluginInfo>(media_socket_path.error());
+    }
+    if (!media_format) {
+        return domain::fail<domain::PluginInfo>(media_format.error());
+    }
     if (!note) {
         return domain::fail<domain::PluginInfo>(note.error());
     }
@@ -286,6 +301,9 @@ auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<doma
         .plugin_version = plugin_version.value(),
         .plugin_available = available.value(),
         .socket_path = socket_path.value(),
+        .media_transport = media_transport.value(),
+        .media_socket_path = media_socket_path.value(),
+        .media_format = media_format.value(),
         .note = note.value(),
     });
 }

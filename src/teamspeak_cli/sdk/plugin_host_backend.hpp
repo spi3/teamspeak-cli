@@ -1,17 +1,22 @@
 #pragma once
 
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
 
 #include "ts3_functions.h"
 
+#include "teamspeak_cli/bridge/media_bridge.hpp"
 #include "teamspeak_cli/events/event_queue.hpp"
 #include "teamspeak_cli/sdk/backend.hpp"
 
 namespace teamspeak_cli::sdk {
 
-class PluginHostBackend final : public Backend {
+class PluginHostBackend final
+    : public Backend,
+      public bridge::MediaBridgeHost,
+      public bridge::MediaPlaybackControl {
   public:
     PluginHostBackend();
 
@@ -29,6 +34,20 @@ class PluginHostBackend final : public Backend {
         const char* message
     );
     void on_talk_status_change(std::uint64_t server_connection_handler_id, int status, std::uint16_t client_id);
+    void on_playback_voice_data(
+        std::uint64_t server_connection_handler_id,
+        std::uint16_t client_id,
+        short* samples,
+        int sample_count,
+        int channels
+    );
+    void on_captured_voice_data(
+        std::uint64_t server_connection_handler_id,
+        short* samples,
+        int sample_count,
+        int channels,
+        int* edited
+    );
     void on_client_move(
         std::uint64_t server_connection_handler_id,
         std::uint16_t client_id,
@@ -64,7 +83,15 @@ class PluginHostBackend final : public Backend {
     auto next_event(std::chrono::milliseconds timeout)
         -> domain::Result<std::optional<domain::Event>> override;
 
+    void set_media_bridge(const std::shared_ptr<bridge::MediaBridge>& media_bridge) override;
+    [[nodiscard]] auto activate_media_playback() -> domain::Result<void> override;
+    [[nodiscard]] auto deactivate_media_playback() -> domain::Result<void> override;
+
   private:
+    [[nodiscard]] auto resolve_media_speaker(
+        std::uint64_t server_connection_handler_id,
+        std::uint16_t client_id
+    ) -> bridge::MediaSpeaker;
     [[nodiscard]] auto resolve_handler_id(bool require_connection) const -> domain::Result<std::uint64_t>;
     [[nodiscard]] auto translate_error(unsigned int error_code, std::string_view fallback) const -> domain::Error;
     [[nodiscard]] auto current_self_id(std::uint64_t server_connection_handler_id) const
@@ -103,6 +130,9 @@ class PluginHostBackend final : public Backend {
     std::uint64_t preferred_handler_id_ = 0;
     std::uint64_t managed_handler_id_ = 0;
     bool initialized_ = false;
+    bool media_playback_active_ = false;
+    std::shared_ptr<bridge::MediaBridge> media_bridge_;
+    std::map<std::pair<std::uint64_t, std::uint16_t>, bridge::MediaSpeaker> media_speakers_;
 };
 
 }  // namespace teamspeak_cli::sdk
