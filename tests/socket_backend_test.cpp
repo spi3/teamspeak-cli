@@ -164,6 +164,14 @@ class CountingBackend final : public sdk::Backend {
         return domain::fail(counting_backend_error("join_channel"));
     }
 
+    auto set_self_muted(bool) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("set_self_muted"));
+    }
+
+    auto set_self_away(bool, std::string_view) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("set_self_away"));
+    }
+
     auto send_message(const domain::MessageRequest&) -> domain::Result<void> override {
         return domain::fail(counting_backend_error("send_message"));
     }
@@ -249,6 +257,13 @@ int main() {
         .text = "hello from socket backend",
     });
     tests::expect(sent.ok(), "send message should succeed");
+
+    auto muted = backend.set_self_muted(true);
+    tests::expect(muted.ok(), "set_self_muted should succeed");
+
+    auto away = backend.set_self_away(true, "Lunch");
+    tests::expect(away.ok(), "set_self_away should succeed");
+
     tests::expect(fs::exists(socket_path), "socket bridge server should create the control socket file");
 
     auto event = backend.next_event(std::chrono::milliseconds(500));

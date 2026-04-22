@@ -117,6 +117,8 @@ int main() {
     tests::expect_contains(
         help, "Run `ts <command> --help`", "top-level help should point users at command-specific help"
     );
+    tests::expect_contains(help, "mute  Mute your TeamSpeak microphone", "top-level help should list mute");
+    tests::expect_contains(help, "away  Set your TeamSpeak status to away", "top-level help should list away");
 
     tests::expect_eq(
         cli::read_install_receipt_value_for_test("/tmp/teamspeak-cli/install dir"),
@@ -180,6 +182,9 @@ int main() {
         "ts client logs [--count N]",
         "client help should include the client logs example"
     );
+
+    const std::string away_help = router.render_help({"away"});
+    tests::expect_contains(away_help, "ts away [--message <text>]", "away help should include message usage");
 
     const std::vector<std::string> grouped_commands = {
         "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "events"
@@ -443,6 +448,72 @@ int main() {
     tests::expect(
         disconnect_table.find("connection.disconnected") == std::string::npos,
         "disconnect table should not expose raw event codes"
+    );
+
+    auto mute_command = parse_command(
+        router, {"mute", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(mute_command.ok(), "mute parse should succeed");
+    auto mute_result = router.dispatch(mute_command.value());
+    tests::expect(mute_result.ok(), "mute dispatch should succeed");
+    tests::expect_contains(
+        output::render(mute_result.value(), output::Format::json),
+        "\"muted\":true",
+        "mute json should report muted"
+    );
+    tests::expect_contains(
+        output::render(mute_result.value(), output::Format::table),
+        "Muted your TeamSpeak microphone.",
+        "mute table should summarize the action"
+    );
+
+    auto away_command = parse_command(
+        router,
+        {"away", "--message", "In a meeting", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(away_command.ok(), "away parse should succeed");
+    tests::expect_eq(
+        away_command.value().options.at("message"),
+        std::string("In a meeting"),
+        "away parse should capture the away message"
+    );
+    auto away_result = router.dispatch(away_command.value());
+    tests::expect(away_result.ok(), "away dispatch should succeed");
+    const auto away_json = output::render(away_result.value(), output::Format::json);
+    tests::expect_contains(away_json, "\"away\":true", "away json should report away");
+    tests::expect_contains(
+        away_json,
+        "\"message\":\"In a meeting\"",
+        "away json should include the away message"
+    );
+    tests::expect_contains(
+        output::render(away_result.value(), output::Format::table),
+        "Set your TeamSpeak status to away: In a meeting",
+        "away table should summarize the action"
+    );
+
+    auto back_command = parse_command(
+        router, {"back", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(back_command.ok(), "back parse should succeed");
+    auto back_result = router.dispatch(back_command.value());
+    tests::expect(back_result.ok(), "back dispatch should succeed");
+    tests::expect_contains(
+        output::render(back_result.value(), output::Format::json),
+        "\"away\":false",
+        "back json should report away cleared"
+    );
+
+    auto unmute_command = parse_command(
+        router, {"unmute", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(unmute_command.ok(), "unmute parse should succeed");
+    auto unmute_result = router.dispatch(unmute_command.value());
+    tests::expect(unmute_result.ok(), "unmute dispatch should succeed");
+    tests::expect_contains(
+        output::render(unmute_result.value(), output::Format::json),
+        "\"muted\":false",
+        "unmute json should report unmuted"
     );
 
     auto invalid_message = parse_command(

@@ -4,7 +4,7 @@ namespace teamspeak_cli::cli::completion {
 namespace {
 
 constexpr const char* kTopLevelCommands =
-    "version sdk config profile connect disconnect status server channel client message events completion";
+    "version sdk config profile connect disconnect mute unmute away back status server channel client message events completion";
 
 constexpr const char* kGlobalFlags =
     "--help --output --json --profile --server --nickname --identity --config --verbose --debug";

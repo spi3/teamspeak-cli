@@ -245,6 +245,14 @@ auto SessionService::join_channel(const domain::Selector& selector) -> domain::R
     return backend_->join_channel(selector);
 }
 
+auto SessionService::set_self_muted(bool muted) -> domain::Result<void> {
+    return backend_->set_self_muted(muted);
+}
+
+auto SessionService::set_self_away(bool away, std::string_view message) -> domain::Result<void> {
+    return backend_->set_self_away(away, message);
+}
+
 auto SessionService::send_message(const domain::MessageRequest& request) -> domain::Result<void> {
     return backend_->send_message(request);
 }

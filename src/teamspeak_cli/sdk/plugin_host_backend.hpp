@@ -79,6 +79,8 @@ class PluginHostBackend final
     [[nodiscard]] auto get_client(const domain::Selector& selector) const
         -> domain::Result<domain::Client> override;
     auto join_channel(const domain::Selector& selector) -> domain::Result<void> override;
+    auto set_self_muted(bool muted) -> domain::Result<void> override;
+    auto set_self_away(bool away, std::string_view message) -> domain::Result<void> override;
     auto send_message(const domain::MessageRequest& request) -> domain::Result<void> override;
     auto next_event(std::chrono::milliseconds timeout)
         -> domain::Result<std::optional<domain::Event>> override;

@@ -69,6 +69,10 @@ const std::vector<CommandDoc>& command_docs() {
         {{"profile", "use"}, "ts profile use <name>", "Set the active default profile", {}},
         {{"connect"}, "ts connect", "Open a TeamSpeak server connection and wait for completion", {}},
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
+        {{"mute"}, "ts mute", "Mute your TeamSpeak microphone", {}},
+        {{"unmute"}, "ts unmute", "Unmute your TeamSpeak microphone", {}},
+        {{"away"}, "ts away [--message <text>]", "Set your TeamSpeak status to away", {"--message"}},
+        {{"back"}, "ts back", "Clear your TeamSpeak away status", {}},
         {{"status"}, "ts status", "Show current TeamSpeak client connection status", {}},
         {{"server"}, "ts server <subcommand>", "Inspect the current server session", {}},
         {{"server", "info"}, "ts server info", "Show server details", {}},
@@ -205,6 +209,18 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     }
     if (path == "disconnect") {
         return "disconnect from TeamSpeak";
+    }
+    if (path == "mute") {
+        return "mute your TeamSpeak microphone";
+    }
+    if (path == "unmute") {
+        return "unmute your TeamSpeak microphone";
+    }
+    if (path == "away") {
+        return "set your TeamSpeak away status";
+    }
+    if (path == "back") {
+        return "clear your TeamSpeak away status";
     }
     if (path == "status") {
         return "read TeamSpeak status";
@@ -3005,7 +3021,7 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 option == "target" || option == "id" || option == "text" ||
                 option == "count" || option == "timeout-ms" || option == "poll-ms" ||
                 option == "type" || option == "exec" || option == "message-kind" ||
-                option == "copy-from";
+                option == "copy-from" || option == "message";
 
             if (!takes_value) {
                 parsed.flags.insert(option);
@@ -3712,6 +3728,71 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                         !stream_progress
                     ),
                     .exit_code = exit_code,
+                });
+            });
+        }
+
+        if (path == "mute") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto muted = session.set_self_muted(true);
+                if (!muted) {
+                    return domain::fail<output::CommandOutput>(muted.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"muted", output::make_bool(true)},
+                    }),
+                    .human = std::string("Muted your TeamSpeak microphone."),
+                });
+            });
+        }
+
+        if (path == "unmute") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto muted = session.set_self_muted(false);
+                if (!muted) {
+                    return domain::fail<output::CommandOutput>(muted.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"muted", output::make_bool(false)},
+                    }),
+                    .human = std::string("Unmuted your TeamSpeak microphone."),
+                });
+            });
+        }
+
+        if (path == "away") {
+            const std::string message = command.options.contains("message") ? command.options.at("message")
+                                                                            : std::string{};
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto away = session.set_self_away(true, message);
+                if (!away) {
+                    return domain::fail<output::CommandOutput>(away.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"away", output::make_bool(true)},
+                        {"message", output::make_string(message)},
+                    }),
+                    .human = message.empty() ? std::string("Set your TeamSpeak status to away.")
+                                             : "Set your TeamSpeak status to away: " + message,
+                });
+            });
+        }
+
+        if (path == "back") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto away = session.set_self_away(false, "");
+                if (!away) {
+                    return domain::fail<output::CommandOutput>(away.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"away", output::make_bool(false)},
+                        {"message", output::make_string("")},
+                    }),
+                    .human = std::string("Cleared your TeamSpeak away status."),
                 });
             });
         }

@@ -4,6 +4,7 @@
 
 #include "teamspeak/public_definitions.h"
 #include "teamspeak/public_errors.h"
+#include "teamspeak/public_rare_definitions.h"
 #include "ts3_functions.h"
 
 #include "teamspeak_cli/build/version.hpp"
@@ -717,6 +718,93 @@ auto PluginHostBackend::join_channel(const domain::Selector& selector) -> domain
     if (error != ERROR_ok) {
         return domain::fail(translate_error(error, "failed to move TeamSpeak client to channel"));
     }
+    return domain::ok();
+}
+
+auto PluginHostBackend::set_self_muted(bool muted) -> domain::Result<void> {
+    auto handler_id = resolve_handler_id(true);
+    if (!handler_id) {
+        return domain::fail(handler_id.error());
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+
+    if (functions.setClientSelfVariableAsInt == nullptr || functions.flushClientSelfUpdates == nullptr) {
+        return domain::fail(backend_error(
+            "client_self_update_unavailable",
+            "TeamSpeak self-update functions are not available in the loaded plugin host"
+        ));
+    }
+
+    const unsigned int set_error = functions.setClientSelfVariableAsInt(
+        handler_id.value(), CLIENT_INPUT_MUTED, muted ? MUTEINPUT_MUTED : MUTEINPUT_NONE
+    );
+    if (set_error != ERROR_ok) {
+        return domain::fail(translate_error(set_error, "failed to update TeamSpeak microphone mute state"));
+    }
+
+    const unsigned int flush_error = functions.flushClientSelfUpdates(handler_id.value(), nullptr);
+    if (flush_error != ERROR_ok) {
+        return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak microphone mute update"));
+    }
+
+    return domain::ok();
+}
+
+auto PluginHostBackend::set_self_away(bool away, std::string_view message) -> domain::Result<void> {
+    auto handler_id = resolve_handler_id(true);
+    if (!handler_id) {
+        return domain::fail(handler_id.error());
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+
+    if (functions.setClientSelfVariableAsInt == nullptr || functions.setClientSelfVariableAsString == nullptr ||
+        functions.flushClientSelfUpdates == nullptr) {
+        return domain::fail(backend_error(
+            "client_self_update_unavailable",
+            "TeamSpeak self-update functions are not available in the loaded plugin host"
+        ));
+    }
+
+    const unsigned int away_error = functions.setClientSelfVariableAsInt(
+        handler_id.value(), CLIENT_AWAY, away ? AWAY_ZZZ : AWAY_NONE
+    );
+    if (away_error != ERROR_ok) {
+        return domain::fail(translate_error(away_error, "failed to update TeamSpeak away status"));
+    }
+
+    const std::string away_message = away ? std::string(message) : std::string{};
+    const unsigned int message_error = functions.setClientSelfVariableAsString(
+        handler_id.value(), CLIENT_AWAY_MESSAGE, away_message.c_str()
+    );
+    if (message_error != ERROR_ok) {
+        return domain::fail(translate_error(message_error, "failed to update TeamSpeak away message"));
+    }
+
+    const unsigned int flush_error = functions.flushClientSelfUpdates(handler_id.value(), nullptr);
+    if (flush_error != ERROR_ok) {
+        return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak away status update"));
+    }
+
     return domain::ok();
 }
 

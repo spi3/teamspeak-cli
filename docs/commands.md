@@ -29,6 +29,10 @@ Every command accepts these global flags:
 - `ts daemon status`
 - `ts connect`
 - `ts disconnect`
+- `ts mute`
+- `ts unmute`
+- `ts away [--message "<text>"]`
+- `ts back`
 - `ts status`
 - `ts server info`
 
@@ -81,6 +85,9 @@ Every command accepts these global flags:
 - `status`, `server info`, `channel list`, `channel clients`, and `client list` inspect the current backend state. They do not auto-connect for you.
 - `connect` waits for completion for up to 15 seconds.
 - `disconnect` waits for completion for up to 10 seconds.
+- `mute` and `unmute` update your own TeamSpeak microphone mute state.
+- `away` sets your own TeamSpeak away status and optionally an away message.
+- `back` clears your own TeamSpeak away status and any away message set through `ts away`.
 - `client start` and `client stop` inspect, launch, and stop the local TeamSpeak client process tracked by `ts`.
 - `client logs` shows the tracked launcher log plus the most recent files under `~/.ts3client/logs`.
 - `daemon start` launches a local background watcher that polls translated TeamSpeak events, journals incoming messages, and executes matching hook commands.

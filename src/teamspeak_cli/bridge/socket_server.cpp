@@ -495,6 +495,43 @@ void SocketBridgeServer::handle_client(int client_fd) {
         return;
     }
 
+    if (command == "set_self_muted") {
+        if (fields.size() != 3 || (fields[2] != "0" && fields[2] != "1")) {
+            send_error(client_fd, bridge_error(
+                "invalid_request", "set_self_muted expects a boolean argument", domain::ExitCode::usage
+            ));
+            return;
+        }
+        auto updated = backend_->set_self_muted(fields[2] == "1");
+        if (!updated) {
+            send_error(client_fd, updated.error());
+            return;
+        }
+        send_ok(client_fd, "void", {});
+        return;
+    }
+
+    if (command == "set_self_away") {
+        if (fields.size() != 4 || (fields[2] != "0" && fields[2] != "1")) {
+            send_error(client_fd, bridge_error(
+                "invalid_request", "set_self_away expects a boolean and message", domain::ExitCode::usage
+            ));
+            return;
+        }
+        auto message = decode_hex_arg(fields, 3, "message");
+        if (!message) {
+            send_error(client_fd, message.error());
+            return;
+        }
+        auto updated = backend_->set_self_away(fields[2] == "1", message.value());
+        if (!updated) {
+            send_error(client_fd, updated.error());
+            return;
+        }
+        send_ok(client_fd, "void", {});
+        return;
+    }
+
     if (command == "list_clients") {
         auto clients = backend_->list_clients();
         if (!clients) {
