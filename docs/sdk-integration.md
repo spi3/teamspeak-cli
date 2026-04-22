@@ -64,6 +64,7 @@ The plugin target:
 - exposes status, channel, client, join, self mute, away, message, and event operations to the CLI
 - translates selected TeamSpeak callbacks into domain events for `ts events watch`
 - exposes a dedicated media bridge for speaker events, ingress voice chunks, and half-duplex playback injection
+  through a plugin-managed custom capture device
 
 ## Control And Media Sockets
 
@@ -166,6 +167,7 @@ The media socket path is derived from that control socket path unless `TS_MEDIA_
 - both local transports are Unix-domain-socket focused
 - the media bridge is V1 half-duplex and single-consumer
 - playback injection currently accepts `pcm_s16le @ 48000 Hz mono`
+- playback injection temporarily replaces the active TeamSpeak capture device and then restores the previous device
 
 ## Development Without TeamSpeak
 

@@ -4,6 +4,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "ts3_functions.h"
 
@@ -90,6 +91,34 @@ class PluginHostBackend final
     [[nodiscard]] auto deactivate_media_playback() -> domain::Result<void> override;
 
   private:
+    struct MediaPlaybackSession {
+        std::uint64_t handler_id = 0;
+        std::string capture_mode;
+        std::string capture_device;
+        int input_deactivated = INPUT_ACTIVE;
+        int input_muted = MUTEINPUT_NONE;
+        bool capture_mode_known = false;
+        bool capture_device_known = false;
+        bool input_deactivated_known = false;
+        bool input_muted_known = false;
+    };
+
+    [[nodiscard]] auto ensure_custom_capture_device_registered(const TS3Functions& functions)
+        -> domain::Result<void>;
+    [[nodiscard]] auto snapshot_media_playback_session(
+        std::uint64_t server_connection_handler_id,
+        const TS3Functions& functions
+    ) const -> MediaPlaybackSession;
+    [[nodiscard]] auto activate_custom_capture_device(
+        const MediaPlaybackSession& session,
+        const TS3Functions& functions
+    ) -> domain::Result<void>;
+    [[nodiscard]] auto restore_media_playback_session(
+        const MediaPlaybackSession& session,
+        const TS3Functions& functions
+    ) -> domain::Result<void>;
+    void media_capture_loop(std::stop_token stop_token, std::uint64_t server_connection_handler_id, TS3Functions functions);
+
     [[nodiscard]] auto resolve_media_speaker(
         std::uint64_t server_connection_handler_id,
         std::uint16_t client_id
@@ -132,7 +161,10 @@ class PluginHostBackend final
     std::uint64_t preferred_handler_id_ = 0;
     std::uint64_t managed_handler_id_ = 0;
     bool initialized_ = false;
+    bool custom_capture_device_registered_ = false;
     bool media_playback_active_ = false;
+    MediaPlaybackSession media_playback_session_;
+    std::jthread media_capture_thread_;
     std::shared_ptr<bridge::MediaBridge> media_bridge_;
     std::map<std::pair<std::uint64_t, std::uint16_t>, bridge::MediaSpeaker> media_speakers_;
 };

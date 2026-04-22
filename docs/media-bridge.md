@@ -188,7 +188,8 @@ Drops all queued playback immediately and emits `playback.cleared`.
 
 ## V1 Semantics
 
-- The bridge is half-duplex. Playback injection is designed to override outgoing capture audio while active.
+- The bridge is half-duplex. Playback injection temporarily swaps the active TeamSpeak capture device to a
+  plugin-registered custom capture device and restores the previous capture device when playback stops.
 - `playback.start` must be sent before `playback.chunk`.
 - `playback.stop` drains queued samples before stopping.
 - `playback.clear` is the interruption path. It empties the queue immediately.

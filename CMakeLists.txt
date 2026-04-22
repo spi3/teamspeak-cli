@@ -234,6 +234,19 @@ if(BUILD_TESTING)
   ts_apply_defaults(ts_socket_backend_test)
   add_test(NAME ts_socket_backend_test COMMAND ts_socket_backend_test)
 
+  add_executable(
+    ts_plugin_host_backend_test
+    tests/plugin_host_backend_test.cpp
+    tests/test_support.hpp
+    src/teamspeak_cli/bridge/media_bridge.cpp
+    src/teamspeak_cli/bridge/protocol.cpp
+    src/teamspeak_cli/events/event_queue.cpp
+    src/teamspeak_cli/sdk/plugin_host_backend.cpp
+    src/teamspeak_cli/util/strings.cpp
+  )
+  ts_apply_defaults(ts_plugin_host_backend_test)
+  add_test(NAME ts_plugin_host_backend_test COMMAND ts_plugin_host_backend_test)
+
   add_test(
     NAME ts_mock_cli_smoke_test
     COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run_mock_cli_smoke.sh" "$<TARGET_FILE:ts>"

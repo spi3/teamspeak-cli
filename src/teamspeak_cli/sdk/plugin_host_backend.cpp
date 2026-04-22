@@ -1,6 +1,8 @@
 #include "teamspeak_cli/sdk/plugin_host_backend.hpp"
 
 #include <chrono>
+#include <thread>
+#include <vector>
 
 #include "teamspeak/public_definitions.h"
 #include "teamspeak/public_errors.h"
@@ -13,6 +15,12 @@
 
 namespace teamspeak_cli::sdk {
 namespace {
+
+constexpr std::string_view kCustomCaptureMode = "custom";
+constexpr std::string_view kCustomCaptureDeviceId = "ts3cli_media_capture";
+constexpr std::string_view kCustomCaptureDeviceName = "ts3cli Media Bridge";
+constexpr int kMediaCaptureChunkFrames = bridge::kMediaSampleRate / 100;
+constexpr auto kMediaCaptureChunkDuration = std::chrono::milliseconds(10);
 
 auto backend_error(std::string code, std::string message, domain::ExitCode exit_code = domain::ExitCode::sdk)
     -> domain::Error {
@@ -100,6 +108,7 @@ void PluginHostBackend::on_connect_status_change(
     int new_status,
     unsigned int error_number
 ) {
+    bool should_stop_media_playback = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         preferred_handler_id_ = server_connection_handler_id;
@@ -137,7 +146,8 @@ void PluginHostBackend::on_connect_status_change(
         case STATUS_DISCONNECTED:
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                media_playback_active_ = false;
+                should_stop_media_playback =
+                    media_playback_active_ && media_playback_session_.handler_id == server_connection_handler_id;
                 for (auto it = media_speakers_.begin(); it != media_speakers_.end();) {
                     if (it->first.first == server_connection_handler_id) {
                         it = media_speakers_.erase(it);
@@ -145,6 +155,10 @@ void PluginHostBackend::on_connect_status_change(
                         ++it;
                     }
                 }
+            }
+            if (should_stop_media_playback) {
+                const auto ignored = deactivate_media_playback();
+                (void)ignored;
             }
             events_.push(now_event(
                 "connection.disconnected",
@@ -259,19 +273,10 @@ void PluginHostBackend::on_captured_voice_data(
     int* edited
 ) {
     (void)server_connection_handler_id;
-
-    std::shared_ptr<bridge::MediaBridge> media_bridge;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        media_bridge = media_bridge_;
-    }
-    if (media_bridge == nullptr) {
-        return;
-    }
-    if (media_bridge->fill_playback_samples(bridge::kMediaSampleRate, channels, samples, sample_count) &&
-        edited != nullptr) {
-        *edited = 1;
-    }
+    (void)samples;
+    (void)sample_count;
+    (void)channels;
+    (void)edited;
 }
 
 void PluginHostBackend::on_client_move(
@@ -336,8 +341,37 @@ auto PluginHostBackend::initialize(const InitOptions& options) -> domain::Result
 }
 
 auto PluginHostBackend::shutdown() -> domain::Result<void> {
-    std::lock_guard<std::mutex> lock(mutex_);
-    initialized_ = false;
+    const auto stopped = deactivate_media_playback();
+    if (!stopped) {
+        return stopped;
+    }
+
+    TS3Functions functions{};
+    std::jthread media_capture_thread;
+    bool custom_capture_device_registered = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        initialized_ = false;
+        if (functions_.has_value()) {
+            functions = *functions_;
+        }
+        custom_capture_device_registered = custom_capture_device_registered_;
+        custom_capture_device_registered_ = false;
+        if (media_capture_thread_.joinable()) {
+            media_capture_thread = std::move(media_capture_thread_);
+        }
+    }
+
+    if (media_capture_thread.joinable()) {
+        media_capture_thread.join();
+    }
+
+    if (custom_capture_device_registered && functions.unregisterCustomDevice != nullptr) {
+        const unsigned int error = functions.unregisterCustomDevice(kCustomCaptureDeviceId.data());
+        if (error != ERROR_ok && error != ERROR_sound_unknown_device) {
+            return domain::fail(translate_error(error, "failed to unregister TeamSpeak custom capture device"));
+        }
+    }
     return domain::ok();
 }
 
@@ -855,12 +889,24 @@ void PluginHostBackend::set_media_bridge(const std::shared_ptr<bridge::MediaBrid
 }
 
 auto PluginHostBackend::activate_media_playback() -> domain::Result<void> {
+    std::jthread stale_media_capture_thread;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!media_playback_active_ && media_capture_thread_.joinable()) {
+            stale_media_capture_thread = std::move(media_capture_thread_);
+        }
+    }
+    if (stale_media_capture_thread.joinable()) {
+        stale_media_capture_thread.join();
+    }
+
     auto handler_id = resolve_handler_id(true);
     if (!handler_id) {
         return domain::fail(handler_id.error());
     }
 
     TS3Functions functions{};
+    MediaPlaybackSession session;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!functions_.has_value()) {
@@ -873,51 +919,337 @@ auto PluginHostBackend::activate_media_playback() -> domain::Result<void> {
         }
         functions = *functions_;
     }
-
-    if (functions.startVoiceRecording == nullptr) {
-        return domain::fail(backend_error(
-            "voice_recording_unavailable",
-            "TeamSpeak voice recording control is not available in the loaded plugin host"
-        ));
+    const auto registered = ensure_custom_capture_device_registered(functions);
+    if (!registered) {
+        return registered;
     }
 
-    const unsigned int error = functions.startVoiceRecording(handler_id.value());
-    if (error != ERROR_ok) {
-        return domain::fail(translate_error(error, "failed to start TeamSpeak voice recording"));
+    session = snapshot_media_playback_session(handler_id.value(), functions);
+    const auto activated = activate_custom_capture_device(session, functions);
+    if (!activated) {
+        const auto ignored = restore_media_playback_session(session, functions);
+        (void)ignored;
+        return activated;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
     media_playback_active_ = true;
+    media_playback_session_ = session;
+    media_capture_thread_ = std::jthread([this, server_connection_handler_id = handler_id.value(), functions](std::stop_token stop_token) {
+        media_capture_loop(stop_token, server_connection_handler_id, functions);
+    });
     return domain::ok();
 }
 
 auto PluginHostBackend::deactivate_media_playback() -> domain::Result<void> {
     TS3Functions functions{};
-    bool media_playback_active = false;
+    MediaPlaybackSession session;
+    std::jthread media_capture_thread;
+    bool have_functions = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!functions_.has_value()) {
             media_playback_active_ = false;
+            media_playback_session_ = {};
+            if (!media_capture_thread_.joinable()) {
+                return domain::ok();
+            }
+        } else {
+            functions = *functions_;
+            have_functions = true;
+        }
+        if (!media_playback_active_ && !media_capture_thread_.joinable()) {
             return domain::ok();
         }
-        functions = *functions_;
-        media_playback_active = media_playback_active_;
-    }
-    if (!media_playback_active) {
-        return domain::ok();
+        session = media_playback_session_;
+        media_playback_active_ = false;
+        media_playback_session_ = {};
+        if (media_capture_thread_.joinable()) {
+            media_capture_thread_.request_stop();
+            if (media_capture_thread_.get_id() != std::this_thread::get_id()) {
+                media_capture_thread = std::move(media_capture_thread_);
+            }
+        }
     }
 
-    auto handler_id = resolve_handler_id(false);
-    if (handler_id && handler_id.value() != 0 && functions.stopVoiceRecording != nullptr) {
-        const unsigned int error = functions.stopVoiceRecording(handler_id.value());
-        if (error != ERROR_ok) {
-            return domain::fail(translate_error(error, "failed to stop TeamSpeak voice recording"));
+    if (media_capture_thread.joinable()) {
+        media_capture_thread.join();
+    }
+
+    if (have_functions && session.handler_id != 0) {
+        const auto restored = restore_media_playback_session(session, functions);
+        if (!restored) {
+            return restored;
         }
+    }
+    return domain::ok();
+}
+
+auto PluginHostBackend::ensure_custom_capture_device_registered(const TS3Functions& functions)
+    -> domain::Result<void> {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (custom_capture_device_registered_) {
+            return domain::ok();
+        }
+    }
+
+    if (functions.registerCustomDevice == nullptr) {
+        return domain::fail(backend_error(
+            "custom_capture_unavailable",
+            "TeamSpeak custom capture device registration is not available in the loaded plugin host"
+        ));
+    }
+
+    const unsigned int error = functions.registerCustomDevice(
+        kCustomCaptureDeviceId.data(),
+        kCustomCaptureDeviceName.data(),
+        bridge::kMediaSampleRate,
+        bridge::kMediaPlaybackChannels,
+        bridge::kMediaSampleRate,
+        bridge::kMediaPlaybackChannels
+    );
+    if (error != ERROR_ok && error != ERROR_sound_device_already_registerred) {
+        return domain::fail(translate_error(error, "failed to register TeamSpeak custom capture device"));
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    media_playback_active_ = false;
+    custom_capture_device_registered_ = true;
     return domain::ok();
+}
+
+auto PluginHostBackend::snapshot_media_playback_session(
+    std::uint64_t server_connection_handler_id,
+    const TS3Functions& functions
+) const -> MediaPlaybackSession {
+    MediaPlaybackSession session{.handler_id = server_connection_handler_id};
+
+    char* raw_capture_mode = nullptr;
+    if (functions.getCurrentCaptureMode != nullptr &&
+        functions.getCurrentCaptureMode(server_connection_handler_id, &raw_capture_mode) == ERROR_ok &&
+        raw_capture_mode != nullptr) {
+        Ts3Owned<char> capture_mode_owner(&functions, raw_capture_mode);
+        session.capture_mode = raw_capture_mode;
+        session.capture_mode_known = true;
+    }
+
+    char* raw_capture_device = nullptr;
+    int capture_device_is_default = 0;
+    if (functions.getCurrentCaptureDeviceName != nullptr &&
+        functions.getCurrentCaptureDeviceName(
+            server_connection_handler_id, &raw_capture_device, &capture_device_is_default
+        ) == ERROR_ok &&
+        raw_capture_device != nullptr) {
+        Ts3Owned<char> capture_device_owner(&functions, raw_capture_device);
+        const std::string capture_mode = session.capture_mode_known ? session.capture_mode : std::string{};
+        if (!(capture_mode == kCustomCaptureMode && std::string(raw_capture_device) == kCustomCaptureDeviceId)) {
+            session.capture_device = capture_device_is_default != 0 ? std::string{} : std::string(raw_capture_device);
+            session.capture_device_known = true;
+        } else {
+            session.capture_mode.clear();
+            session.capture_mode_known = false;
+        }
+    }
+
+    int input_deactivated = INPUT_ACTIVE;
+    if (functions.getClientSelfVariableAsInt != nullptr &&
+        functions.getClientSelfVariableAsInt(server_connection_handler_id, CLIENT_INPUT_DEACTIVATED, &input_deactivated) ==
+            ERROR_ok) {
+        session.input_deactivated = input_deactivated;
+        session.input_deactivated_known = true;
+    }
+
+    int input_muted = MUTEINPUT_NONE;
+    if (functions.getClientSelfVariableAsInt != nullptr &&
+        functions.getClientSelfVariableAsInt(server_connection_handler_id, CLIENT_INPUT_MUTED, &input_muted) ==
+            ERROR_ok) {
+        session.input_muted = input_muted;
+        session.input_muted_known = true;
+    }
+
+    return session;
+}
+
+auto PluginHostBackend::activate_custom_capture_device(
+    const MediaPlaybackSession& session,
+    const TS3Functions& functions
+) -> domain::Result<void> {
+    if (functions.openCaptureDevice == nullptr || functions.processCustomCaptureData == nullptr ||
+        functions.setClientSelfVariableAsInt == nullptr || functions.flushClientSelfUpdates == nullptr) {
+        return domain::fail(backend_error(
+            "custom_capture_unavailable",
+            "TeamSpeak custom capture playback requires capture device and self-state controls from the plugin host"
+        ));
+    }
+
+    if (functions.closeCaptureDevice != nullptr) {
+        (void)functions.closeCaptureDevice(session.handler_id);
+    }
+
+    const unsigned int open_error = functions.openCaptureDevice(
+        session.handler_id, kCustomCaptureMode.data(), kCustomCaptureDeviceId.data()
+    );
+    if (open_error != ERROR_ok) {
+        return domain::fail(translate_error(open_error, "failed to open TeamSpeak custom capture device"));
+    }
+
+    if (functions.activateCaptureDevice != nullptr) {
+        const unsigned int activate_error = functions.activateCaptureDevice(session.handler_id);
+        if (activate_error != ERROR_ok) {
+            return domain::fail(translate_error(
+                activate_error, "failed to activate TeamSpeak custom capture device"
+            ));
+        }
+    }
+
+    const unsigned int input_active_error = functions.setClientSelfVariableAsInt(
+        session.handler_id, CLIENT_INPUT_DEACTIVATED, INPUT_ACTIVE
+    );
+    if (input_active_error != ERROR_ok) {
+        return domain::fail(translate_error(
+            input_active_error, "failed to force TeamSpeak capture input active for media playback"
+        ));
+    }
+
+    const unsigned int input_unmuted_error =
+        functions.setClientSelfVariableAsInt(session.handler_id, CLIENT_INPUT_MUTED, MUTEINPUT_NONE);
+    if (input_unmuted_error != ERROR_ok) {
+        return domain::fail(translate_error(
+            input_unmuted_error, "failed to unmute TeamSpeak capture input for media playback"
+        ));
+    }
+
+    const unsigned int flush_error = functions.flushClientSelfUpdates(session.handler_id, nullptr);
+    if (flush_error != ERROR_ok) {
+        return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak capture state update"));
+    }
+
+    return domain::ok();
+}
+
+auto PluginHostBackend::restore_media_playback_session(
+    const MediaPlaybackSession& session,
+    const TS3Functions& functions
+) -> domain::Result<void> {
+    if (session.handler_id == 0) {
+        return domain::ok();
+    }
+
+    if (functions.closeCaptureDevice != nullptr) {
+        (void)functions.closeCaptureDevice(session.handler_id);
+    }
+
+    if (functions.openCaptureDevice != nullptr && (session.capture_mode_known || session.capture_device_known)) {
+        const char* capture_mode = session.capture_mode_known ? session.capture_mode.c_str() : "";
+        const char* capture_device = session.capture_device_known ? session.capture_device.c_str() : "";
+        const unsigned int open_error =
+            functions.openCaptureDevice(session.handler_id, capture_mode, capture_device);
+        if (open_error != ERROR_ok) {
+            return domain::fail(translate_error(open_error, "failed to restore TeamSpeak capture device"));
+        }
+        if (functions.activateCaptureDevice != nullptr) {
+            const unsigned int activate_error = functions.activateCaptureDevice(session.handler_id);
+            if (activate_error != ERROR_ok) {
+                return domain::fail(translate_error(
+                    activate_error, "failed to reactivate the restored TeamSpeak capture device"
+                ));
+            }
+        }
+    }
+
+    if (functions.setClientSelfVariableAsInt != nullptr && functions.flushClientSelfUpdates != nullptr &&
+        (session.input_deactivated_known || session.input_muted_known)) {
+        if (session.input_deactivated_known) {
+            const unsigned int input_error = functions.setClientSelfVariableAsInt(
+                session.handler_id, CLIENT_INPUT_DEACTIVATED, session.input_deactivated
+            );
+            if (input_error != ERROR_ok) {
+                return domain::fail(translate_error(
+                    input_error, "failed to restore TeamSpeak input deactivation state"
+                ));
+            }
+        }
+        if (session.input_muted_known) {
+            const unsigned int mute_error = functions.setClientSelfVariableAsInt(
+                session.handler_id, CLIENT_INPUT_MUTED, session.input_muted
+            );
+            if (mute_error != ERROR_ok) {
+                return domain::fail(translate_error(mute_error, "failed to restore TeamSpeak input mute state"));
+            }
+        }
+        const unsigned int flush_error = functions.flushClientSelfUpdates(session.handler_id, nullptr);
+        if (flush_error != ERROR_ok) {
+            return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak input state restore"));
+        }
+    }
+
+    return domain::ok();
+}
+
+void PluginHostBackend::media_capture_loop(
+    std::stop_token stop_token,
+    std::uint64_t server_connection_handler_id,
+    TS3Functions functions
+) {
+    std::vector<short> samples(kMediaCaptureChunkFrames * bridge::kMediaPlaybackChannels);
+    bool observed_bridge_playback = false;
+    auto next_tick = std::chrono::steady_clock::now();
+
+    while (!stop_token.stop_requested()) {
+        std::shared_ptr<bridge::MediaBridge> media_bridge;
+        bool playback_active = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            playback_active =
+                media_playback_active_ && media_playback_session_.handler_id == server_connection_handler_id;
+            media_bridge = media_bridge_;
+        }
+
+        if (!playback_active) {
+            return;
+        }
+
+        const bool filled = media_bridge != nullptr && media_bridge->fill_playback_samples(
+            bridge::kMediaSampleRate,
+            bridge::kMediaPlaybackChannels,
+            samples.data(),
+            kMediaCaptureChunkFrames
+        );
+
+        if (!filled) {
+            if (observed_bridge_playback) {
+                const auto ignored = deactivate_media_playback();
+                (void)ignored;
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            next_tick = std::chrono::steady_clock::now();
+            continue;
+        }
+
+        observed_bridge_playback = true;
+        const unsigned int error = functions.processCustomCaptureData(
+            kCustomCaptureDeviceId.data(), samples.data(), static_cast<int>(samples.size())
+        );
+        if (error != ERROR_ok) {
+            events_.push(now_event(
+                "media.playback.error",
+                "failed to submit custom capture audio to TeamSpeak",
+                {{"handler", std::to_string(server_connection_handler_id)}, {"error", std::to_string(error)}}
+            ));
+            const auto ignored = deactivate_media_playback();
+            (void)ignored;
+            return;
+        }
+
+        next_tick += kMediaCaptureChunkDuration;
+        const auto now = std::chrono::steady_clock::now();
+        if (next_tick > now) {
+            std::this_thread::sleep_until(next_tick);
+        } else {
+            next_tick = now;
+        }
+    }
 }
 
 auto PluginHostBackend::resolve_handler_id(bool require_connection) const -> domain::Result<std::uint64_t> {

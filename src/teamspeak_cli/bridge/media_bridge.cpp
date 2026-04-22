@@ -465,7 +465,6 @@ auto MediaBridgeServer::fill_playback_samples(
 
     bool playback_active = false;
     bool should_stop = false;
-    MediaPlaybackControl* playback_control = nullptr;
     {
         std::lock_guard<std::mutex> lock(impl_->state.mutex);
         playback_active = impl_->state.playback_active;
@@ -487,18 +486,9 @@ auto MediaBridgeServer::fill_playback_samples(
         if (should_stop) {
             impl_->state.playback_active = false;
             impl_->state.playback_stop_requested = false;
-            playback_control = impl_->state.playback_control;
             if (impl_->state.client_connected) {
                 enqueue_frame_locked(impl_->state, playback_stopped_frame("drained"));
             }
-        }
-    }
-
-    if (should_stop && playback_control != nullptr) {
-        const auto result = playback_control->deactivate_media_playback();
-        if (!result) {
-            std::lock_guard<std::mutex> lock(impl_->state.mutex);
-            impl_->state.last_error = result.error().message;
         }
     }
     return playback_active;
