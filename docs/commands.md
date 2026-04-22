@@ -142,10 +142,19 @@ The plugin media socket resolves in this order:
 - `TS_CLIENT_XDOTOOL` to point at a specific `xdotool` binary used to dismiss known onboarding dialogs
 - `TS_CLIENT_XDOTOOL_LIBRARY_PATH` to point at the companion runtime libraries for that `xdotool` binary
 - `TS3_CLIENT_LDCONFIG` to point the runtime preflight at a specific `ldconfig` binary
+- `TS3CLIENT_SKIP_AUDIO_PREFLIGHT=1` to skip the wrapper's PulseAudio/PipeWire metadata and routing preflight entirely
+- `TS3CLIENT_SKIP_AUDIO_ROUTING=1` to keep the wrapper from provisioning isolated virtual audio devices automatically
+- `PULSE_SINK` and `PULSE_SOURCE` to override the TeamSpeak playback and capture devices manually
 
 On the first headless TeamSpeak launch, hidden onboarding dialogs can still block the plugin bridge. `ts client start`
 tries to dismiss known license and identity dialogs with `xdotool` when available. If a headless session still wedges,
 complete the TeamSpeak license and initial identity setup once on a visible display before relying on headless mode.
+
+The installed `ts3client` wrapper also inspects the current PulseAudio/PipeWire defaults before launch. When the
+default capture source is an output monitor such as `auto_null.monitor`, the wrapper provisions dedicated
+`teamspeak_cli.playback` and `teamspeak_cli.capture` null sinks and launches TeamSpeak with `PULSE_SINK` set to the
+playback sink and `PULSE_SOURCE` set to `teamspeak_cli.capture.monitor`. The detected defaults, routing decision, and
+any provisioning warnings are written to the tracked launcher log that `ts client logs` reads back.
 
 Client process state is stored under:
 

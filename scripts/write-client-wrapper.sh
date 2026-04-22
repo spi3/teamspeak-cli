@@ -185,6 +185,173 @@ warn_if_audio_nodes_missing_descriptions() {
   log_warning "Fix the node metadata or set TS3CLIENT_SKIP_AUDIO_PREFLIGHT=1 to suppress this warning."
 }
 
+pactl_info_value() {
+  local key="\$1"
+  local prefix="\${key}: "
+  local line=""
+  local trimmed=""
+
+  while IFS= read -r line; do
+    trimmed="\${line#"\${line%%[![:space:]]*}"}"
+    case "\${trimmed}" in
+      "\${prefix}"*)
+        printf '%s\n' "\${trimmed#\${prefix}}"
+        return 0
+        ;;
+    esac
+  done < <(pactl info 2>/dev/null || true)
+
+  return 1
+}
+
+audio_node_exists() {
+  local node_kind="\$1"
+  local heading="\$2"
+  local target_name="\$3"
+  local line=""
+  local trimmed=""
+  local current_name=""
+
+  while IFS= read -r line; do
+    case "\${line}" in
+      "\${heading}"\ \#*)
+        current_name=""
+        continue
+        ;;
+    esac
+
+    trimmed="\${line#"\${line%%[![:space:]]*}"}"
+    case "\${trimmed}" in
+      Name:*)
+        current_name="\${trimmed#Name: }"
+        if [[ "\${current_name}" == "\${target_name}" ]]; then
+          return 0
+        fi
+        ;;
+    esac
+  done < <(pactl list "\${node_kind}s" 2>/dev/null || true)
+
+  return 1
+}
+
+audio_sink_exists() {
+  audio_node_exists sink Sink "\$1"
+}
+
+audio_source_monitor_sink() {
+  local target_source="\$1"
+  local line=""
+  local trimmed=""
+  local current_name=""
+  local current_monitor=""
+
+  while IFS= read -r line; do
+    case "\${line}" in
+      Source\ \#*)
+        if [[ "\${current_name}" == "\${target_source}" ]]; then
+          printf '%s\n' "\${current_monitor}"
+          return 0
+        fi
+        current_name=""
+        current_monitor=""
+        continue
+        ;;
+    esac
+
+    trimmed="\${line#"\${line%%[![:space:]]*}"}"
+    case "\${trimmed}" in
+      Name:*)
+        current_name="\${trimmed#Name: }"
+        ;;
+      Monitor\ of\ Sink:*)
+        current_monitor="\${trimmed#Monitor of Sink: }"
+        ;;
+    esac
+  done < <(pactl list sources 2>/dev/null || true)
+
+  if [[ "\${current_name}" == "\${target_source}" ]]; then
+    printf '%s\n' "\${current_monitor}"
+    return 0
+  fi
+
+  return 1
+}
+
+ensure_virtual_null_sink() {
+  local sink_name="\$1"
+  local description="\$2"
+
+  if audio_sink_exists "\${sink_name}"; then
+    log_warning "reusing virtual audio sink \${sink_name}."
+    return 0
+  fi
+
+  if ! pactl load-module module-null-sink \
+      "sink_name=\${sink_name}" \
+      "sink_properties=device.description=\${description}" >/dev/null 2>&1; then
+    log_warning "failed to provision virtual audio sink \${sink_name}."
+    return 1
+  fi
+
+  log_warning "provisioned virtual audio sink \${sink_name}."
+  return 0
+}
+
+configure_safe_virtual_audio() {
+  local default_sink=""
+  local default_source=""
+  local source_monitor_sink=""
+  local launch_sink=""
+  local launch_source=""
+  local playback_sink_name="teamspeak_cli.playback"
+  local capture_sink_name="teamspeak_cli.capture"
+  local capture_source_name="\${capture_sink_name}.monitor"
+
+  [[ "\${TS3CLIENT_SKIP_AUDIO_PREFLIGHT:-0}" == "1" ]] && return 0
+  [[ "\${TS3CLIENT_SKIP_AUDIO_ROUTING:-0}" == "1" ]] && return 0
+  have_command pactl || return 0
+
+  default_sink="\$(pactl_info_value "Default Sink" || true)"
+  default_source="\$(pactl_info_value "Default Source" || true)"
+
+  [[ -n "\${default_sink}" || -n "\${default_source}" ]] || return 0
+
+  log_warning "detected audio defaults: sink=\${default_sink:-<unknown>} source=\${default_source:-<unknown>}."
+
+  if [[ -n "\${PULSE_SINK:-}" || -n "\${PULSE_SOURCE:-}" ]]; then
+    log_warning "using caller-provided PulseAudio overrides: PULSE_SINK=\${PULSE_SINK:-<unset>} PULSE_SOURCE=\${PULSE_SOURCE:-<unset>}."
+    return 0
+  fi
+
+  source_monitor_sink="\$(audio_source_monitor_sink "\${default_source}" || true)"
+  if [[ "\${default_source}" != *.monitor && -z "\${source_monitor_sink}" ]]; then
+    log_warning "audio defaults look safe; keeping sink=\${default_sink:-<unknown>} source=\${default_source:-<unknown>}."
+    return 0
+  fi
+
+  if [[ -n "\${source_monitor_sink}" ]]; then
+    log_warning "unsafe audio routing detected: source \${default_source} monitors sink \${source_monitor_sink}."
+  else
+    log_warning "unsafe audio routing detected: source \${default_source} is a monitor source."
+  fi
+
+  if ! ensure_virtual_null_sink "\${playback_sink_name}" "TeamSpeak_CLI_Playback"; then
+    log_warning "continuing with the existing audio defaults because safe playback provisioning failed."
+    return 0
+  fi
+
+  if ! ensure_virtual_null_sink "\${capture_sink_name}" "TeamSpeak_CLI_Capture"; then
+    log_warning "continuing with the existing audio defaults because safe capture provisioning failed."
+    return 0
+  fi
+
+  launch_sink="\${playback_sink_name}"
+  launch_source="\${capture_source_name}"
+  log_warning "launching TeamSpeak with isolated virtual audio devices: PULSE_SINK=\${launch_sink} PULSE_SOURCE=\${launch_source}."
+  export TS3CLIENT_LAUNCH_PULSE_SINK="\${launch_sink}"
+  export TS3CLIENT_LAUNCH_PULSE_SOURCE="\${launch_source}"
+}
+
 if [[ -z "\${runtime_library_path}" && -d "\${runtime_root}" ]]; then
   runtime_library_path="\$(find "\${runtime_root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)"
 fi
@@ -196,11 +363,21 @@ fi
 
 require_runtime_libraries "\${launch_library_path}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
 warn_if_audio_nodes_missing_descriptions
+configure_safe_virtual_audio
 
-exec env \
-  LD_LIBRARY_PATH="\${launch_library_path}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}" \
-  TS3_CLIENT_DIR="\${client_dir}" \
-  "\${client_dir}/ts3client_runscript.sh" "\$@"
+launch_env=(
+  env
+  "LD_LIBRARY_PATH=\${launch_library_path}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
+  "TS3_CLIENT_DIR=\${client_dir}"
+)
+if [[ -n "\${TS3CLIENT_LAUNCH_PULSE_SINK:-}" ]]; then
+  launch_env+=("PULSE_SINK=\${TS3CLIENT_LAUNCH_PULSE_SINK}")
+fi
+if [[ -n "\${TS3CLIENT_LAUNCH_PULSE_SOURCE:-}" ]]; then
+  launch_env+=("PULSE_SOURCE=\${TS3CLIENT_LAUNCH_PULSE_SOURCE}")
+fi
+
+exec "\${launch_env[@]}" "\${client_dir}/ts3client_runscript.sh" "\$@"
 EOF
 
 install -m 0755 "${wrapper_tmp}" "${wrapper_path}"
