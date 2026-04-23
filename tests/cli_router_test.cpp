@@ -1149,6 +1149,9 @@ int main() {
             systemd_run << "unit_name=\"\"\n";
             systemd_run << "args=()\n";
             systemd_run << "while (($#)); do\n";
+            systemd_run << "  if [[ \"$1\" == *$'\\n'* ]]; then\n";
+            systemd_run << "    exit 1\n";
+            systemd_run << "  fi\n";
             systemd_run << "  case \"$1\" in\n";
             systemd_run << "    --unit=*) unit_name=\"${1#--unit=}\" ;;\n";
             systemd_run << "    --setenv=*) export \"${1#--setenv=}\" ;;\n";
@@ -1227,6 +1230,29 @@ int main() {
             fs::perm_options::replace
         );
 
+        const fs::path fake_systemd_xvfb_path = temp_dir / "fake-systemd-xvfb.sh";
+        const std::string fake_systemd_display = ":168";
+        const fs::path fake_systemd_socket_path = fs::path("/tmp/.X11-unix") / "X168";
+        std::error_code systemd_socket_cleanup_ec;
+        fs::remove(fake_systemd_socket_path, systemd_socket_cleanup_ec);
+        {
+            std::ofstream xvfb(fake_systemd_xvfb_path, std::ios::trunc);
+            xvfb << "#!/usr/bin/env bash\n";
+            xvfb << "set -euo pipefail\n";
+            xvfb << "display=\"${1:-}\"\n";
+            xvfb << "socket_dir=\"/tmp/.X11-unix\"\n";
+            xvfb << "socket_path=\"${socket_dir}/X${display#:}\"\n";
+            xvfb << "mkdir -p \"${socket_dir}\"\n";
+            xvfb << ": >\"${socket_path}\"\n";
+            xvfb << "trap 'rm -f \"${socket_path}\"; exit 0' TERM INT EXIT\n";
+            xvfb << "while true; do sleep 1; done\n";
+        }
+        fs::permissions(
+            fake_systemd_xvfb_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
         const std::string inherited_path = []() -> std::string {
             if (const char* current_path = std::getenv("PATH"); current_path != nullptr) {
                 return current_path;
@@ -1297,6 +1323,36 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         tests::expect(::kill(systemd_pid, 0) != 0, "systemd-backed client stop should terminate the tracked process");
+
+        {
+            EnvGuard forced_headless_env("TS_CLIENT_HEADLESS", "1");
+            EnvGuard fake_xvfb_env("TS_CLIENT_XVFB", fake_systemd_xvfb_path.string());
+            EnvGuard fake_display_env("TS_CLIENT_HEADLESS_DISPLAY", fake_systemd_display);
+
+            auto headless_systemd_start = router.dispatch(client_start.value());
+            tests::expect(headless_systemd_start.ok(), "headless systemd-backed client start should succeed");
+            const auto headless_systemd_start_json =
+                output::render(headless_systemd_start.value(), output::Format::json);
+            tests::expect_contains(
+                headless_systemd_start_json,
+                "DISPLAY :168",
+                "headless systemd-backed client start should report the selected Xvfb display"
+            );
+            tests::expect_contains(
+                headless_systemd_start_json,
+                "transient user systemd unit",
+                "headless systemd-backed client start should explain the launch strategy"
+            );
+            tests::expect(fs::exists(pid_file), "headless systemd-backed client start should write a pid file");
+            tests::expect(fs::exists(unit_file), "headless systemd-backed client start should write a unit file");
+
+            auto headless_systemd_stop = router.dispatch(client_stop.value());
+            tests::expect(headless_systemd_stop.ok(), "headless systemd-backed client stop should succeed");
+            tests::expect(!fs::exists(pid_file), "headless systemd-backed client stop should remove the pid file");
+            tests::expect(!fs::exists(unit_file), "headless systemd-backed client stop should remove the unit file");
+        }
+
+        fs::remove(fake_systemd_socket_path, systemd_socket_cleanup_ec);
     }
 
     const pid_t discovered_child = ::fork();

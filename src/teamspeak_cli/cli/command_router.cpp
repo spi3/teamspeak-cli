@@ -385,6 +385,7 @@ struct ClientProcessPaths {
     std::filesystem::path pid_file;
     std::filesystem::path log_file;
     std::filesystem::path unit_file;
+    std::filesystem::path headless_script_file;
 };
 
 struct ClientStatePaths {
@@ -392,6 +393,7 @@ struct ClientStatePaths {
     std::filesystem::path pid_file;
     std::filesystem::path log_file;
     std::filesystem::path unit_file;
+    std::filesystem::path headless_script_file;
 };
 
 struct ClientHeadlessLaunch {
@@ -1239,6 +1241,7 @@ auto resolve_client_state_paths() -> domain::Result<ClientStatePaths> {
         .pid_file = state_dir.value() / "client.pid",
         .log_file = state_dir.value() / "client.log",
         .unit_file = state_dir.value() / "client.unit",
+        .headless_script_file = state_dir.value() / "client-systemd-headless.sh",
     });
 }
 
@@ -1307,6 +1310,7 @@ auto resolve_client_process_paths() -> domain::Result<ClientProcessPaths> {
         .pid_file = state_paths.value().pid_file,
         .log_file = state_paths.value().log_file,
         .unit_file = state_paths.value().unit_file,
+        .headless_script_file = state_paths.value().headless_script_file,
     });
 }
 
@@ -1460,9 +1464,54 @@ auto write_client_unit_file(const std::filesystem::path& unit_file, std::string_
     return domain::ok();
 }
 
+auto write_client_headless_script_file(const std::filesystem::path& script_file, std::string_view script)
+    -> domain::Result<void> {
+    std::ofstream output(script_file, std::ios::trunc);
+    if (!output) {
+        return domain::fail(client_error(
+            "headless_script_write_failed",
+            "failed to write client headless script: " + script_file.string(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    output << script;
+    output.close();
+    if (!output) {
+        return domain::fail(client_error(
+            "headless_script_write_failed",
+            "failed to finish writing client headless script: " + script_file.string(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    std::error_code ec;
+    std::filesystem::permissions(
+        script_file,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+            std::filesystem::perms::owner_exec,
+        std::filesystem::perm_options::replace,
+        ec
+    );
+    if (ec) {
+        return domain::fail(client_error(
+            "headless_script_write_failed",
+            "failed to mark the client headless script executable: " + ec.message(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    return domain::ok();
+}
+
 void remove_client_unit_file(const std::filesystem::path& unit_file) {
     std::error_code ec;
     std::filesystem::remove(unit_file, ec);
+}
+
+void remove_client_headless_script_file(const std::filesystem::path& script_file) {
+    std::error_code ec;
+    std::filesystem::remove(script_file, ec);
 }
 
 auto resolve_client_systemd_run_mode() -> ClientSystemdRunMode {
@@ -1589,7 +1638,7 @@ auto build_client_systemd_headless_script(
     script << "set -euo pipefail\n";
     script << "xvfb_pid=''\n";
     script << "cleanup() {\n";
-    script << "  if [[ -n \"${xvfb_pid}\" ]]; then\n";
+    script << "  if [[ -n \"${xvfb_pid:-}\" ]]; then\n";
     script << "    kill \"${xvfb_pid}\" >/dev/null 2>&1 || true\n";
     script << "    wait \"${xvfb_pid}\" >/dev/null 2>&1 || true\n";
     script << "  fi\n";
@@ -2346,14 +2395,23 @@ auto launch_client_process_via_systemd(
             return domain::fail<ClientLaunchResult>(headless_script.error());
         }
 
+        auto wrote_headless_script =
+            write_client_headless_script_file(paths.headless_script_file, headless_script.value());
+        if (!wrote_headless_script) {
+            return domain::fail<ClientLaunchResult>(wrote_headless_script.error());
+        }
+
         argv.push_back("/bin/bash");
-        argv.push_back("-lc");
-        argv.push_back(headless_script.value());
+        argv.push_back(paths.headless_script_file.string());
     } else {
+        remove_client_headless_script_file(paths.headless_script_file);
         argv.push_back(paths.launcher_path.string());
     }
 
     if (!run_command_capture_stdout(argv).has_value()) {
+        if (headless_launch.has_value()) {
+            remove_client_headless_script_file(paths.headless_script_file);
+        }
         return domain::fail<ClientLaunchResult>(client_error(
             "systemd_launch_failed",
             "failed to launch TeamSpeak client through systemd-run --user",
@@ -2373,6 +2431,9 @@ auto launch_client_process_via_systemd(
 
     if (!unit_status.has_value() || unit_status->main_pid <= 0) {
         (void)stop_client_systemd_unit(*systemd_paths, unit_name);
+        if (headless_launch.has_value()) {
+            remove_client_headless_script_file(paths.headless_script_file);
+        }
         return domain::fail<ClientLaunchResult>(client_error(
             "systemd_launch_failed",
             "systemd-run started a transient unit but no main client pid was reported",
@@ -2383,6 +2444,9 @@ auto launch_client_process_via_systemd(
     auto wrote_unit = write_client_unit_file(paths.unit_file, unit_name);
     if (!wrote_unit) {
         (void)stop_client_systemd_unit(*systemd_paths, unit_name);
+        if (headless_launch.has_value()) {
+            remove_client_headless_script_file(paths.headless_script_file);
+        }
         return domain::fail<ClientLaunchResult>(wrote_unit.error());
     }
 
@@ -2422,6 +2486,7 @@ auto client_status_process() -> domain::Result<output::CommandOutput> {
                 if (!unit_active) {
                     remove_pid_file(paths.value().pid_file);
                     remove_client_unit_file(paths.value().unit_file);
+                    remove_client_headless_script_file(paths.value().headless_script_file);
                 }
             }
         }
@@ -2543,6 +2608,7 @@ auto start_client_process(
                 if (!unit_active) {
                     remove_pid_file(paths.value().pid_file);
                     remove_client_unit_file(paths.value().unit_file);
+                    remove_client_headless_script_file(paths.value().headless_script_file);
                 }
             }
         }
@@ -2576,6 +2642,7 @@ auto start_client_process(
     }
 
     remove_client_unit_file(paths.value().unit_file);
+    remove_client_headless_script_file(paths.value().headless_script_file);
 
     domain::Result<ClientLaunchResult> launched = domain::fail<ClientLaunchResult>(client_error(
         "launch_failed",
@@ -2618,6 +2685,7 @@ auto start_client_process(
                 }
             }
             remove_client_unit_file(paths.value().unit_file);
+            remove_client_headless_script_file(paths.value().headless_script_file);
         } else {
             (void)::kill(launched.value().pid, SIGTERM);
         }
@@ -2666,6 +2734,7 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
                     const pid_t stopped_pid = unit_status->main_pid > 0 ? unit_status->main_pid : 0;
                     remove_pid_file(paths.value().pid_file);
                     remove_client_unit_file(paths.value().unit_file);
+                    remove_client_headless_script_file(paths.value().headless_script_file);
                     return domain::ok(client_process_output(
                         "stop",
                         "stopped",
@@ -2679,6 +2748,7 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
                        unit_status->active_state == "failed") {
                 remove_client_unit_file(paths.value().unit_file);
                 remove_pid_file(paths.value().pid_file);
+                remove_client_headless_script_file(paths.value().headless_script_file);
             }
         }
     }
@@ -2696,6 +2766,7 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
                 progress("No tracked pid file was available, so the detected TeamSpeak client process will be stopped.");
             }
         } else {
+            remove_client_headless_script_file(paths.value().headless_script_file);
             return domain::ok(client_process_missing_output(
                 "stop",
                 paths.value(),
@@ -2715,6 +2786,7 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
                 progress("The tracked pid file was stale, so the detected TeamSpeak client process will be stopped.");
             }
         } else {
+            remove_client_headless_script_file(paths.value().headless_script_file);
             return domain::ok(client_process_missing_output(
                 "stop",
                 paths.value(),
@@ -2730,6 +2802,7 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
     if (!signal_client_target(*pid, SIGTERM)) {
         if (errno == ESRCH) {
             remove_pid_file(paths.value().pid_file);
+            remove_client_headless_script_file(paths.value().headless_script_file);
             return domain::ok(client_process_missing_output(
                 "stop",
                 paths.value(),
@@ -2780,6 +2853,7 @@ auto stop_client_process(bool force, const CommandRouter::ProgressSink& progress
     }
 
     remove_pid_file(paths.value().pid_file);
+    remove_client_headless_script_file(paths.value().headless_script_file);
     return domain::ok(client_process_output(
         "stop",
         "stopped",
