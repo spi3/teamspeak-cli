@@ -27,6 +27,15 @@ auto backend_error(std::string code, std::string message, domain::ExitCode exit_
     return domain::make_error("plugin", std::move(code), std::move(message), exit_code);
 }
 
+constexpr auto ts3_call_succeeded(unsigned int error_code) -> bool {
+    return error_code == ERROR_ok || error_code == ERROR_ok_no_update;
+}
+
+auto is_placeholder_ts3_error_message(std::string_view message) -> bool {
+    const auto normalized = util::lower_copy(util::trim(message));
+    return normalized.empty() || normalized == "ok";
+}
+
 auto now_event(std::string type, std::string summary, std::map<std::string, std::string> fields = {})
     -> domain::Event {
     return domain::Event{
@@ -368,7 +377,7 @@ auto PluginHostBackend::shutdown() -> domain::Result<void> {
 
     if (custom_capture_device_registered && functions.unregisterCustomDevice != nullptr) {
         const unsigned int error = functions.unregisterCustomDevice(kCustomCaptureDeviceId.data());
-        if (error != ERROR_ok && error != ERROR_sound_unknown_device) {
+        if (!ts3_call_succeeded(error) && error != ERROR_sound_unknown_device) {
             return domain::fail(translate_error(error, "failed to unregister TeamSpeak custom capture device"));
         }
     }
@@ -782,12 +791,12 @@ auto PluginHostBackend::set_self_muted(bool muted) -> domain::Result<void> {
     const unsigned int set_error = functions.setClientSelfVariableAsInt(
         handler_id.value(), CLIENT_INPUT_MUTED, muted ? MUTEINPUT_MUTED : MUTEINPUT_NONE
     );
-    if (set_error != ERROR_ok) {
+    if (!ts3_call_succeeded(set_error)) {
         return domain::fail(translate_error(set_error, "failed to update TeamSpeak microphone mute state"));
     }
 
     const unsigned int flush_error = functions.flushClientSelfUpdates(handler_id.value(), nullptr);
-    if (flush_error != ERROR_ok) {
+    if (!ts3_call_succeeded(flush_error)) {
         return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak microphone mute update"));
     }
 
@@ -822,7 +831,7 @@ auto PluginHostBackend::set_self_away(bool away, std::string_view message) -> do
     const unsigned int away_error = functions.setClientSelfVariableAsInt(
         handler_id.value(), CLIENT_AWAY, away ? AWAY_ZZZ : AWAY_NONE
     );
-    if (away_error != ERROR_ok) {
+    if (!ts3_call_succeeded(away_error)) {
         return domain::fail(translate_error(away_error, "failed to update TeamSpeak away status"));
     }
 
@@ -830,12 +839,12 @@ auto PluginHostBackend::set_self_away(bool away, std::string_view message) -> do
     const unsigned int message_error = functions.setClientSelfVariableAsString(
         handler_id.value(), CLIENT_AWAY_MESSAGE, away_message.c_str()
     );
-    if (message_error != ERROR_ok) {
+    if (!ts3_call_succeeded(message_error)) {
         return domain::fail(translate_error(message_error, "failed to update TeamSpeak away message"));
     }
 
     const unsigned int flush_error = functions.flushClientSelfUpdates(handler_id.value(), nullptr);
-    if (flush_error != ERROR_ok) {
+    if (!ts3_call_succeeded(flush_error)) {
         return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak away status update"));
     }
 
@@ -1009,7 +1018,7 @@ auto PluginHostBackend::ensure_custom_capture_device_registered(const TS3Functio
         bridge::kMediaSampleRate,
         bridge::kMediaPlaybackChannels
     );
-    if (error != ERROR_ok && error != ERROR_sound_device_already_registerred) {
+    if (!ts3_call_succeeded(error) && error != ERROR_sound_device_already_registerred) {
         return domain::fail(translate_error(error, "failed to register TeamSpeak custom capture device"));
     }
 
@@ -1089,13 +1098,13 @@ auto PluginHostBackend::activate_custom_capture_device(
     const unsigned int open_error = functions.openCaptureDevice(
         session.handler_id, kCustomCaptureMode.data(), kCustomCaptureDeviceId.data()
     );
-    if (open_error != ERROR_ok) {
+    if (!ts3_call_succeeded(open_error)) {
         return domain::fail(translate_error(open_error, "failed to open TeamSpeak custom capture device"));
     }
 
     if (functions.activateCaptureDevice != nullptr) {
         const unsigned int activate_error = functions.activateCaptureDevice(session.handler_id);
-        if (activate_error != ERROR_ok) {
+        if (!ts3_call_succeeded(activate_error)) {
             return domain::fail(translate_error(
                 activate_error, "failed to activate TeamSpeak custom capture device"
             ));
@@ -1105,7 +1114,7 @@ auto PluginHostBackend::activate_custom_capture_device(
     const unsigned int input_active_error = functions.setClientSelfVariableAsInt(
         session.handler_id, CLIENT_INPUT_DEACTIVATED, INPUT_ACTIVE
     );
-    if (input_active_error != ERROR_ok) {
+    if (!ts3_call_succeeded(input_active_error)) {
         return domain::fail(translate_error(
             input_active_error, "failed to force TeamSpeak capture input active for media playback"
         ));
@@ -1113,14 +1122,14 @@ auto PluginHostBackend::activate_custom_capture_device(
 
     const unsigned int input_unmuted_error =
         functions.setClientSelfVariableAsInt(session.handler_id, CLIENT_INPUT_MUTED, MUTEINPUT_NONE);
-    if (input_unmuted_error != ERROR_ok) {
+    if (!ts3_call_succeeded(input_unmuted_error)) {
         return domain::fail(translate_error(
             input_unmuted_error, "failed to unmute TeamSpeak capture input for media playback"
         ));
     }
 
     const unsigned int flush_error = functions.flushClientSelfUpdates(session.handler_id, nullptr);
-    if (flush_error != ERROR_ok) {
+    if (!ts3_call_succeeded(flush_error)) {
         return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak capture state update"));
     }
 
@@ -1144,12 +1153,12 @@ auto PluginHostBackend::restore_media_playback_session(
         const char* capture_device = session.capture_device_known ? session.capture_device.c_str() : "";
         const unsigned int open_error =
             functions.openCaptureDevice(session.handler_id, capture_mode, capture_device);
-        if (open_error != ERROR_ok) {
+        if (!ts3_call_succeeded(open_error)) {
             return domain::fail(translate_error(open_error, "failed to restore TeamSpeak capture device"));
         }
         if (functions.activateCaptureDevice != nullptr) {
             const unsigned int activate_error = functions.activateCaptureDevice(session.handler_id);
-            if (activate_error != ERROR_ok) {
+            if (!ts3_call_succeeded(activate_error)) {
                 return domain::fail(translate_error(
                     activate_error, "failed to reactivate the restored TeamSpeak capture device"
                 ));
@@ -1163,7 +1172,7 @@ auto PluginHostBackend::restore_media_playback_session(
             const unsigned int input_error = functions.setClientSelfVariableAsInt(
                 session.handler_id, CLIENT_INPUT_DEACTIVATED, session.input_deactivated
             );
-            if (input_error != ERROR_ok) {
+            if (!ts3_call_succeeded(input_error)) {
                 return domain::fail(translate_error(
                     input_error, "failed to restore TeamSpeak input deactivation state"
                 ));
@@ -1173,12 +1182,12 @@ auto PluginHostBackend::restore_media_playback_session(
             const unsigned int mute_error = functions.setClientSelfVariableAsInt(
                 session.handler_id, CLIENT_INPUT_MUTED, session.input_muted
             );
-            if (mute_error != ERROR_ok) {
+            if (!ts3_call_succeeded(mute_error)) {
                 return domain::fail(translate_error(mute_error, "failed to restore TeamSpeak input mute state"));
             }
         }
         const unsigned int flush_error = functions.flushClientSelfUpdates(session.handler_id, nullptr);
-        if (flush_error != ERROR_ok) {
+        if (!ts3_call_succeeded(flush_error)) {
             return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak input state restore"));
         }
     }
@@ -1324,12 +1333,15 @@ auto PluginHostBackend::resolve_media_speaker(
 auto PluginHostBackend::translate_error(unsigned int error_code, std::string_view fallback) const -> domain::Error {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!functions_.has_value()) {
-        return backend_error("ts3_error", std::string(fallback));
+        return backend_error("ts3_error", std::string(fallback) + " (" + std::to_string(error_code) + ")");
     }
     char* raw_message = nullptr;
-    if ((*functions_).getErrorMessage(error_code, &raw_message) == ERROR_ok && raw_message != nullptr) {
+    if ((*functions_).getErrorMessage != nullptr &&
+        (*functions_).getErrorMessage(error_code, &raw_message) == ERROR_ok && raw_message != nullptr) {
         Ts3Owned<char> message_owner(&*functions_, raw_message);
-        return backend_error("ts3_error", std::string(raw_message), domain::ExitCode::sdk);
+        if (!is_placeholder_ts3_error_message(raw_message)) {
+            return backend_error("ts3_error", std::string(raw_message), domain::ExitCode::sdk);
+        }
     }
     return backend_error("ts3_error", std::string(fallback) + " (" + std::to_string(error_code) + ")");
 }
