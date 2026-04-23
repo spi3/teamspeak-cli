@@ -31,10 +31,11 @@ Use this when you want a normal user install from the latest published GitHub re
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/spi3/teamspeak-cli/main/scripts/install-release.sh | bash
+```
 
+```bash
 ts version
 ts client start
-ts --profile plugin-local plugin info
 ```
 
 ### Offline Development
