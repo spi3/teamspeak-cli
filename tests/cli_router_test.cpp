@@ -183,11 +183,23 @@ int main() {
         "client help should include the client logs example"
     );
 
+    const std::string playback_help = router.render_help({"playback"});
+    tests::expect_contains(
+        playback_help,
+        "send  Send a WAV file through the plugin media bridge",
+        "playback help should list playback send"
+    );
+    tests::expect_contains(
+        playback_help,
+        "ts playback send --file <wav> [--clear] [--timeout-ms N]",
+        "playback help should include the playback send example"
+    );
+
     const std::string away_help = router.render_help({"away"});
     tests::expect_contains(away_help, "ts away [--message <text>]", "away help should include message usage");
 
     const std::vector<std::string> grouped_commands = {
-        "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "events"
+        "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "playback", "events"
     };
     for (const auto& grouped_command : grouped_commands) {
         auto grouped = parse_command(router, {grouped_command});
@@ -228,6 +240,8 @@ int main() {
     );
 
     const fs::path temp_dir = tests::make_temp_path("ts-cli-router-test");
+    std::error_code temp_cleanup_ec;
+    fs::remove_all(temp_dir, temp_cleanup_ec);
     fs::create_directories(temp_dir);
     const fs::path config_path = temp_dir / "config.ini";
 
@@ -542,6 +556,26 @@ int main() {
         "ts message send --help",
         "invalid message target should suggest the command help"
     );
+
+    auto playback_send = parse_command(
+        router,
+        {"playback", "send", "--file", "/tmp/message.wav", "--clear", "--timeout-ms", "5000"}
+    );
+    tests::expect(playback_send.ok(), "playback send parse should succeed");
+    tests::expect_eq(playback_send.value().path.size(), std::size_t(2), "playback send path size");
+    tests::expect_eq(playback_send.value().path[0], std::string("playback"), "playback send path head");
+    tests::expect_eq(playback_send.value().path[1], std::string("send"), "playback send path tail");
+    tests::expect_eq(
+        playback_send.value().options.at("file"),
+        std::string("/tmp/message.wav"),
+        "playback send file option"
+    );
+    tests::expect_eq(
+        playback_send.value().options.at("timeout-ms"),
+        std::string("5000"),
+        "playback send timeout option"
+    );
+    tests::expect(playback_send.value().flags.contains("clear"), "playback send clear flag");
 
     auto missing_profile = parse_command(
         router, {"profile", "use", "missing-profile", "--config", config_path.string()}

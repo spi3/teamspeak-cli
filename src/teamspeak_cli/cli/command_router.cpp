@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <fcntl.h>
@@ -22,6 +23,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include "teamspeak_cli/bridge/media_bridge.hpp"
+#include "teamspeak_cli/bridge/media_client.hpp"
 #include "teamspeak_cli/bridge/socket_paths.hpp"
 #include "teamspeak_cli/build/version.hpp"
 #include "teamspeak_cli/cli/completion.hpp"
@@ -95,6 +98,8 @@ const std::vector<CommandDoc>& command_docs() {
         {{"message"}, "ts message <subcommand>", "Send TeamSpeak text messages", {}},
         {{"message", "send"}, "ts message send --target <client|channel> --id <id-or-name> --text <message>", "Send a text message if supported", {"--target", "--id", "--text"}},
         {{"message", "inbox"}, "ts message inbox [--count N]", "Show messages captured by the local TeamSpeak event daemon", {"--count"}},
+        {{"playback"}, "ts playback <subcommand>", "Send outbound TeamSpeak playback audio", {}},
+        {{"playback", "send"}, "ts playback send --file <wav> [--clear] [--timeout-ms N]", "Send a WAV file through the plugin media bridge", {"--file", "--clear", "--timeout-ms"}},
         {{"events"}, "ts events <subcommand>", "Watch backend domain events", {}},
         {{"events", "watch"}, "ts events watch [--count N] [--timeout-ms N]", "Watch backend domain events", {"--count", "--timeout-ms"}},
         {{"events", "hook"}, "ts events hook <subcommand>", "Manage daemon event hooks", {}},
@@ -249,6 +254,9 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     if (path == "message send") {
         return "send the TeamSpeak message";
     }
+    if (path == "playback send") {
+        return "send TeamSpeak playback audio";
+    }
     if (path == "events watch") {
         return "watch TeamSpeak events";
     }
@@ -283,6 +291,18 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
     if (error.code == "socket_timeout") {
         add_error_hint(error, "Run `ts plugin info` to check whether the ts3cli plugin bridge is responsive.");
         add_error_hint(error, "Restart the TeamSpeak client if the plugin bridge appears stuck.");
+    }
+
+    if (path == "playback send" && error.category == "media") {
+        add_error_hint(error, "Run `ts plugin info` to verify the media socket path and accepted playback format.");
+    }
+
+    if (path == "playback send" && error.code == "client_busy") {
+        add_error_hint(error, "Stop the other media socket consumer before retrying playback.");
+    }
+
+    if (path == "playback send" && error.code == "unsupported_audio_format") {
+        add_error_hint(error, "Use a WAV file encoded as pcm_s16le at 48000 Hz mono.");
     }
 
     if (error.code == "channel_not_found") {
@@ -3227,6 +3247,41 @@ auto next_hook_id(const std::vector<daemon::Hook>& hooks) -> std::string {
     return std::to_string(best + 1);
 }
 
+auto size_to_i64(std::size_t value) -> std::int64_t {
+    if (value > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+        return std::numeric_limits<std::int64_t>::max();
+    }
+    return static_cast<std::int64_t>(value);
+}
+
+auto playback_send_value(const bridge::PlaybackSendResult& result) -> output::ValueHolder {
+    return output::make_object({
+        {"result", output::make_string("sent")},
+        {"file", output::make_string(result.file_path.string())},
+        {"media_format", output::make_string(result.media_format)},
+        {"media_socket_path", output::make_string(result.socket_path)},
+        {"frames_sent", output::make_int(size_to_i64(result.frames_sent))},
+        {"bytes_sent", output::make_int(size_to_i64(result.bytes_sent))},
+        {"cleared_first", output::make_bool(result.cleared_first)},
+        {"stop_reason", output::make_string(result.stop_reason)},
+    });
+}
+
+auto playback_send_view(const bridge::PlaybackSendResult& result) -> std::string {
+    std::ostringstream out;
+    out << "Sent playback audio from " << result.file_path.string() << '.';
+    out << "\n\nPlayback Context\n";
+    out << output::render_details_block(output::Details{{
+        {"Format", result.media_format},
+        {"Frames", std::to_string(result.frames_sent)},
+        {"Bytes", std::to_string(result.bytes_sent)},
+        {"MediaSocketPath", result.socket_path},
+        {"ClearedFirst", result.cleared_first ? "yes" : "no"},
+        {"StopReason", result.stop_reason.empty() ? "-" : result.stop_reason},
+    }});
+    return out.str();
+}
+
 template <typename Func>
 auto with_session(
     const ParsedCommand& command,
@@ -3553,7 +3608,7 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 option == "target" || option == "id" || option == "text" ||
                 option == "count" || option == "timeout-ms" || option == "poll-ms" ||
                 option == "type" || option == "exec" || option == "message-kind" ||
-                option == "copy-from" || option == "message";
+                option == "copy-from" || option == "message" || option == "file";
 
             if (!takes_value) {
                 parsed.flags.insert(option);
@@ -4543,6 +4598,71 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                         {"text", output::make_string(text.value())},
                     }),
                     .human = std::string("message sent"),
+                });
+            });
+        }
+
+        if (path == "playback send") {
+            auto file = require_option(command, "file");
+            if (!file) {
+                return domain::fail<output::CommandOutput>(file.error());
+            }
+            auto timeout = parse_timeout_ms(command.options, 60000);
+            if (!timeout) {
+                return domain::fail<output::CommandOutput>(timeout.error());
+            }
+
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto& resolved) {
+                if (!util::iequals(resolved.profile.backend, "plugin")) {
+                    return domain::fail<output::CommandOutput>(app_error(
+                        "media",
+                        "plugin_backend_required",
+                        "playback send requires the plugin backend because media injection is exposed by the TeamSpeak client plugin",
+                        domain::ExitCode::unsupported
+                    ));
+                }
+
+                auto info = session.plugin_info();
+                if (!info) {
+                    return domain::fail<output::CommandOutput>(info.error());
+                }
+                if (!info.value().plugin_available) {
+                    return domain::fail<output::CommandOutput>(app_error(
+                        "media",
+                        "plugin_unavailable",
+                        "playback send requires a running TeamSpeak client with the ts3cli plugin bridge available",
+                        domain::ExitCode::connection
+                    ));
+                }
+                if (info.value().media_socket_path.empty() || info.value().media_transport.empty()) {
+                    return domain::fail<output::CommandOutput>(app_error(
+                        "media",
+                        "media_bridge_unavailable",
+                        "plugin info did not report an available media bridge",
+                        domain::ExitCode::connection
+                    ));
+                }
+                if (info.value().media_format != bridge::media_format_description()) {
+                    return domain::fail<output::CommandOutput>(app_error(
+                        "media",
+                        "unsupported_media_format",
+                        "plugin media bridge reports unsupported playback format: " + info.value().media_format,
+                        domain::ExitCode::unsupported
+                    ));
+                }
+
+                auto sent = bridge::send_playback_file(bridge::PlaybackSendRequest{
+                    .socket_path = info.value().media_socket_path,
+                    .file_path = file.value(),
+                    .timeout = timeout.value(),
+                    .clear_first = command.flags.contains("clear"),
+                });
+                if (!sent) {
+                    return domain::fail<output::CommandOutput>(sent.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = playback_send_value(sent.value()),
+                    .human = playback_send_view(sent.value()),
                 });
             });
         }

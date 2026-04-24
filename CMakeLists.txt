@@ -91,6 +91,7 @@ configure_file(cmake/version.hpp.in "${TS_GENERATED_INCLUDE_DIR}/teamspeak_cli/b
 
 set(TS_COMMON_SOURCES
   src/teamspeak_cli/bridge/media_bridge.cpp
+  src/teamspeak_cli/bridge/media_client.cpp
   src/teamspeak_cli/bridge/protocol.cpp
   src/teamspeak_cli/cli/completion.cpp
   src/teamspeak_cli/cli/command_router.cpp

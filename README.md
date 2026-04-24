@@ -153,6 +153,7 @@ The CLI is organized into small command groups:
 - `channel list`, `channel get`, `channel join`, `channel clients`
 - `client status`, `client start`, `client stop`, `client list`, `client get`
 - `message send`, `message inbox`
+- `playback send`
 - `events watch`, `events hook add`, `events hook list`, `events hook remove`
 - `completion bash|zsh|fish|powershell`
 
@@ -177,6 +178,7 @@ ts --profile plugin-local client list
 ts daemon start
 ts message inbox
 ts --profile plugin-local message send --target channel --id Lobby --text "hello"
+ts --profile plugin-local playback send --file ./message.wav
 ```
 
 To connect through the real client:

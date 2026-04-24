@@ -46,6 +46,31 @@ printf '%s\n' "${status_json}" | grep -q '"phase":"connected"'
 channel_json="$("${ts_bin}" --json channel list --config "${config_path}")"
 printf '%s\n' "${channel_json}" | grep -q '"name":"Lobby"'
 
+playback_wav="${tmp_dir}/message.wav"
+{
+  printf 'RIFF'
+  printf '\344\003\000\000'
+  printf 'WAVE'
+  printf 'fmt '
+  printf '\020\000\000\000'
+  printf '\001\000'
+  printf '\001\000'
+  printf '\200\273\000\000'
+  printf '\000\167\001\000'
+  printf '\002\000'
+  printf '\020\000'
+  printf 'data'
+  printf '\300\003\000\000'
+  for _ in $(seq 1 480); do
+    printf '\000\000'
+  done
+} >"${playback_wav}"
+
+playback_json="$("${ts_bin}" --json playback send --file "${playback_wav}" --timeout-ms 5000 --config "${config_path}")"
+printf '%s\n' "${playback_json}" | grep -q '"result":"sent"'
+printf '%s\n' "${playback_json}" | grep -q '"frames_sent":480'
+printf '%s\n' "${playback_json}" | grep -q '"stop_reason":"drained"'
+
 client_json="$("${ts_bin}" --json client list --config "${config_path}")"
 printf '%s\n' "${client_json}" | grep -q '"nickname":"terminal"'
 

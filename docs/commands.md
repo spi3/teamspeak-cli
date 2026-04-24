@@ -66,6 +66,7 @@ Every command accepts these global flags:
 
 - `ts message send --target <client|channel> --id <id-or-name> --text "<message>"`
 - `ts message inbox [--count N]`
+- `ts playback send --file <wav> [--clear] [--timeout-ms N]`
 - `ts events watch [--count N] [--timeout-ms N]`
 - `ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]`
 - `ts events hook list`
@@ -96,6 +97,7 @@ and the boundary between domain events and media bridge frames.
 - `daemon start` launches a local background watcher that polls translated TeamSpeak events, journals incoming messages, and executes matching hook commands.
 - `daemon stop` only stops the local watcher process. It does not disconnect the TeamSpeak client from the current server.
 - `message inbox` reads the daemon-managed message journal, so it can show captured messages even when no `ts` command is actively watching events.
+- `playback send` streams a WAV file through the plugin media bridge and waits for the bridge to drain the queued playback before returning.
 - the daemon hook matcher is generic, but the daemon-managed inbox currently journals only `message.received` events.
 
 ## Progress Streaming
@@ -134,6 +136,8 @@ The plugin media socket resolves in this order:
 - if the control socket does not end in `.sock`, `.media` is appended instead
 
 `ts plugin info` reports the control socket path, media socket path, media transport, and accepted playback format.
+
+`ts playback send --file message.wav` is the first-class CLI wrapper around playback injection. The current version is deliberately strict: the file must already be WAV PCM signed 16-bit little-endian, 48000 Hz, mono. Use `--clear` to interrupt any active bridge playback before sending the file, and `--timeout-ms N` to bound the total send and drain wait.
 
 ## Client Process Management
 

@@ -27,6 +27,18 @@ The media socket path resolves in this order:
 
 `ts plugin info` reports both the control socket path and the media socket path for the active plugin backend.
 
+## CLI Playback Helper
+
+For one-shot outbound playback, prefer the native command instead of opening the media socket directly:
+
+```bash
+ts --profile plugin-local playback send --file ./message.wav
+```
+
+The helper resolves the media socket through `ts plugin info`, validates that the active profile uses the plugin backend, sends `playback.start`, streams `playback.chunk` frames with pacing, sends `playback.stop`, and waits for `playback.stopped`.
+
+The current helper accepts WAV files that already match the V1 playback format: PCM signed 16-bit little-endian, 48000 Hz, mono. Use `--clear` to send `playback.clear` before starting new playback.
+
 ## Framing
 
 Each frame starts with one tab-separated header line terminated by `\n`.
