@@ -66,6 +66,8 @@ The plugin target:
 - exposes a dedicated media bridge for speaker events, ingress voice chunks, and half-duplex playback injection
   through a plugin-managed custom capture device
 
+See [events.md](events.md) for the domain event catalog and backend availability.
+
 ## Control And Media Sockets
 
 The plugin and CLI must agree on the control socket path, and media consumers must discover the companion media socket path.

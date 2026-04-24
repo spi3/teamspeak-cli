@@ -14,6 +14,9 @@ The media bridge is the V1 half-duplex path for:
 
 V1 intentionally supports one active consumer connection at a time.
 
+The media socket frame stream is separate from `ts events watch` and daemon hooks. See [events.md](events.md) for the
+domain event catalog exposed through the normal control path.
+
 ## Socket Discovery
 
 The media socket path resolves in this order:

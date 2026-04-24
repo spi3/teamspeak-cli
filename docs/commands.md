@@ -71,6 +71,9 @@ Every command accepts these global flags:
 - `ts events hook list`
 - `ts events hook remove <id>`
 
+See [events.md](events.md) for the supported event types, backend availability, payload fields, hook filtering behavior,
+and the boundary between domain events and media bridge frames.
+
 ### Shell Completion
 
 - `ts completion bash`
@@ -93,6 +96,7 @@ Every command accepts these global flags:
 - `daemon start` launches a local background watcher that polls translated TeamSpeak events, journals incoming messages, and executes matching hook commands.
 - `daemon stop` only stops the local watcher process. It does not disconnect the TeamSpeak client from the current server.
 - `message inbox` reads the daemon-managed message journal, so it can show captured messages even when no `ts` command is actively watching events.
+- the daemon hook matcher is generic, but the daemon-managed inbox currently journals only `message.received` events.
 
 ## Progress Streaming
 

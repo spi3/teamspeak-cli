@@ -78,6 +78,8 @@ The TeamSpeak side translates client callbacks into stable domain events and pus
 
 That keeps callback-thread behavior and TeamSpeak-specific details behind the backend boundary.
 
+See [events.md](events.md) for the current domain event catalog and backend availability.
+
 ## Local Event Daemon
 
 `ts daemon start` runs a small local watcher process outside the TeamSpeak client. It reuses the same backend seam as the rest of the CLI, polls `next_event`, and then:
@@ -87,6 +89,7 @@ That keeps callback-thread behavior and TeamSpeak-specific details behind the ba
 - executes matching hook commands with the event JSON on `stdin`
 
 That lets a CLI user inspect messages later with `ts message inbox` or trigger external scripts without keeping an interactive `ts events watch` process open.
+Hook matching is generic, but daemon inbox journaling is currently message-only.
 
 ## Command Lifecycle
 
