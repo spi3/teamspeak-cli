@@ -99,6 +99,7 @@ const std::vector<CommandDoc>& command_docs() {
         {{"message", "send"}, "ts message send --target <client|channel> --id <id-or-name> --text <message>", "Send a text message if supported", {"--target", "--id", "--text"}},
         {{"message", "inbox"}, "ts message inbox [--count N]", "Show messages captured by the local TeamSpeak event daemon", {"--count"}},
         {{"playback"}, "ts playback <subcommand>", "Send outbound TeamSpeak playback audio", {}},
+        {{"playback", "status"}, "ts playback status", "Show media playback and audio routing diagnostics", {}},
         {{"playback", "send"}, "ts playback send --file <wav> [--clear] [--timeout-ms N]", "Send a WAV file through the plugin media bridge", {"--file", "--clear", "--timeout-ms"}},
         {{"events"}, "ts events <subcommand>", "Watch backend domain events", {}},
         {{"events", "watch"}, "ts events watch [--count N] [--timeout-ms N]", "Watch backend domain events", {"--count", "--timeout-ms"}},
@@ -256,6 +257,9 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     }
     if (path == "playback send") {
         return "send TeamSpeak playback audio";
+    }
+    if (path == "playback status") {
+        return "read TeamSpeak playback diagnostics";
     }
     if (path == "events watch") {
         return "watch TeamSpeak events";
@@ -3282,6 +3286,22 @@ auto playback_send_view(const bridge::PlaybackSendResult& result) -> std::string
     return out.str();
 }
 
+auto playback_status_view(const domain::MediaDiagnostics& diagnostics) -> std::string {
+    std::ostringstream out;
+    if (diagnostics.injected_playback_attached_to_capture) {
+        out << "Injected playback is attached to the TeamSpeak custom capture transmit path.";
+    } else if (diagnostics.playback_active) {
+        out << "Playback is queued or active, but it is not currently attached to the custom capture transmit path.";
+    } else if (diagnostics.transmit_path_ready) {
+        out << "The TeamSpeak custom capture transmit path is available for playback injection.";
+    } else {
+        out << "The TeamSpeak custom capture transmit path is not ready.";
+    }
+    out << "\n\nMedia Diagnostics\n";
+    out << output::render_details_block(output::media_diagnostics_view(diagnostics));
+    return out.str();
+}
+
 template <typename Func>
 auto with_session(
     const ParsedCommand& command,
@@ -4598,6 +4618,19 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                         {"text", output::make_string(text.value())},
                     }),
                     .human = std::string("message sent"),
+                });
+            });
+        }
+
+        if (path == "playback status") {
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto info = session.plugin_info();
+                if (!info) {
+                    return domain::fail<output::CommandOutput>(info.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(info.value().media_diagnostics),
+                    .human = playback_status_view(info.value().media_diagnostics),
                 });
             });
         }

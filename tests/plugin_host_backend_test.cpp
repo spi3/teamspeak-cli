@@ -113,6 +113,25 @@ unsigned int fake_get_current_capture_device_name(std::uint64_t, char** result, 
     return ERROR_ok;
 }
 
+unsigned int fake_get_current_playback_mode(std::uint64_t, char** result) {
+    if (result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    *result = duplicate_string("pulse");
+    return ERROR_ok;
+}
+
+unsigned int fake_get_current_playback_device_name(std::uint64_t, char** result, int* is_default) {
+    if (result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    *result = duplicate_string("alsa_output.usb-0");
+    if (is_default != nullptr) {
+        *is_default = 0;
+    }
+    return ERROR_ok;
+}
+
 unsigned int fake_get_client_self_variable_as_int(std::uint64_t, std::size_t flag, int* result) {
     if (result == nullptr) {
         return ERROR_parameter_invalid;
@@ -272,7 +291,8 @@ class TestMediaBridge final : public teamspeak_cli::bridge::MediaBridge {
         if (!filled_once_) {
             filled_once_ = true;
             for (int index = 0; index < sample_count; ++index) {
-                samples[index] = static_cast<int>(pending_samples_.size()) > index ? pending_samples_[index] : 0;
+                const auto sample_index = static_cast<std::size_t>(index);
+                samples[index] = pending_samples_.size() > sample_index ? pending_samples_[sample_index] : 0;
             }
             return true;
         }
@@ -301,6 +321,8 @@ int main() {
     functions.getCurrentServerConnectionHandlerID = fake_current_handler_id;
     functions.getCurrentCaptureMode = fake_get_current_capture_mode;
     functions.getCurrentCaptureDeviceName = fake_get_current_capture_device_name;
+    functions.getCurrentPlayBackMode = fake_get_current_playback_mode;
+    functions.getCurrentPlaybackDeviceName = fake_get_current_playback_device_name;
     functions.getClientSelfVariableAsInt = fake_get_client_self_variable_as_int;
     functions.registerCustomDevice = fake_register_custom_device;
     functions.unregisterCustomDevice = fake_unregister_custom_device;
@@ -316,6 +338,36 @@ int main() {
     backend.set_functions(functions);
     auto initialized = backend.initialize(sdk::InitOptions{});
     tests::expect(initialized.ok(), "plugin host backend should initialize with fake TeamSpeak functions");
+
+    auto initial_info = backend.plugin_info();
+    tests::expect(initial_info.ok(), "plugin info should expose media diagnostics");
+    tests::expect_eq(
+        initial_info.value().media_diagnostics.capture.mode,
+        std::string("pulse"),
+        "media diagnostics should report the effective TeamSpeak capture mode"
+    );
+    tests::expect_eq(
+        initial_info.value().media_diagnostics.capture.device,
+        std::string("alsa_input.usb-0"),
+        "media diagnostics should report the effective TeamSpeak capture device"
+    );
+    tests::expect_eq(
+        initial_info.value().media_diagnostics.playback.device,
+        std::string("alsa_output.usb-0"),
+        "media diagnostics should report the effective TeamSpeak playback device"
+    );
+    tests::expect(
+        initial_info.value().media_diagnostics.custom_capture_path_available,
+        "media diagnostics should report when the custom capture transmit path is available"
+    );
+    tests::expect(
+        initial_info.value().media_diagnostics.transmit_path_ready,
+        "media diagnostics should report the transmit path as ready when a handler is available"
+    );
+    tests::expect(
+        !initial_info.value().media_diagnostics.captured_voice_edit_attached,
+        "media diagnostics should make clear that playback is not attached through captured-voice editing"
+    );
 
     auto media_bridge = std::make_shared<TestMediaBridge>();
     media_bridge->arm({111, 222, 333, 444});

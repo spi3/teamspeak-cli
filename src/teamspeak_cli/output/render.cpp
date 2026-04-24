@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string_view>
 
@@ -270,6 +271,64 @@ auto event_endpoint(const domain::Event& event) -> std::optional<std::string> {
     return endpoint_for(server_it->second, port);
 }
 
+auto size_value(std::size_t value) -> ValueHolder {
+    if (value > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+        return make_int(std::numeric_limits<std::int64_t>::max());
+    }
+    return make_int(static_cast<std::int64_t>(value));
+}
+
+auto device_binding_value(const domain::AudioDeviceBinding& binding) -> ValueHolder {
+    return make_object({
+        {"known", make_bool(binding.known)},
+        {"mode", make_string(binding.mode)},
+        {"device", make_string(binding.device)},
+        {"is_default", make_bool(binding.is_default)},
+    });
+}
+
+auto media_diagnostics_value(const domain::MediaDiagnostics& diagnostics) -> ValueHolder {
+    return make_object({
+        {"capture", device_binding_value(diagnostics.capture)},
+        {"playback", device_binding_value(diagnostics.playback)},
+        {"pulse_sink", make_string(diagnostics.pulse_sink)},
+        {"pulse_source", make_string(diagnostics.pulse_source)},
+        {"pulse_source_is_monitor", make_bool(diagnostics.pulse_source_is_monitor)},
+        {"consumer_connected", make_bool(diagnostics.consumer_connected)},
+        {"playback_active", make_bool(diagnostics.playback_active)},
+        {"queued_playback_samples", size_value(diagnostics.queued_playback_samples)},
+        {"active_speaker_count", size_value(diagnostics.active_speaker_count)},
+        {"dropped_audio_chunks", size_value(diagnostics.dropped_audio_chunks)},
+        {"dropped_playback_chunks", size_value(diagnostics.dropped_playback_chunks)},
+        {"last_error", make_string(diagnostics.last_error)},
+        {"custom_capture_device_registered", make_bool(diagnostics.custom_capture_device_registered)},
+        {"custom_capture_device_id", make_string(diagnostics.custom_capture_device_id)},
+        {"custom_capture_device_name", make_string(diagnostics.custom_capture_device_name)},
+        {"custom_capture_path_available", make_bool(diagnostics.custom_capture_path_available)},
+        {"injected_playback_attached_to_capture", make_bool(diagnostics.injected_playback_attached_to_capture)},
+        {"captured_voice_edit_attached", make_bool(diagnostics.captured_voice_edit_attached)},
+        {"transmit_path_ready", make_bool(diagnostics.transmit_path_ready)},
+        {"transmit_path", make_string(diagnostics.transmit_path)},
+    });
+}
+
+auto yes_no(bool value) -> std::string {
+    return value ? "yes" : "no";
+}
+
+auto device_binding_text(const domain::AudioDeviceBinding& binding) -> std::string {
+    if (!binding.known) {
+        return "unknown";
+    }
+    std::string value = binding.mode.empty() ? "default" : binding.mode;
+    value += "/";
+    value += binding.device.empty() ? "default" : binding.device;
+    if (binding.is_default) {
+        value += " (default)";
+    }
+    return value;
+}
+
 auto format_time(std::chrono::system_clock::time_point point) -> std::string {
     const auto time = std::chrono::system_clock::to_time_t(point);
     std::tm tm{};
@@ -438,8 +497,13 @@ auto to_value(const domain::PluginInfo& info) -> ValueHolder {
         {"media_transport", make_string(info.media_transport)},
         {"media_socket_path", make_string(info.media_socket_path)},
         {"media_format", make_string(info.media_format)},
+        {"media_diagnostics", media_diagnostics_value(info.media_diagnostics)},
         {"note", make_string(info.note)},
     });
+}
+
+auto to_value(const domain::MediaDiagnostics& diagnostics) -> ValueHolder {
+    return media_diagnostics_value(diagnostics);
 }
 
 auto to_value(const domain::ConnectionState& state) -> ValueHolder {
@@ -778,7 +842,44 @@ auto plugin_info_view(const domain::PluginInfo& info) -> Details {
         {"MediaTransport", info.media_transport},
         {"MediaSocketPath", info.media_socket_path},
         {"MediaFormat", info.media_format},
+        {"EffectiveCapture", device_binding_text(info.media_diagnostics.capture)},
+        {"EffectivePlayback", device_binding_text(info.media_diagnostics.playback)},
+        {"PulseSink", info.media_diagnostics.pulse_sink.empty() ? "-" : info.media_diagnostics.pulse_sink},
+        {"PulseSource", info.media_diagnostics.pulse_source.empty() ? "-" : info.media_diagnostics.pulse_source},
+        {"PulseSourceIsMonitor", yes_no(info.media_diagnostics.pulse_source_is_monitor)},
+        {"MediaConsumerConnected", yes_no(info.media_diagnostics.consumer_connected)},
+        {"MediaPlaybackActive", yes_no(info.media_diagnostics.playback_active)},
+        {"QueuedPlaybackSamples", std::to_string(info.media_diagnostics.queued_playback_samples)},
+        {"DroppedPlaybackChunks", std::to_string(info.media_diagnostics.dropped_playback_chunks)},
+        {"InjectedPlaybackAttached", yes_no(info.media_diagnostics.injected_playback_attached_to_capture)},
+        {"CapturedVoiceEditAttached", yes_no(info.media_diagnostics.captured_voice_edit_attached)},
+        {"TransmitPath", info.media_diagnostics.transmit_path.empty() ? "-" : info.media_diagnostics.transmit_path},
+        {"TransmitPathReady", yes_no(info.media_diagnostics.transmit_path_ready)},
         {"Note", info.note},
+    }};
+}
+
+auto media_diagnostics_view(const domain::MediaDiagnostics& diagnostics) -> Details {
+    return Details{{
+        {"EffectiveCapture", device_binding_text(diagnostics.capture)},
+        {"EffectivePlayback", device_binding_text(diagnostics.playback)},
+        {"PulseSink", diagnostics.pulse_sink.empty() ? "-" : diagnostics.pulse_sink},
+        {"PulseSource", diagnostics.pulse_source.empty() ? "-" : diagnostics.pulse_source},
+        {"PulseSourceIsMonitor", yes_no(diagnostics.pulse_source_is_monitor)},
+        {"MediaConsumerConnected", yes_no(diagnostics.consumer_connected)},
+        {"MediaPlaybackActive", yes_no(diagnostics.playback_active)},
+        {"QueuedPlaybackSamples", std::to_string(diagnostics.queued_playback_samples)},
+        {"ActiveSpeakers", std::to_string(diagnostics.active_speaker_count)},
+        {"DroppedIngressAudioChunks", std::to_string(diagnostics.dropped_audio_chunks)},
+        {"DroppedPlaybackChunks", std::to_string(diagnostics.dropped_playback_chunks)},
+        {"LastMediaError", diagnostics.last_error.empty() ? "-" : diagnostics.last_error},
+        {"CustomCaptureRegistered", yes_no(diagnostics.custom_capture_device_registered)},
+        {"CustomCaptureDevice", diagnostics.custom_capture_device_id.empty() ? "-" : diagnostics.custom_capture_device_id},
+        {"CustomCapturePathAvailable", yes_no(diagnostics.custom_capture_path_available)},
+        {"InjectedPlaybackAttached", yes_no(diagnostics.injected_playback_attached_to_capture)},
+        {"CapturedVoiceEditAttached", yes_no(diagnostics.captured_voice_edit_attached)},
+        {"TransmitPath", diagnostics.transmit_path.empty() ? "-" : diagnostics.transmit_path},
+        {"TransmitPathReady", yes_no(diagnostics.transmit_path_ready)},
     }};
 }
 

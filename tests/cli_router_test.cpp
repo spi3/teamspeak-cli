@@ -186,6 +186,11 @@ int main() {
     const std::string playback_help = router.render_help({"playback"});
     tests::expect_contains(
         playback_help,
+        "status  Show media playback and audio routing diagnostics",
+        "playback help should list playback status"
+    );
+    tests::expect_contains(
+        playback_help,
         "send  Send a WAV file through the plugin media bridge",
         "playback help should list playback send"
     );
@@ -576,6 +581,30 @@ int main() {
         "playback send timeout option"
     );
     tests::expect(playback_send.value().flags.contains("clear"), "playback send clear flag");
+
+    auto playback_status = parse_command(
+        router,
+        {"playback", "status", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(playback_status.ok(), "playback status parse should succeed");
+    auto playback_status_result = router.dispatch(playback_status.value());
+    tests::expect(playback_status_result.ok(), "playback status dispatch should succeed");
+    const auto playback_status_json = output::render(playback_status_result.value(), output::Format::json);
+    tests::expect_contains(
+        playback_status_json,
+        "\"device\":\"mock-capture\"",
+        "playback status json should include effective capture diagnostics"
+    );
+    tests::expect_contains(
+        playback_status_json,
+        "\"custom_capture_path_available\":true",
+        "playback status json should include transmit path availability"
+    );
+    tests::expect_contains(
+        output::render(playback_status_result.value(), output::Format::table),
+        "TransmitPathReady",
+        "playback status table should summarize transmit readiness"
+    );
 
     auto missing_profile = parse_command(
         router, {"profile", "use", "missing-profile", "--config", config_path.string()}

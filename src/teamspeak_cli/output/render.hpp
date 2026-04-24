@@ -60,6 +60,7 @@ auto make_array(std::vector<ValueHolder> value) -> ValueHolder;
 auto make_object(std::map<std::string, ValueHolder> value) -> ValueHolder;
 
 auto to_value(const domain::PluginInfo& info) -> ValueHolder;
+auto to_value(const domain::MediaDiagnostics& diagnostics) -> ValueHolder;
 auto to_value(const domain::ConnectionState& state) -> ValueHolder;
 auto to_value(const domain::ServerInfo& info) -> ValueHolder;
 auto to_value(const domain::Channel& channel) -> ValueHolder;
@@ -93,6 +94,7 @@ auto disconnect_view(
 ) -> std::string;
 auto server_view(const domain::ServerInfo& info) -> Details;
 auto plugin_info_view(const domain::PluginInfo& info) -> Details;
+auto media_diagnostics_view(const domain::MediaDiagnostics& diagnostics) -> Details;
 auto profile_table(const std::vector<domain::Profile>& profiles, const std::string& active_profile) -> Table;
 auto channel_table(const std::vector<domain::Channel>& channels) -> Table;
 auto client_table(const std::vector<domain::Client>& clients) -> Table;

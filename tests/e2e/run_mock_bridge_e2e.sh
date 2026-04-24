@@ -39,9 +39,14 @@ fi
 
 plugin_info_json="$("${ts_bin}" --json plugin info --config "${config_path}")"
 printf '%s\n' "${plugin_info_json}" | grep -q '"plugin_available":true'
+printf '%s\n' "${plugin_info_json}" | grep -q '"media_diagnostics":'
 
 status_json="$("${ts_bin}" --json status --config "${config_path}")"
 printf '%s\n' "${status_json}" | grep -q '"phase":"connected"'
+
+playback_status_json="$("${ts_bin}" --json playback status --config "${config_path}")"
+printf '%s\n' "${playback_status_json}" | grep -q '"device":"mock-capture"'
+printf '%s\n' "${playback_status_json}" | grep -q '"custom_capture_path_available":true'
 
 channel_json="$("${ts_bin}" --json channel list --config "${config_path}")"
 printf '%s\n' "${channel_json}" | grep -q '"name":"Lobby"'

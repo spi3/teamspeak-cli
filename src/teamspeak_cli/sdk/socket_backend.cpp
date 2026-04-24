@@ -329,6 +329,7 @@ auto SocketBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
                 .media_transport = "unix-stream/frame-v1",
                 .media_socket_path = bridge::resolve_media_socket_path(socket_path_),
                 .media_format = bridge::media_format_description(),
+                .media_diagnostics = domain::MediaDiagnostics{},
                 .note = response.error().message,
             });
         }

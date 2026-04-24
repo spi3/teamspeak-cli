@@ -2,6 +2,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 
 #include "teamspeak_cli/bridge/socket_paths.hpp"
 #include "teamspeak_cli/util/strings.hpp"
@@ -22,6 +23,55 @@ auto now_event(std::string type, std::string summary, std::map<std::string, std:
         .at = std::chrono::system_clock::now(),
         .fields = std::move(fields),
     };
+}
+
+auto env_value(const char* name) -> std::string {
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string{} : std::string(value);
+}
+
+auto source_is_monitor(std::string_view source) -> bool {
+    const auto normalized = util::lower_copy(source);
+    return normalized.ends_with(".monitor") || normalized.find(".monitor.") != std::string::npos;
+}
+
+auto mock_media_diagnostics(const std::shared_ptr<bridge::MediaBridge>& media_bridge)
+    -> domain::MediaDiagnostics {
+    domain::MediaDiagnostics diagnostics;
+    diagnostics.capture = domain::AudioDeviceBinding{
+        .known = true,
+        .mode = "mock",
+        .device = "mock-capture",
+        .is_default = true,
+    };
+    diagnostics.playback = domain::AudioDeviceBinding{
+        .known = true,
+        .mode = "mock",
+        .device = "mock-playback",
+        .is_default = true,
+    };
+    diagnostics.pulse_sink = env_value("PULSE_SINK");
+    diagnostics.pulse_source = env_value("PULSE_SOURCE");
+    diagnostics.custom_capture_device_registered = true;
+    diagnostics.custom_capture_device_id = "mock-capture-loop";
+    diagnostics.custom_capture_device_name = "Mock Media Bridge";
+    diagnostics.custom_capture_path_available = true;
+    diagnostics.captured_voice_edit_attached = false;
+    diagnostics.transmit_path_ready = true;
+    diagnostics.transmit_path = "mock-capture-loop";
+    diagnostics.pulse_source_is_monitor = source_is_monitor(diagnostics.pulse_source);
+    if (media_bridge != nullptr) {
+        const auto status = media_bridge->status();
+        diagnostics.consumer_connected = status.consumer_connected;
+        diagnostics.playback_active = status.playback_active;
+        diagnostics.queued_playback_samples = status.queued_playback_samples;
+        diagnostics.active_speaker_count = status.active_speaker_count;
+        diagnostics.dropped_audio_chunks = status.dropped_audio_chunks;
+        diagnostics.dropped_playback_chunks = status.dropped_playback_chunks;
+        diagnostics.last_error = status.last_error;
+        diagnostics.injected_playback_attached_to_capture = status.playback_active;
+    }
+    return diagnostics;
 }
 
 }  // namespace
@@ -164,18 +214,25 @@ auto MockBackend::disconnect(std::string_view reason) -> domain::Result<void> {
 }
 
 auto MockBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const std::string media_socket_path = media_bridge_ == nullptr ? std::string{} : media_bridge_->socket_path();
+    std::shared_ptr<bridge::MediaBridge> media_bridge;
+    InitOptions options;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        media_bridge = media_bridge_;
+        options = options_;
+    }
+    const std::string media_socket_path = media_bridge == nullptr ? std::string{} : media_bridge->socket_path();
     return domain::ok(domain::PluginInfo{
         .backend = "mock",
         .transport = "in-process",
         .plugin_name = "mock-plugin-host",
         .plugin_version = "development",
         .plugin_available = true,
-        .socket_path = bridge::resolve_socket_path(options_.socket_path),
+        .socket_path = bridge::resolve_socket_path(options.socket_path),
         .media_transport = media_socket_path.empty() ? std::string{} : "unix-stream/frame-v1",
         .media_socket_path = media_socket_path,
         .media_format = bridge::media_format_description(),
+        .media_diagnostics = mock_media_diagnostics(media_bridge),
         .note = "mock bridge host for local development and CI",
     });
 }

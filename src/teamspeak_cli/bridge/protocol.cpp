@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <limits>
 #include <sstream>
 
 #include <unistd.h>
@@ -33,6 +34,19 @@ auto parse_required_u64(const std::string& value, std::string_view field_name) -
         ));
     }
     return domain::ok(*parsed);
+}
+
+auto parse_required_size(const std::string& value, std::string_view field_name) -> domain::Result<std::size_t> {
+    auto parsed = parse_required_u64(value, field_name);
+    if (!parsed) {
+        return domain::fail<std::size_t>(parsed.error());
+    }
+    if (parsed.value() > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        return domain::fail<std::size_t>(protocol_error(
+            "invalid_number", "bridge integer is too large for " + std::string(field_name)
+        ));
+    }
+    return domain::ok(static_cast<std::size_t>(parsed.value()));
 }
 
 auto parse_phase(const std::string& value) -> domain::Result<domain::ConnectionPhase> {
@@ -90,6 +104,10 @@ auto encode_event_line(const domain::Event& event) -> Fields {
         fields.push_back(hex_encode(value));
     }
     return fields;
+}
+
+auto encode_bool(bool value) -> std::string {
+    return value ? "1" : "0";
 }
 
 }  // namespace
@@ -245,11 +263,38 @@ auto encode(const domain::PluginInfo& info) -> std::vector<Fields> {
         hex_encode(info.media_socket_path),
         hex_encode(info.media_format),
         hex_encode(info.note),
+        encode_bool(info.media_diagnostics.capture.known),
+        hex_encode(info.media_diagnostics.capture.mode),
+        hex_encode(info.media_diagnostics.capture.device),
+        encode_bool(info.media_diagnostics.capture.is_default),
+        encode_bool(info.media_diagnostics.playback.known),
+        hex_encode(info.media_diagnostics.playback.mode),
+        hex_encode(info.media_diagnostics.playback.device),
+        encode_bool(info.media_diagnostics.playback.is_default),
+        hex_encode(info.media_diagnostics.pulse_sink),
+        hex_encode(info.media_diagnostics.pulse_source),
+        encode_bool(info.media_diagnostics.pulse_source_is_monitor),
+        encode_bool(info.media_diagnostics.consumer_connected),
+        encode_bool(info.media_diagnostics.playback_active),
+        std::to_string(info.media_diagnostics.queued_playback_samples),
+        std::to_string(info.media_diagnostics.active_speaker_count),
+        std::to_string(info.media_diagnostics.dropped_audio_chunks),
+        std::to_string(info.media_diagnostics.dropped_playback_chunks),
+        hex_encode(info.media_diagnostics.last_error),
+        encode_bool(info.media_diagnostics.custom_capture_device_registered),
+        hex_encode(info.media_diagnostics.custom_capture_device_id),
+        hex_encode(info.media_diagnostics.custom_capture_device_name),
+        encode_bool(info.media_diagnostics.custom_capture_path_available),
+        encode_bool(info.media_diagnostics.injected_playback_attached_to_capture),
+        encode_bool(info.media_diagnostics.captured_voice_edit_attached),
+        encode_bool(info.media_diagnostics.transmit_path_ready),
+        hex_encode(info.media_diagnostics.transmit_path),
     }};
 }
 
 auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<domain::PluginInfo> {
-    if (lines.size() != 1 || lines[0].size() != 11 || lines[0][0] != "plugin_info") {
+    if (lines.size() != 1 || (lines[0].size() != 11 && lines[0].size() != 37) ||
+        lines[0][0] != "plugin_info") {
         return domain::fail<domain::PluginInfo>(protocol_error(
             "invalid_plugin_info", "invalid plugin info payload"
         ));
@@ -294,6 +339,147 @@ auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<doma
     if (!note) {
         return domain::fail<domain::PluginInfo>(note.error());
     }
+
+    domain::MediaDiagnostics diagnostics;
+    if (lines[0].size() == 37) {
+        auto capture_known = parse_bool(lines[0][11]);
+        auto capture_mode = decode_string_field(lines[0], 12, "capture_mode");
+        auto capture_device = decode_string_field(lines[0], 13, "capture_device");
+        auto capture_default = parse_bool(lines[0][14]);
+        auto playback_known = parse_bool(lines[0][15]);
+        auto playback_mode = decode_string_field(lines[0], 16, "playback_mode");
+        auto playback_device = decode_string_field(lines[0], 17, "playback_device");
+        auto playback_default = parse_bool(lines[0][18]);
+        auto pulse_sink = decode_string_field(lines[0], 19, "pulse_sink");
+        auto pulse_source = decode_string_field(lines[0], 20, "pulse_source");
+        auto pulse_source_monitor = parse_bool(lines[0][21]);
+        auto consumer_connected = parse_bool(lines[0][22]);
+        auto playback_active = parse_bool(lines[0][23]);
+        auto queued_playback_samples = parse_required_size(lines[0][24], "queued_playback_samples");
+        auto active_speaker_count = parse_required_size(lines[0][25], "active_speaker_count");
+        auto dropped_audio_chunks = parse_required_size(lines[0][26], "dropped_audio_chunks");
+        auto dropped_playback_chunks = parse_required_size(lines[0][27], "dropped_playback_chunks");
+        auto last_error = decode_string_field(lines[0], 28, "last_error");
+        auto custom_capture_registered = parse_bool(lines[0][29]);
+        auto custom_capture_device_id = decode_string_field(lines[0], 30, "custom_capture_device_id");
+        auto custom_capture_device_name = decode_string_field(lines[0], 31, "custom_capture_device_name");
+        auto custom_capture_path_available = parse_bool(lines[0][32]);
+        auto injected_attached = parse_bool(lines[0][33]);
+        auto captured_voice_edit_attached = parse_bool(lines[0][34]);
+        auto transmit_path_ready = parse_bool(lines[0][35]);
+        auto transmit_path = decode_string_field(lines[0], 36, "transmit_path");
+        if (!capture_known) {
+            return domain::fail<domain::PluginInfo>(capture_known.error());
+        }
+        if (!capture_mode) {
+            return domain::fail<domain::PluginInfo>(capture_mode.error());
+        }
+        if (!capture_device) {
+            return domain::fail<domain::PluginInfo>(capture_device.error());
+        }
+        if (!capture_default) {
+            return domain::fail<domain::PluginInfo>(capture_default.error());
+        }
+        if (!playback_known) {
+            return domain::fail<domain::PluginInfo>(playback_known.error());
+        }
+        if (!playback_mode) {
+            return domain::fail<domain::PluginInfo>(playback_mode.error());
+        }
+        if (!playback_device) {
+            return domain::fail<domain::PluginInfo>(playback_device.error());
+        }
+        if (!playback_default) {
+            return domain::fail<domain::PluginInfo>(playback_default.error());
+        }
+        if (!pulse_sink) {
+            return domain::fail<domain::PluginInfo>(pulse_sink.error());
+        }
+        if (!pulse_source) {
+            return domain::fail<domain::PluginInfo>(pulse_source.error());
+        }
+        if (!pulse_source_monitor) {
+            return domain::fail<domain::PluginInfo>(pulse_source_monitor.error());
+        }
+        if (!consumer_connected) {
+            return domain::fail<domain::PluginInfo>(consumer_connected.error());
+        }
+        if (!playback_active) {
+            return domain::fail<domain::PluginInfo>(playback_active.error());
+        }
+        if (!queued_playback_samples) {
+            return domain::fail<domain::PluginInfo>(queued_playback_samples.error());
+        }
+        if (!active_speaker_count) {
+            return domain::fail<domain::PluginInfo>(active_speaker_count.error());
+        }
+        if (!dropped_audio_chunks) {
+            return domain::fail<domain::PluginInfo>(dropped_audio_chunks.error());
+        }
+        if (!dropped_playback_chunks) {
+            return domain::fail<domain::PluginInfo>(dropped_playback_chunks.error());
+        }
+        if (!last_error) {
+            return domain::fail<domain::PluginInfo>(last_error.error());
+        }
+        if (!custom_capture_registered) {
+            return domain::fail<domain::PluginInfo>(custom_capture_registered.error());
+        }
+        if (!custom_capture_device_id) {
+            return domain::fail<domain::PluginInfo>(custom_capture_device_id.error());
+        }
+        if (!custom_capture_device_name) {
+            return domain::fail<domain::PluginInfo>(custom_capture_device_name.error());
+        }
+        if (!custom_capture_path_available) {
+            return domain::fail<domain::PluginInfo>(custom_capture_path_available.error());
+        }
+        if (!injected_attached) {
+            return domain::fail<domain::PluginInfo>(injected_attached.error());
+        }
+        if (!captured_voice_edit_attached) {
+            return domain::fail<domain::PluginInfo>(captured_voice_edit_attached.error());
+        }
+        if (!transmit_path_ready) {
+            return domain::fail<domain::PluginInfo>(transmit_path_ready.error());
+        }
+        if (!transmit_path) {
+            return domain::fail<domain::PluginInfo>(transmit_path.error());
+        }
+        diagnostics = domain::MediaDiagnostics{
+            .capture = domain::AudioDeviceBinding{
+                .known = capture_known.value(),
+                .mode = capture_mode.value(),
+                .device = capture_device.value(),
+                .is_default = capture_default.value(),
+            },
+            .playback = domain::AudioDeviceBinding{
+                .known = playback_known.value(),
+                .mode = playback_mode.value(),
+                .device = playback_device.value(),
+                .is_default = playback_default.value(),
+            },
+            .pulse_sink = pulse_sink.value(),
+            .pulse_source = pulse_source.value(),
+            .pulse_source_is_monitor = pulse_source_monitor.value(),
+            .consumer_connected = consumer_connected.value(),
+            .playback_active = playback_active.value(),
+            .queued_playback_samples = queued_playback_samples.value(),
+            .active_speaker_count = active_speaker_count.value(),
+            .dropped_audio_chunks = dropped_audio_chunks.value(),
+            .dropped_playback_chunks = dropped_playback_chunks.value(),
+            .last_error = last_error.value(),
+            .custom_capture_device_registered = custom_capture_registered.value(),
+            .custom_capture_device_id = custom_capture_device_id.value(),
+            .custom_capture_device_name = custom_capture_device_name.value(),
+            .custom_capture_path_available = custom_capture_path_available.value(),
+            .injected_playback_attached_to_capture = injected_attached.value(),
+            .captured_voice_edit_attached = captured_voice_edit_attached.value(),
+            .transmit_path_ready = transmit_path_ready.value(),
+            .transmit_path = transmit_path.value(),
+        };
+    }
+
     return domain::ok(domain::PluginInfo{
         .backend = backend.value(),
         .transport = transport.value(),
@@ -304,6 +490,7 @@ auto decode_plugin_info(const std::vector<Fields>& lines) -> domain::Result<doma
         .media_transport = media_transport.value(),
         .media_socket_path = media_socket_path.value(),
         .media_format = media_format.value(),
+        .media_diagnostics = std::move(diagnostics),
         .note = note.value(),
     });
 }

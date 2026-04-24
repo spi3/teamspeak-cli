@@ -1,6 +1,7 @@
 #include "teamspeak_cli/sdk/plugin_host_backend.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 #include <vector>
 
@@ -91,6 +92,78 @@ auto terminated_array_size(T* items) -> std::size_t {
         ++size;
     }
     return size;
+}
+
+auto env_value(const char* name) -> std::string {
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string{} : std::string(value);
+}
+
+auto source_is_monitor(std::string_view source) -> bool {
+    const auto normalized = util::lower_copy(source);
+    return normalized.ends_with(".monitor") || normalized.find(".monitor.") != std::string::npos;
+}
+
+auto custom_capture_path_available(const TS3Functions& functions) -> bool {
+    return functions.registerCustomDevice != nullptr && functions.openCaptureDevice != nullptr &&
+           functions.processCustomCaptureData != nullptr && functions.setClientSelfVariableAsInt != nullptr &&
+           functions.flushClientSelfUpdates != nullptr;
+}
+
+auto current_capture_binding(std::uint64_t handler_id, const TS3Functions& functions)
+    -> domain::AudioDeviceBinding {
+    domain::AudioDeviceBinding binding;
+    if (handler_id == 0) {
+        return binding;
+    }
+
+    char* raw_mode = nullptr;
+    if (functions.getCurrentCaptureMode != nullptr &&
+        functions.getCurrentCaptureMode(handler_id, &raw_mode) == ERROR_ok && raw_mode != nullptr) {
+        Ts3Owned<char> mode_owner(&functions, raw_mode);
+        binding.mode = raw_mode;
+        binding.known = true;
+    }
+
+    char* raw_device = nullptr;
+    int is_default = 0;
+    if (functions.getCurrentCaptureDeviceName != nullptr &&
+        functions.getCurrentCaptureDeviceName(handler_id, &raw_device, &is_default) == ERROR_ok &&
+        raw_device != nullptr) {
+        Ts3Owned<char> device_owner(&functions, raw_device);
+        binding.device = raw_device;
+        binding.is_default = is_default != 0;
+        binding.known = true;
+    }
+    return binding;
+}
+
+auto current_playback_binding(std::uint64_t handler_id, const TS3Functions& functions)
+    -> domain::AudioDeviceBinding {
+    domain::AudioDeviceBinding binding;
+    if (handler_id == 0) {
+        return binding;
+    }
+
+    char* raw_mode = nullptr;
+    if (functions.getCurrentPlayBackMode != nullptr &&
+        functions.getCurrentPlayBackMode(handler_id, &raw_mode) == ERROR_ok && raw_mode != nullptr) {
+        Ts3Owned<char> mode_owner(&functions, raw_mode);
+        binding.mode = raw_mode;
+        binding.known = true;
+    }
+
+    char* raw_device = nullptr;
+    int is_default = 0;
+    if (functions.getCurrentPlaybackDeviceName != nullptr &&
+        functions.getCurrentPlaybackDeviceName(handler_id, &raw_device, &is_default) == ERROR_ok &&
+        raw_device != nullptr) {
+        Ts3Owned<char> device_owner(&functions, raw_device);
+        binding.device = raw_device;
+        binding.is_default = is_default != 0;
+        binding.known = true;
+    }
+    return binding;
 }
 
 }  // namespace
@@ -496,31 +569,86 @@ auto PluginHostBackend::disconnect(std::string_view reason) -> domain::Result<vo
 }
 
 auto PluginHostBackend::plugin_info() const -> domain::Result<domain::PluginInfo> {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!functions_.has_value()) {
-        return domain::fail<domain::PluginInfo>(backend_error(
-            "functions_unavailable", "TeamSpeak plugin host functions are not available"
-        ));
+    TS3Functions functions{};
+    InitOptions options;
+    std::shared_ptr<bridge::MediaBridge> media_bridge;
+    bool media_playback_active = false;
+    bool media_capture_thread_active = false;
+    bool custom_capture_device_registered = false;
+    std::uint64_t media_playback_handler_id = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail<domain::PluginInfo>(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+        options = options_;
+        media_bridge = media_bridge_;
+        media_playback_active = media_playback_active_;
+        media_capture_thread_active = media_capture_thread_.joinable();
+        custom_capture_device_registered = custom_capture_device_registered_;
+        media_playback_handler_id = media_playback_session_.handler_id;
     }
 
     std::string clientlib_version = "unknown";
     char* raw_version = nullptr;
-    if ((*functions_).getClientLibVersion(&raw_version) == ERROR_ok && raw_version != nullptr) {
-        Ts3Owned<char> version_owner(&*functions_, raw_version);
+    if (functions.getClientLibVersion != nullptr && functions.getClientLibVersion(&raw_version) == ERROR_ok &&
+        raw_version != nullptr) {
+        Ts3Owned<char> version_owner(&functions, raw_version);
         clientlib_version = raw_version;
     }
 
-    const std::string media_socket_path = media_bridge_ == nullptr ? std::string{} : media_bridge_->socket_path();
+    const auto handler_id = resolve_handler_id(false);
+    const std::uint64_t resolved_handler_id = handler_id.ok() ? handler_id.value() : 0;
+    const std::string media_socket_path = media_bridge == nullptr ? std::string{} : media_bridge->socket_path();
+
+    domain::MediaDiagnostics diagnostics;
+    diagnostics.capture = current_capture_binding(resolved_handler_id, functions);
+    diagnostics.playback = current_playback_binding(resolved_handler_id, functions);
+    diagnostics.pulse_sink = env_value("PULSE_SINK");
+    diagnostics.pulse_source = env_value("PULSE_SOURCE");
+    diagnostics.custom_capture_device_registered = custom_capture_device_registered;
+    diagnostics.custom_capture_device_id = std::string(kCustomCaptureDeviceId);
+    diagnostics.custom_capture_device_name = std::string(kCustomCaptureDeviceName);
+    diagnostics.custom_capture_path_available = custom_capture_path_available(functions);
+    diagnostics.captured_voice_edit_attached = false;
+    diagnostics.transmit_path = "custom-capture-device";
+    diagnostics.pulse_source_is_monitor = source_is_monitor(diagnostics.pulse_source);
+
+    if (media_bridge != nullptr) {
+        const auto status = media_bridge->status();
+        diagnostics.consumer_connected = status.consumer_connected;
+        diagnostics.playback_active = status.playback_active || media_playback_active;
+        diagnostics.queued_playback_samples = status.queued_playback_samples;
+        diagnostics.active_speaker_count = status.active_speaker_count;
+        diagnostics.dropped_audio_chunks = status.dropped_audio_chunks;
+        diagnostics.dropped_playback_chunks = status.dropped_playback_chunks;
+        diagnostics.last_error = status.last_error;
+    }
+    diagnostics.injected_playback_attached_to_capture =
+        media_playback_active && media_capture_thread_active && media_playback_handler_id != 0 &&
+        media_playback_handler_id == resolved_handler_id;
+    diagnostics.transmit_path_ready =
+        diagnostics.custom_capture_path_available && resolved_handler_id != 0;
+    if (!diagnostics.custom_capture_path_available) {
+        diagnostics.transmit_path = "unavailable";
+    } else if (diagnostics.injected_playback_attached_to_capture) {
+        diagnostics.transmit_path = "custom-capture-device-active";
+    }
+
     return domain::ok(domain::PluginInfo{
         .backend = "plugin",
         .transport = "ts3-plugin/unix-socket",
         .plugin_name = "ts3cli-plugin",
         .plugin_version = TSCLI_VERSION,
         .plugin_available = true,
-        .socket_path = bridge::resolve_socket_path(options_.socket_path),
+        .socket_path = bridge::resolve_socket_path(options.socket_path),
         .media_transport = media_socket_path.empty() ? std::string{} : "unix-stream/frame-v1",
         .media_socket_path = media_socket_path,
         .media_format = bridge::media_format_description(),
+        .media_diagnostics = std::move(diagnostics),
         .note = "running inside the TeamSpeak client; linked client library version " + clientlib_version,
     });
 }
@@ -1031,7 +1159,8 @@ auto PluginHostBackend::snapshot_media_playback_session(
     std::uint64_t server_connection_handler_id,
     const TS3Functions& functions
 ) const -> MediaPlaybackSession {
-    MediaPlaybackSession session{.handler_id = server_connection_handler_id};
+    MediaPlaybackSession session;
+    session.handler_id = server_connection_handler_id;
 
     char* raw_capture_mode = nullptr;
     if (functions.getCurrentCaptureMode != nullptr &&

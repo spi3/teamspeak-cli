@@ -55,6 +55,36 @@ struct AppConfig {
     std::vector<Profile> profiles;
 };
 
+struct AudioDeviceBinding {
+    bool known = false;
+    std::string mode;
+    std::string device;
+    bool is_default = false;
+};
+
+struct MediaDiagnostics {
+    AudioDeviceBinding capture;
+    AudioDeviceBinding playback;
+    std::string pulse_sink;
+    std::string pulse_source;
+    bool pulse_source_is_monitor = false;
+    bool consumer_connected = false;
+    bool playback_active = false;
+    std::size_t queued_playback_samples = 0;
+    std::size_t active_speaker_count = 0;
+    std::size_t dropped_audio_chunks = 0;
+    std::size_t dropped_playback_chunks = 0;
+    std::string last_error;
+    bool custom_capture_device_registered = false;
+    std::string custom_capture_device_id;
+    std::string custom_capture_device_name;
+    bool custom_capture_path_available = false;
+    bool injected_playback_attached_to_capture = false;
+    bool captured_voice_edit_attached = false;
+    bool transmit_path_ready = false;
+    std::string transmit_path;
+};
+
 struct PluginInfo {
     std::string backend;
     std::string transport;
@@ -65,6 +95,7 @@ struct PluginInfo {
     std::string media_transport;
     std::string media_socket_path;
     std::string media_format;
+    MediaDiagnostics media_diagnostics;
     std::string note;
 };
 

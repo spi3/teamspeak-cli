@@ -86,7 +86,9 @@ The media socket path resolves in this order:
 - otherwise a path derived from the resolved control socket by replacing `.sock` with `-media.sock`
 - if the control socket does not end in `.sock`, `.media` is appended instead
 
-`ts plugin info` reports both socket paths plus the accepted playback media format.
+`ts plugin info` reports both socket paths, the accepted playback media format, and media diagnostics such as effective
+capture/playback bindings, queue counters, dropped chunks, and transmit-path attachment state. Use
+`ts playback status` for the same diagnostics without the rest of the plugin metadata.
 
 See [media-bridge.md](media-bridge.md) for the dedicated media frame contract.
 

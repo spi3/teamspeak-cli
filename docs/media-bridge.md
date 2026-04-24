@@ -26,6 +26,17 @@ The media socket path resolves in this order:
 - if the control socket does not end in `.sock`, `.media` is appended instead
 
 `ts plugin info` reports both the control socket path and the media socket path for the active plugin backend.
+It also includes effective TeamSpeak audio bindings, PulseAudio/PipeWire launch overrides, media queue counters, and
+the plugin transmit-path attachment state.
+
+For a focused playback view, use:
+
+```bash
+ts --profile plugin-local playback status
+```
+
+The status command uses the control bridge, not the single-consumer media socket, so it can inspect diagnostics without
+disconnecting a running media consumer.
 
 ## CLI Playback Helper
 
@@ -38,6 +49,16 @@ ts --profile plugin-local playback send --file ./message.wav
 The helper resolves the media socket through `ts plugin info`, validates that the active profile uses the plugin backend, sends `playback.start`, streams `playback.chunk` frames with pacing, sends `playback.stop`, and waits for `playback.stopped`.
 
 The current helper accepts WAV files that already match the V1 playback format: PCM signed 16-bit little-endian, 48000 Hz, mono. Use `--clear` to send `playback.clear` before starting new playback.
+
+`playback send` confirms that the media bridge accepted and drained queued samples. Use `playback status` to distinguish
+that local queue success from the plugin's current transmit-path state:
+
+- `MediaPlaybackActive` reports the bridge/plugin playback state
+- `QueuedPlaybackSamples` and `DroppedPlaybackChunks` report local media queue health
+- `InjectedPlaybackAttached` reports whether playback is currently attached to the custom TeamSpeak capture path
+- `TransmitPathReady` reports whether the plugin has the TeamSpeak functions and active handler needed to use that path
+- `CapturedVoiceEditAttached` is `no` for the current implementation because outbound injection uses a registered custom
+  capture device instead of the captured-voice edit callback
 
 ## Framing
 

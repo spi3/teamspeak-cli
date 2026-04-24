@@ -35,7 +35,7 @@ auto generate(const std::string& shell) -> domain::Result<std::string> {
             "    channel) COMPREPLY=( $(compgen -W \"list clients get join --help\" -- \"$cur\") ) ;;\n"
             "    client) COMPREPLY=( $(compgen -W \"status start stop logs list get --help\" -- \"$cur\") ) ;;\n"
             "    message) COMPREPLY=( $(compgen -W \"send --help\" -- \"$cur\") ) ;;\n"
-            "    playback) COMPREPLY=( $(compgen -W \"send --help\" -- \"$cur\") ) ;;\n"
+            "    playback) COMPREPLY=( $(compgen -W \"status send --help\" -- \"$cur\") ) ;;\n"
             "    events) COMPREPLY=( $(compgen -W \"watch --help\" -- \"$cur\") ) ;;\n"
             "    completion) COMPREPLY=( $(compgen -W \"bash zsh fish powershell\" -- \"$cur\") ) ;;\n"
             "    *) COMPREPLY=( $(compgen -W \"" +

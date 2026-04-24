@@ -238,6 +238,15 @@ int main() {
         bridge::media_format_description(),
         "plugin info should report the documented media format"
     );
+    tests::expect_eq(
+        info.value().media_diagnostics.capture.device,
+        std::string("mock-capture"),
+        "plugin info should carry media diagnostics over the control bridge"
+    );
+    tests::expect(
+        info.value().media_diagnostics.custom_capture_path_available,
+        "media diagnostics should report the mock transmit path"
+    );
 
     auto state = backend.connection_state();
     tests::expect(state.ok(), "connection state should succeed");
