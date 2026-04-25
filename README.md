@@ -116,6 +116,16 @@ ts-uninstall
 
 Use `ts-uninstall --keep-config` if you want to preserve a config file that the installer created.
 
+After installing from a published release, update the installed CLI, bundled plugin, and managed TeamSpeak client
+bundle with:
+
+```bash
+ts update
+```
+
+`ts update` reads the install receipt, then reruns the release installer against the same install paths using the
+latest published release from `spi3/teamspeak-cli`. To pin a specific release, run `ts update --release-tag vX.Y.Z`.
+
 ### Local Checkout Install
 
 If you want the installer to build directly from your local checkout instead of using published release artifacts, run:
@@ -145,6 +155,7 @@ Inspect local-build installer overrides with:
 The CLI is organized into small command groups:
 
 - `version`
+- `update`
 - `plugin info`
 - `config init`, `config view`
 - `profile list`, `profile use`

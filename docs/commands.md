@@ -22,6 +22,7 @@ Every command accepts these global flags:
 ### Core
 
 - `ts version`
+- `ts update [--release-tag TAG]`
 - `ts plugin info`
 - `ts sdk info`
 - `ts daemon start [--foreground] [--poll-ms N]`
@@ -37,6 +38,10 @@ Every command accepts these global flags:
 - `ts server info`
 
 `ts sdk info` is a compatibility alias for `ts plugin info`.
+
+`ts update` is for release-installer based user installs. It reads the install receipt, then reruns the official
+release installer against the same prefix, TeamSpeak client directory, managed cache, and config path. By default it
+installs the latest published release from `spi3/teamspeak-cli`; use `--release-tag TAG` to install a specific tag.
 
 ### Config And Profiles
 
@@ -94,6 +99,8 @@ and the boundary between domain events and media bridge frames.
 - `away` sets your own TeamSpeak away status and optionally an away message.
 - `back` clears your own TeamSpeak away status and any away message set through `ts away`.
 - `client start` and `client stop` inspect, launch, and stop the local TeamSpeak client process tracked by `ts`.
+- `update` refreshes the installed `ts` binary, bundled plugin, and managed TeamSpeak client bundle from the official
+  published release artifacts.
 - `client logs` shows the tracked launcher log plus the most recent files under `~/.ts3client/logs`.
 - `daemon start` launches a local background watcher that polls translated TeamSpeak events, journals incoming messages, and executes matching hook commands.
 - `daemon stop` only stops the local watcher process. It does not disconnect the TeamSpeak client from the current server.
@@ -108,6 +115,7 @@ These commands stream human-readable progress when output is `table`:
 
 - `connect`
 - `disconnect`
+- `update`
 - `client start`
 - `client stop`
 

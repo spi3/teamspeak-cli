@@ -8,6 +8,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <deque>
 #include <fcntl.h>
 #include <filesystem>
@@ -38,6 +39,9 @@ namespace {
 
 constexpr auto kConnectCompletionTimeout = std::chrono::seconds(15);
 constexpr auto kDisconnectCompletionTimeout = std::chrono::seconds(10);
+constexpr std::string_view kOfficialReleaseRepo = "spi3/teamspeak-cli";
+constexpr std::string_view kOfficialInstallReleaseUrl =
+    "https://raw.githubusercontent.com/spi3/teamspeak-cli/main/scripts/install-release.sh";
 constexpr std::array<std::string_view, 1> kClientRequiredSharedLibraries = {"libXi.so.6"};
 const std::array<std::filesystem::path, 2> kLdconfigFallbackPaths = {
     "/usr/sbin/ldconfig",
@@ -70,6 +74,7 @@ const std::vector<CommandDoc>& command_docs() {
         {{"profile", "create"}, "ts profile create <name> [--copy-from <name>] [--activate]", "Create a config profile", {"--copy-from", "--activate"}},
         {{"profile", "list"}, "ts profile list", "List config profiles", {}},
         {{"profile", "use"}, "ts profile use <name>", "Set the active default profile", {}},
+        {{"update"}, "ts update [--release-tag TAG]", "Update this release install from the official GitHub release", {"--release-tag"}},
         {{"connect"}, "ts connect", "Open a TeamSpeak server connection and wait for completion", {}},
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"mute"}, "ts mute", "Mute your TeamSpeak microphone", {}},
@@ -176,6 +181,10 @@ auto app_error(std::string category, std::string code, std::string message, doma
 
 auto client_error(std::string code, std::string message, domain::ExitCode exit_code) -> domain::Error {
     return domain::make_error("client", std::move(code), std::move(message), exit_code);
+}
+
+auto update_error(std::string code, std::string message, domain::ExitCode exit_code) -> domain::Error {
+    return domain::make_error("update", std::move(code), std::move(message), exit_code);
 }
 
 auto add_error_hint(domain::Error& error, std::string hint) -> void {
@@ -382,6 +391,21 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
         );
     }
 
+    if (path == "update" && error.code == "missing_install_receipt") {
+        add_error_hint(
+            error,
+            "Run the official release installer first so `ts update` can preserve the installed paths."
+        );
+    }
+
+    if (path == "update" && error.code == "download_failed") {
+        add_error_hint(error, "Check network access to GitHub, then rerun `ts update`.");
+    }
+
+    if (path == "update" && error.code == "installer_failed") {
+        add_error_hint(error, "Rerun `ts update --debug` or the official install-release.sh script to inspect the installer failure.");
+    }
+
     if (path == "daemon start" && error.code == "already_running") {
         add_error_hint(error, "Run `ts daemon status` to inspect the existing TeamSpeak event daemon.");
     }
@@ -468,6 +492,28 @@ struct ClientSystemdUnitStatus {
 struct ClientLaunchResult {
     pid_t pid = 0;
     std::string note;
+};
+
+struct UpdateInstallPlan {
+    std::filesystem::path receipt_path;
+    std::filesystem::path prefix;
+    std::filesystem::path client_install_dir;
+    std::filesystem::path managed_dir;
+    std::filesystem::path config_path;
+    std::optional<std::string> release_tag;
+    std::string release_repo = std::string(kOfficialReleaseRepo);
+    bool skip_config = false;
+};
+
+struct UpdateInstaller {
+    std::filesystem::path path;
+    std::string source;
+    bool temporary = false;
+};
+
+enum class ProcessStdoutMode {
+    inherit,
+    to_stderr,
 };
 
 auto resolve_client_launch_socket_path(
@@ -769,13 +815,11 @@ auto decode_install_receipt_value(std::string_view value) -> std::optional<std::
     return decoded;
 }
 
-auto read_install_receipt_value(std::string_view key) -> std::optional<std::string> {
-    const auto share_dir = installed_share_dir();
-    if (!share_dir.has_value()) {
-        return std::nullopt;
-    }
-
-    std::ifstream input(*share_dir / "install-receipt.env");
+auto read_install_receipt_value_from_path(
+    const std::filesystem::path& receipt_path,
+    std::string_view key
+) -> std::optional<std::string> {
+    std::ifstream input(receipt_path);
     if (!input) {
         return std::nullopt;
     }
@@ -797,6 +841,444 @@ auto read_install_receipt_value(std::string_view key) -> std::optional<std::stri
         return value;
     }
     return std::nullopt;
+}
+
+auto installed_receipt_path() -> std::optional<std::filesystem::path> {
+    const auto share_dir = installed_share_dir();
+    if (!share_dir.has_value()) {
+        return std::nullopt;
+    }
+    return *share_dir / "install-receipt.env";
+}
+
+auto read_install_receipt_value(std::string_view key) -> std::optional<std::string> {
+    const auto receipt_path = installed_receipt_path();
+    if (!receipt_path.has_value()) {
+        return std::nullopt;
+    }
+    return read_install_receipt_value_from_path(*receipt_path, key);
+}
+
+auto run_process_wait(
+    const std::vector<std::string>& argv,
+    ProcessStdoutMode stdout_mode = ProcessStdoutMode::inherit
+) -> domain::Result<int> {
+    if (argv.empty()) {
+        return domain::fail<int>(update_error(
+            "invalid_process",
+            "cannot run an empty command",
+            domain::ExitCode::internal
+        ));
+    }
+
+    const pid_t child_pid = ::fork();
+    if (child_pid < 0) {
+        return domain::fail<int>(update_error(
+            "fork_failed",
+            "failed to fork subprocess: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    if (child_pid == 0) {
+        if (stdout_mode == ProcessStdoutMode::to_stderr &&
+            ::dup2(STDERR_FILENO, STDOUT_FILENO) == -1) {
+            _exit(127);
+        }
+
+        std::vector<char*> raw_argv;
+        raw_argv.reserve(argv.size() + 1);
+        for (const auto& argument : argv) {
+            raw_argv.push_back(const_cast<char*>(argument.c_str()));
+        }
+        raw_argv.push_back(nullptr);
+
+        ::execv(argv.front().c_str(), raw_argv.data());
+        _exit(127);
+    }
+
+    int status = 0;
+    while (::waitpid(child_pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return domain::fail<int>(update_error(
+                "wait_failed",
+                "failed to wait for subprocess: " + std::string(std::strerror(errno)),
+                domain::ExitCode::internal
+            ));
+        }
+    }
+
+    if (WIFEXITED(status)) {
+        return domain::ok(WEXITSTATUS(status));
+    }
+    if (WIFSIGNALED(status)) {
+        return domain::ok(128 + WTERMSIG(status));
+    }
+    return domain::ok(127);
+}
+
+auto resolve_update_receipt_path() -> domain::Result<std::filesystem::path> {
+    if (const char* explicit_receipt = std::getenv("TS_UPDATE_RECEIPT_PATH");
+        explicit_receipt != nullptr && *explicit_receipt != '\0') {
+        const std::filesystem::path receipt_path = explicit_receipt;
+        std::error_code exists_ec;
+        if (std::filesystem::exists(receipt_path, exists_ec) && !exists_ec) {
+            return domain::ok(receipt_path);
+        }
+        return domain::fail<std::filesystem::path>(update_error(
+            "missing_install_receipt",
+            "TS_UPDATE_RECEIPT_PATH does not exist: " + receipt_path.string(),
+            domain::ExitCode::not_found
+        ));
+    }
+
+    const auto receipt_path = installed_receipt_path();
+    if (!receipt_path.has_value()) {
+        return domain::fail<std::filesystem::path>(update_error(
+            "missing_install_receipt",
+            "could not locate an install receipt for this ts binary",
+            domain::ExitCode::not_found
+        ));
+    }
+
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(*receipt_path, exists_ec) || exists_ec) {
+        return domain::fail<std::filesystem::path>(update_error(
+            "missing_install_receipt",
+            "install receipt was not found at " + receipt_path->string(),
+            domain::ExitCode::not_found
+        ));
+    }
+    return domain::ok(*receipt_path);
+}
+
+auto require_update_receipt_value(const std::filesystem::path& receipt_path, std::string_view key)
+    -> domain::Result<std::string> {
+    const auto value = read_install_receipt_value_from_path(receipt_path, key);
+    if (!value.has_value() || value->empty()) {
+        return domain::fail<std::string>(update_error(
+            "invalid_install_receipt",
+            "install receipt is missing required value: " + std::string(key),
+            domain::ExitCode::config
+        ));
+    }
+    return domain::ok(*value);
+}
+
+auto resolve_update_install_plan(const ParsedCommand& command) -> domain::Result<UpdateInstallPlan> {
+    if (!command.positionals.empty()) {
+        return domain::fail<UpdateInstallPlan>(cli_error(
+            "unexpected_argument",
+            "update does not accept positional arguments"
+        ));
+    }
+
+    auto receipt_path = resolve_update_receipt_path();
+    if (!receipt_path) {
+        return domain::fail<UpdateInstallPlan>(receipt_path.error());
+    }
+
+    auto prefix = require_update_receipt_value(receipt_path.value(), "prefix");
+    if (!prefix) {
+        return domain::fail<UpdateInstallPlan>(prefix.error());
+    }
+    auto client_install_dir = require_update_receipt_value(receipt_path.value(), "client_install_dir");
+    if (!client_install_dir) {
+        return domain::fail<UpdateInstallPlan>(client_install_dir.error());
+    }
+    auto managed_dir = require_update_receipt_value(receipt_path.value(), "managed_dir");
+    if (!managed_dir) {
+        return domain::fail<UpdateInstallPlan>(managed_dir.error());
+    }
+    auto config_path = require_update_receipt_value(receipt_path.value(), "config_path");
+    if (!config_path) {
+        return domain::fail<UpdateInstallPlan>(config_path.error());
+    }
+    const bool skip_config =
+        read_install_receipt_value_from_path(receipt_path.value(), "config_created_by_installer")
+            .value_or("1") != "1";
+
+    std::optional<std::string> release_tag;
+    if (const auto tag = command.options.find("release-tag"); tag != command.options.end()) {
+        if (tag->second.empty()) {
+            return domain::fail<UpdateInstallPlan>(cli_error(
+                "missing_option_value",
+                "missing value for --release-tag"
+            ));
+        }
+        release_tag = tag->second;
+    }
+
+    return domain::ok(UpdateInstallPlan{
+        .receipt_path = receipt_path.value(),
+        .prefix = prefix.value(),
+        .client_install_dir = client_install_dir.value(),
+        .managed_dir = managed_dir.value(),
+        .config_path = config_path.value(),
+        .release_tag = std::move(release_tag),
+        .release_repo = std::string(kOfficialReleaseRepo),
+        .skip_config = skip_config,
+    });
+}
+
+auto make_update_temp_file() -> domain::Result<std::filesystem::path> {
+    std::error_code temp_ec;
+    const auto temp_dir = std::filesystem::temp_directory_path(temp_ec);
+    if (temp_ec) {
+        return domain::fail<std::filesystem::path>(update_error(
+            "temp_dir_failed",
+            "failed to resolve a temporary directory: " + temp_ec.message(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    std::string path_template = (temp_dir / "teamspeak-cli-update-installer.XXXXXX").string();
+    std::vector<char> path_buffer(path_template.begin(), path_template.end());
+    path_buffer.push_back('\0');
+
+    const int fd = ::mkstemp(path_buffer.data());
+    if (fd < 0) {
+        return domain::fail<std::filesystem::path>(update_error(
+            "temp_file_failed",
+            "failed to create a temporary installer file: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+    ::close(fd);
+
+    return domain::ok(std::filesystem::path(path_buffer.data()));
+}
+
+auto download_update_installer(const std::filesystem::path& destination) -> domain::Result<void> {
+    std::vector<std::string> argv;
+    const std::string url(kOfficialInstallReleaseUrl);
+    const std::string token = [] {
+        if (const char* gh_token = std::getenv("GH_TOKEN"); gh_token != nullptr && *gh_token != '\0') {
+            return std::string(gh_token);
+        }
+        if (const char* github_token = std::getenv("GITHUB_TOKEN");
+            github_token != nullptr && *github_token != '\0') {
+            return std::string(github_token);
+        }
+        return std::string{};
+    }();
+
+    if (const auto curl = find_executable_on_path("curl"); curl.has_value()) {
+        argv = {
+            curl->string(),
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+        };
+        if (!token.empty()) {
+            argv.push_back("-H");
+            argv.push_back("Authorization: Bearer " + token);
+        }
+        argv.push_back("--output");
+        argv.push_back(destination.string());
+        argv.push_back(url);
+    } else if (const auto wget = find_executable_on_path("wget"); wget.has_value()) {
+        argv = {wget->string(), "-qO", destination.string()};
+        if (!token.empty()) {
+            argv.push_back("--header=Authorization: Bearer " + token);
+        }
+        argv.push_back(url);
+    } else {
+        return domain::fail(update_error(
+            "downloader_not_found",
+            "curl or wget is required to download the release installer",
+            domain::ExitCode::not_found
+        ));
+    }
+
+    const auto status = run_process_wait(argv, ProcessStdoutMode::to_stderr);
+    if (!status) {
+        return domain::fail(status.error());
+    }
+    if (status.value() != 0) {
+        auto error = update_error(
+            "download_failed",
+            "failed to download the release installer from " + url,
+            domain::ExitCode::connection
+        );
+        error.details.emplace("exit_status", std::to_string(status.value()));
+        error.details.emplace("url", url);
+        return domain::fail(std::move(error));
+    }
+
+    std::error_code size_ec;
+    const auto bytes = std::filesystem::file_size(destination, size_ec);
+    if (size_ec || bytes == 0) {
+        return domain::fail(update_error(
+            "download_failed",
+            "downloaded release installer is empty or unreadable: " + destination.string(),
+            domain::ExitCode::connection
+        ));
+    }
+    return domain::ok();
+}
+
+auto resolve_update_installer(const CommandRouter::ProgressSink& progress) -> domain::Result<UpdateInstaller> {
+    if (const char* explicit_installer = std::getenv("TS_UPDATE_INSTALLER_PATH");
+        explicit_installer != nullptr && *explicit_installer != '\0') {
+        const std::filesystem::path installer_path = explicit_installer;
+        std::error_code exists_ec;
+        if (!std::filesystem::exists(installer_path, exists_ec) || exists_ec) {
+            return domain::fail<UpdateInstaller>(update_error(
+                "installer_not_found",
+                "TS_UPDATE_INSTALLER_PATH does not exist: " + installer_path.string(),
+                domain::ExitCode::not_found
+            ));
+        }
+        if (progress) {
+            progress("Using release installer " + installer_path.string() + ".");
+        }
+        return domain::ok(UpdateInstaller{
+            .path = installer_path,
+            .source = installer_path.string(),
+            .temporary = false,
+        });
+    }
+
+    auto installer_path = make_update_temp_file();
+    if (!installer_path) {
+        return domain::fail<UpdateInstaller>(installer_path.error());
+    }
+
+    if (progress) {
+        progress("Downloading release installer from " + std::string(kOfficialInstallReleaseUrl) + ".");
+    }
+    auto downloaded = download_update_installer(installer_path.value());
+    if (!downloaded) {
+        std::error_code remove_ec;
+        std::filesystem::remove(installer_path.value(), remove_ec);
+        return domain::fail<UpdateInstaller>(downloaded.error());
+    }
+
+    return domain::ok(UpdateInstaller{
+        .path = installer_path.value(),
+        .source = std::string(kOfficialInstallReleaseUrl),
+        .temporary = true,
+    });
+}
+
+auto run_update_installer(
+    const UpdateInstallPlan& plan,
+    const UpdateInstaller& installer,
+    ProcessStdoutMode stdout_mode
+) -> domain::Result<void> {
+    const std::array<std::filesystem::path, 2> bash_fallback_paths = {"/usr/bin/bash", "/bin/bash"};
+    const auto bash_path = find_executable("bash", bash_fallback_paths);
+    if (!bash_path.has_value()) {
+        return domain::fail(update_error(
+            "bash_not_found",
+            "bash is required to run the release installer",
+            domain::ExitCode::not_found
+        ));
+    }
+
+    std::vector<std::string> argv{
+        bash_path->string(),
+        installer.path.string(),
+        "--repo",
+        plan.release_repo,
+        "--prefix",
+        plan.prefix.string(),
+        "--client-dir",
+        plan.client_install_dir.string(),
+        "--managed-dir",
+        plan.managed_dir.string(),
+        "--config-path",
+        plan.config_path.string(),
+    };
+    if (plan.release_tag.has_value()) {
+        argv.push_back("--release-tag");
+        argv.push_back(*plan.release_tag);
+    }
+    if (plan.skip_config) {
+        argv.push_back("--skip-config");
+    }
+
+    const auto status = run_process_wait(argv, stdout_mode);
+    if (!status) {
+        return domain::fail(status.error());
+    }
+    if (status.value() != 0) {
+        auto error = update_error(
+            "installer_failed",
+            "release installer exited with status " + std::to_string(status.value()),
+            domain::ExitCode::internal
+        );
+        error.details.emplace("exit_status", std::to_string(status.value()));
+        error.details.emplace("installer", installer.path.string());
+        error.details.emplace("release_repo", plan.release_repo);
+        return domain::fail(std::move(error));
+    }
+
+    return domain::ok();
+}
+
+auto update_current_release_install(
+    const ParsedCommand& command,
+    const CommandRouter::ProgressSink& progress
+) -> domain::Result<output::CommandOutput> {
+    auto plan = resolve_update_install_plan(command);
+    if (!plan) {
+        return domain::fail<output::CommandOutput>(plan.error());
+    }
+
+    if (progress) {
+        progress("Updating teamspeak-cli from " + plan.value().release_repo + ".");
+        progress("Using install receipt " + plan.value().receipt_path.string() + ".");
+    }
+
+    auto installer = resolve_update_installer(progress);
+    if (!installer) {
+        return domain::fail<output::CommandOutput>(installer.error());
+    }
+    auto installer_cleanup = util::make_scope_exit([&] {
+        if (installer.value().temporary) {
+            std::error_code remove_ec;
+            std::filesystem::remove(installer.value().path, remove_ec);
+        }
+    });
+
+    if (progress) {
+        progress("Running the release installer. This may refresh the TeamSpeak client bundle and plugin.");
+    }
+    auto ran = run_update_installer(
+        plan.value(),
+        installer.value(),
+        command.global.format == output::Format::table ? ProcessStdoutMode::inherit
+                                                       : ProcessStdoutMode::to_stderr
+    );
+    if (!ran) {
+        return domain::fail<output::CommandOutput>(ran.error());
+    }
+
+    const std::string release_tag =
+        read_install_receipt_value_from_path(plan.value().receipt_path, "release_tag")
+            .value_or(plan.value().release_tag.value_or("latest"));
+
+    return domain::ok(output::CommandOutput{
+        .data = output::make_object({
+            {"result", output::make_string("updated")},
+            {"release_repo", output::make_string(plan.value().release_repo)},
+            {"release_tag", output::make_string(release_tag)},
+            {"prefix", output::make_string(plan.value().prefix.string())},
+            {"client_dir", output::make_string(plan.value().client_install_dir.string())},
+            {"managed_dir", output::make_string(plan.value().managed_dir.string())},
+            {"config_path", output::make_string(plan.value().config_path.string())},
+            {"receipt_path", output::make_string(plan.value().receipt_path.string())},
+            {"installer_source", output::make_string(installer.value().source)},
+            {"skip_config", output::make_bool(plan.value().skip_config)},
+        }),
+        .human = std::string(
+            "Updated teamspeak-cli to " + release_tag + " from " + plan.value().release_repo +
+            ".\nRestart TeamSpeak to load the refreshed plugin."
+        ),
+    });
 }
 
 auto resolve_xdotool_paths() -> std::optional<XdotoolPaths> {
@@ -3628,7 +4110,8 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 option == "target" || option == "id" || option == "text" ||
                 option == "count" || option == "timeout-ms" || option == "poll-ms" ||
                 option == "type" || option == "exec" || option == "message-kind" ||
-                option == "copy-from" || option == "message" || option == "file";
+                option == "copy-from" || option == "message" || option == "file" ||
+                option == "release-tag";
 
             if (!takes_value) {
                 parsed.flags.insert(option);
@@ -3729,6 +4212,13 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 }),
                 .human = std::string("ts " TSCLI_VERSION),
             });
+        }
+
+        if (path == "update") {
+            return update_current_release_install(
+                command,
+                command.global.format == output::Format::table ? progress : ProgressSink{}
+            );
         }
 
         if (path == "config init") {

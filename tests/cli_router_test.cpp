@@ -119,6 +119,11 @@ int main() {
     );
     tests::expect_contains(help, "mute  Mute your TeamSpeak microphone", "top-level help should list mute");
     tests::expect_contains(help, "away  Set your TeamSpeak status to away", "top-level help should list away");
+    tests::expect_contains(
+        help,
+        "update  Update this release install from the official GitHub release",
+        "top-level help should list update"
+    );
 
     tests::expect_eq(
         cli::read_install_receipt_value_for_test("/tmp/teamspeak-cli/install dir"),
@@ -203,6 +208,9 @@ int main() {
     const std::string away_help = router.render_help({"away"});
     tests::expect_contains(away_help, "ts away [--message <text>]", "away help should include message usage");
 
+    const std::string update_help = router.render_help({"update"});
+    tests::expect_contains(update_help, "ts update [--release-tag TAG]", "update help should include release tag usage");
+
     const std::vector<std::string> grouped_commands = {
         "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "playback", "events"
     };
@@ -249,6 +257,121 @@ int main() {
     fs::remove_all(temp_dir, temp_cleanup_ec);
     fs::create_directories(temp_dir);
     const fs::path config_path = temp_dir / "config.ini";
+
+    {
+        const fs::path update_prefix = temp_dir / "update-prefix";
+        const fs::path update_client_dir = temp_dir / "update-client";
+        const fs::path update_managed_dir = temp_dir / "update-managed";
+        const fs::path update_config_path = temp_dir / "update-config.ini";
+        const fs::path update_receipt_path = temp_dir / "update-receipt.env";
+        const fs::path update_log_path = temp_dir / "update-installer-args.log";
+        const fs::path fake_installer_path = temp_dir / "fake-install-release.sh";
+
+        {
+            std::ofstream receipt(update_receipt_path, std::ios::trunc);
+            receipt << "receipt_version=1\n";
+            receipt << "prefix=" << update_prefix.string() << '\n';
+            receipt << "client_install_dir=" << update_client_dir.string() << '\n';
+            receipt << "managed_dir=" << update_managed_dir.string() << '\n';
+            receipt << "config_path=" << update_config_path.string() << '\n';
+            receipt << "config_created_by_installer=0\n";
+            receipt << "release_repo=example/fork\n";
+            receipt << "release_tag=v0.0.1\n";
+        }
+
+        {
+            std::ofstream fake_installer(fake_installer_path, std::ios::trunc);
+            fake_installer << "#!/usr/bin/env bash\n";
+            fake_installer << "set -euo pipefail\n";
+            fake_installer << "log_path=\"${TS_UPDATE_TEST_LOG:?}\"\n";
+            fake_installer << "repo=\"\"\n";
+            fake_installer << "release_tag=\"vfake-latest\"\n";
+            fake_installer << "prefix=\"\"\n";
+            fake_installer << "client_dir=\"\"\n";
+            fake_installer << "managed_dir=\"\"\n";
+            fake_installer << "config_path=\"\"\n";
+            fake_installer << ": >\"${log_path}\"\n";
+            fake_installer << "for arg in \"$@\"; do printf '%s\\n' \"${arg}\" >>\"${log_path}\"; done\n";
+            fake_installer << "while [[ $# -gt 0 ]]; do\n";
+            fake_installer << "  case \"$1\" in\n";
+            fake_installer << "    --repo) repo=\"$2\"; shift 2 ;;\n";
+            fake_installer << "    --release-tag) release_tag=\"$2\"; shift 2 ;;\n";
+            fake_installer << "    --prefix) prefix=\"$2\"; shift 2 ;;\n";
+            fake_installer << "    --client-dir) client_dir=\"$2\"; shift 2 ;;\n";
+            fake_installer << "    --managed-dir) managed_dir=\"$2\"; shift 2 ;;\n";
+            fake_installer << "    --config-path) config_path=\"$2\"; shift 2 ;;\n";
+            fake_installer << "    *) shift ;;\n";
+            fake_installer << "  esac\n";
+            fake_installer << "done\n";
+            fake_installer << "receipt=\"${TS_UPDATE_RECEIPT_PATH:?}\"\n";
+            fake_installer << "cat >\"${receipt}\" <<EOF\n";
+            fake_installer << "receipt_version=1\n";
+            fake_installer << "prefix=${prefix}\n";
+            fake_installer << "client_install_dir=${client_dir}\n";
+            fake_installer << "managed_dir=${managed_dir}\n";
+            fake_installer << "config_path=${config_path}\n";
+            fake_installer << "release_repo=${repo}\n";
+            fake_installer << "release_tag=${release_tag}\n";
+            fake_installer << "EOF\n";
+        }
+
+        EnvGuard receipt_env("TS_UPDATE_RECEIPT_PATH", update_receipt_path.string());
+        EnvGuard installer_env("TS_UPDATE_INSTALLER_PATH", fake_installer_path.string());
+        EnvGuard log_env("TS_UPDATE_TEST_LOG", update_log_path.string());
+
+        auto update = parse_command(router, {"update", "--release-tag", "v9.8.7"});
+        tests::expect(update.ok(), "update parse should succeed");
+        tests::expect_eq(
+            update.value().options.at("release-tag"),
+            std::string("v9.8.7"),
+            "update should parse release tag option"
+        );
+
+        std::vector<std::string> update_progress;
+        auto update_result = router.dispatch(update.value(), [&](std::string_view message) {
+            update_progress.emplace_back(message);
+        });
+        tests::expect(update_result.ok(), "update dispatch should succeed with a fake installer");
+        tests::expect(
+            !update_progress.empty(),
+            "update should stream progress before invoking the release installer"
+        );
+        tests::expect_contains(
+            output::render(update_result.value(), output::Format::json),
+            "\"release_repo\":\"spi3/teamspeak-cli\"",
+            "update should force the official release repo"
+        );
+        tests::expect_contains(
+            output::render(update_result.value(), output::Format::json),
+            "\"release_tag\":\"v9.8.7\"",
+            "update should report the installed release tag from the refreshed receipt"
+        );
+
+        std::ifstream log_file(update_log_path);
+        const std::string update_log(
+            (std::istreambuf_iterator<char>(log_file)),
+            std::istreambuf_iterator<char>()
+        );
+        tests::expect_contains(update_log, "--repo\nspi3/teamspeak-cli\n", "update should pass the official repo");
+        tests::expect_contains(update_log, "--release-tag\nv9.8.7\n", "update should pass the requested tag");
+        tests::expect_contains(update_log, "--prefix\n" + update_prefix.string() + "\n", "update should reuse prefix");
+        tests::expect_contains(
+            update_log,
+            "--client-dir\n" + update_client_dir.string() + "\n",
+            "update should reuse client dir"
+        );
+        tests::expect_contains(
+            update_log,
+            "--managed-dir\n" + update_managed_dir.string() + "\n",
+            "update should reuse managed dir"
+        );
+        tests::expect_contains(
+            update_log,
+            "--config-path\n" + update_config_path.string() + "\n",
+            "update should reuse config path"
+        );
+        tests::expect_contains(update_log, "--skip-config\n", "update should preserve skipped config installs");
+    }
 
     auto init = parse_command(router, {"config", "init", "--config", config_path.string()});
     tests::expect(init.ok(), "config init parse should succeed");
