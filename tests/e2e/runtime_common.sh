@@ -267,12 +267,13 @@ ts3_runtime_client_runtime_libraries_ready() {
   [[ ! -n "$(ts3_runtime_missing_client_shared_libraries "${client_dir}" "${runtime_library_path}")" ]]
 }
 
-ts3_runtime_client_package_for_soname() {
+ts3_runtime_client_packages_for_soname() {
   local soname="$1"
 
   case "${soname}" in
     libasound.so.2)
       printf '%s\n' "libasound2"
+      printf '%s\n' "libasound2t64"
       ;;
     libatomic.so.1)
       printf '%s\n' "libatomic1"
@@ -288,6 +289,7 @@ ts3_runtime_client_package_for_soname() {
       ;;
     libevent-2.1.so.7)
       printf '%s\n' "libevent-2.1-7"
+      printf '%s\n' "libevent-2.1-7t64"
       ;;
     libexpat.so.1)
       printf '%s\n' "libexpat1"
@@ -309,6 +311,7 @@ ts3_runtime_client_package_for_soname() {
       ;;
     libglib-2.0.so.0|libgthread-2.0.so.0)
       printf '%s\n' "libglib2.0-0"
+      printf '%s\n' "libglib2.0-0t64"
       ;;
     libICE.so.6)
       printf '%s\n' "libice6"
@@ -421,6 +424,59 @@ ts3_runtime_client_package_for_soname() {
   esac
 }
 
+ts3_runtime_client_package_for_soname() {
+  local soname="$1"
+  local package_name
+  local package_names
+
+  package_names="$(ts3_runtime_client_packages_for_soname "${soname}")" || return 1
+  while IFS= read -r package_name; do
+    [[ -n "${package_name}" ]] || continue
+    printf '%s\n' "${package_name}"
+    return 0
+  done <<<"${package_names}"
+
+  return 1
+}
+
+ts3_runtime_apt_package_has_candidate() {
+  local package_name="$1"
+  local candidate
+
+  candidate="$(
+    apt-cache policy "${package_name}" 2>/dev/null | awk '
+      /^[[:space:]]*Candidate:/ {
+        print $2
+        exit
+      }
+    '
+  )"
+
+  [[ -n "${candidate}" && "${candidate}" != "(none)" ]]
+}
+
+ts3_runtime_resolve_client_package_for_soname() {
+  local soname="$1"
+  local package_name
+  local package_names
+  local fallback_package=""
+
+  package_names="$(ts3_runtime_client_packages_for_soname "${soname}")" || return 1
+  while IFS= read -r package_name; do
+    [[ -n "${package_name}" ]] || continue
+    if [[ -z "${fallback_package}" ]]; then
+      fallback_package="${package_name}"
+    fi
+    if ts3_runtime_apt_package_has_candidate "${package_name}"; then
+      printf '%s\n' "${package_name}"
+      return 0
+    fi
+  done <<<"${package_names}"
+
+  [[ -n "${fallback_package}" ]] || return 1
+  return 2
+}
+
 ts3_runtime_bootstrap_client_runtime_libraries_from_apt() {
   local client_dir="$1"
   local cache_dir="${ts3_runtime_managed_dir_default}/client-runtime-libs"
@@ -436,6 +492,7 @@ ts3_runtime_bootstrap_client_runtime_libraries_from_apt() {
   local max_passes=6
 
   ts3_runtime_require_command apt-get "missing TeamSpeak client runtime libraries require apt-get on this host"
+  ts3_runtime_require_command apt-cache "missing TeamSpeak client runtime libraries require apt-cache on this host"
   ts3_runtime_require_command dpkg-deb "missing TeamSpeak client runtime libraries require dpkg-deb on this host"
 
   if [[ -d "${extract_root}" ]]; then
@@ -460,8 +517,8 @@ ts3_runtime_bootstrap_client_runtime_libraries_from_apt() {
     packages=()
     while IFS= read -r soname; do
       [[ -n "${soname}" ]] || continue
-      package_name="$(ts3_runtime_client_package_for_soname "${soname}")" || {
-        ts3_runtime_die "unsupported TeamSpeak client runtime dependency: ${soname}"
+      package_name="$(ts3_runtime_resolve_client_package_for_soname "${soname}")" || {
+        ts3_runtime_die "unsupported or unavailable TeamSpeak client runtime dependency: ${soname}"
       }
       if [[ " ${package_string} " != *" ${package_name} "* ]]; then
         packages+=("${package_name}")
