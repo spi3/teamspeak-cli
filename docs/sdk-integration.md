@@ -41,6 +41,10 @@ Optional overrides:
 - `TS3_CLIENT_SHA256=<expected-sha256>`
 - `TS3_XDOTOOL=/path/to/xdotool`
 - `TS3_XDOTOOL_LIBRARY_PATH=/path/to/xdotool/runtime/libs`
+- `TS3_XVFB=/path/to/Xvfb`
+- `TS3_XVFB_LIBRARY_PATH=/path/to/xvfb/runtime/libs`
+- `TS3_XVFB_XKB_DIR=/path/to/xkb/data`
+- `TS3_XVFB_BINARY_DIR=/path/to/xvfb/companion/bin`
 
 Example plugin-enabled configure:
 
@@ -115,6 +119,7 @@ That command:
 - resolves the TeamSpeak client
 - resolves the TeamSpeak 3 Client Plugin SDK
 - resolves `xdotool`
+- resolves `Xvfb` for headless operation
 - writes reusable defaults to `third_party/teamspeak/managed/deps.mk`
 - writes shell exports to `third_party/teamspeak/managed/deps.env`
 
@@ -132,7 +137,7 @@ The bootstrap is intentionally pinned in `tests/e2e/runtime_common.sh`. It does 
 This harness is useful, but it is still best-effort local automation. It is more fragile than the mock path because it depends on:
 
 - Docker access
-- `Xvfb`
+- `Xvfb`, resolved from the managed cache when it is not already available on `PATH`
 - TeamSpeak first-run dialogs and onboarding screens
 - upstream client UI behavior
 - host-specific runtime quirks such as audio and display behavior

@@ -27,11 +27,11 @@ if [[ ! -f "${plugin_so}" ]]; then
   exit 1
 fi
 
-ts3_runtime_require_command Xvfb "Xvfb is required for the TeamSpeak-backed runtime environment"
 ts3_runtime_require_docker_access "the TeamSpeak-backed runtime environment"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool
+ts3_runtime_resolve_xvfb
 
 if [[ -z "${state_dir}" ]]; then
   state_dir="$(mktemp -d)"
@@ -71,6 +71,23 @@ run_xdotool() {
     return
   fi
   "${cmd_prefix[@]}" "${xdotool_bin}" "$@"
+}
+
+start_xvfb() {
+  local -a xvfb_env=(env)
+  local -a xvfb_args=("${xvfb_bin}" "${display}" -screen 0 1280x1024x24 -ac)
+
+  if [[ -n "${xvfb_library_path}" ]]; then
+    xvfb_env+=("LD_LIBRARY_PATH=${xvfb_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}")
+  fi
+  if [[ -n "${xvfb_binary_dir}" ]]; then
+    xvfb_env+=("PATH=${xvfb_binary_dir}${PATH:+:${PATH}}")
+  fi
+  if [[ -n "${xvfb_xkb_dir}" ]]; then
+    xvfb_args+=(-xkbdir "${xvfb_xkb_dir}")
+  fi
+
+  xvfb_pid="$(nohup "${xvfb_env[@]}" "${xvfb_args[@]}" >"${xvfb_log}" 2>&1 & echo $!)"
 }
 
 find_window_id() {
@@ -267,7 +284,7 @@ if [[ -z "${display}" ]]; then
   exit 1
 fi
 
-xvfb_pid="$(nohup Xvfb "${display}" -screen 0 1280x1024x24 -ac >"${xvfb_log}" 2>&1 & echo $!)"
+start_xvfb
 sleep 1
 
 ensure_client_ready
@@ -366,6 +383,7 @@ Nickname:   ${nickname}
 Client:     ${client_source_dir}
 ClientLibs: ${client_runtime_library_path:-system}
 xdotool:    ${xdotool_bin}
+Xvfb:       ${xvfb_bin}
 
 Use it like:
   source '${env_file}'

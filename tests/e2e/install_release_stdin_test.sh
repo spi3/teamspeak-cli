@@ -34,6 +34,7 @@ client_dir="${tmp_dir}/client"
 managed_dir="${tmp_dir}/managed"
 config_path="${tmp_dir}/config.ini"
 fake_client_source="${tmp_dir}/fake-client-source"
+fake_xvfb_path="${tmp_dir}/fake-Xvfb"
 release_tag="vstdin-test"
 release_archive_dir="${tmp_dir}/archive/ts-${release_tag}-linux-x86_64"
 release_cache_dir="${managed_dir}/releases/${release_tag}"
@@ -50,6 +51,19 @@ printf 'FAKE_CLIENT_RUNSCRIPT\n'
 printf 'ARGS=%s\n' "$*"
 EOF
 chmod +x "${fake_client_source}/ts3client_runscript.sh"
+
+cat >"${fake_xvfb_path}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-help" ]]; then
+  printf 'fake Xvfb help\n'
+  exit 0
+fi
+
+exit 1
+EOF
+chmod +x "${fake_xvfb_path}"
 
 cat >"${release_archive_dir}/bin/ts" <<'EOF'
 #!/usr/bin/env bash
@@ -86,9 +100,10 @@ fi
 install_log="${tmp_dir}/install.log"
 cat "${repo_root}/scripts/install-release.sh" | env \
   HOME="${home_dir}" \
-  INSTALL_SCRIPT_BASE_URL="file://${repo_root}" \
-  TS3_CLIENT_DIR="${fake_client_source}" \
-  bash -s -- \
+	  INSTALL_SCRIPT_BASE_URL="file://${repo_root}" \
+	  TS3_CLIENT_DIR="${fake_client_source}" \
+	  TS3_XVFB="${fake_xvfb_path}" \
+	  bash -s -- \
     --release-tag "${release_tag}" \
     --prefix "${prefix}" \
     --client-dir "${client_dir}" \
@@ -99,6 +114,8 @@ expect_file "${prefix}/bin/ts3client" "stdin install should create the wrapper l
 expect_file "${prefix}/bin/ts-uninstall" "stdin install should install the uninstaller"
 expect_file "${client_dir}/plugins/ts3cli_plugin.so" "stdin install should stage the plugin library"
 expect_file "${config_path}" "stdin install should initialize the config"
+expect_fragment "$(cat "${prefix}/share/teamspeak-cli/install-receipt.env")" "xvfb_bin_path=${fake_xvfb_path}" \
+  "stdin install should record the resolved Xvfb dependency"
 
 wrapper_output="$("${prefix}/bin/ts3client" --demo 2>&1)"
 expect_fragment "${wrapper_output}" "FAKE_CLIENT_RUNSCRIPT" "installed wrapper should launch the staged client runscript"

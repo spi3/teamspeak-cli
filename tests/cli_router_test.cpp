@@ -1194,6 +1194,71 @@ int main() {
         tests::expect(headless_stop_result.ok(), "headless client stop should succeed");
         fs::remove(fake_x11_socket_path, socket_cleanup_ec);
     }
+    {
+        const fs::path managed_xvfb_path =
+            home_dir / ".cache" / "teamspeak-cli" / "install" / "xvfb" / "root" / "usr" / "bin" / "Xvfb";
+        const fs::path managed_launcher_path = temp_dir / "managed-xvfb-client.sh";
+        const std::string managed_display = ":167";
+        const fs::path managed_x11_socket_path = fs::path("/tmp/.X11-unix") / "X167";
+        std::error_code managed_socket_cleanup_ec;
+        fs::remove(managed_x11_socket_path, managed_socket_cleanup_ec);
+        fs::create_directories(managed_xvfb_path.parent_path());
+
+        {
+            std::ofstream xvfb(managed_xvfb_path, std::ios::trunc);
+            xvfb << "#!/bin/sh\n";
+            xvfb << "set -eu\n";
+            xvfb << "display=\"${1:-}\"\n";
+            xvfb << "socket_dir=\"/tmp/.X11-unix\"\n";
+            xvfb << "socket_path=\"${socket_dir}/X${display#:}\"\n";
+            xvfb << "/bin/mkdir -p \"${socket_dir}\"\n";
+            xvfb << ": >\"${socket_path}\"\n";
+            xvfb << "trap 'rm -f \"${socket_path}\"; exit 0' TERM INT EXIT\n";
+            xvfb << "while true; do /bin/sleep 1; done\n";
+        }
+        fs::permissions(
+            managed_xvfb_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
+        {
+            std::ofstream launcher(managed_launcher_path, std::ios::trunc);
+            launcher << "#!/bin/sh\n";
+            launcher << "set -eu\n";
+            launcher << "trap 'exit 0' TERM INT\n";
+            launcher << "while true; do /bin/sleep 1; done\n";
+        }
+        fs::permissions(
+            managed_launcher_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+
+        EnvGuard managed_launcher_env("TS_CLIENT_LAUNCHER", managed_launcher_path.string());
+        EnvGuard forced_headless_env("TS_CLIENT_HEADLESS", "1");
+        EnvGuard managed_display_env("TS_CLIENT_HEADLESS_DISPLAY", managed_display);
+        EnvGuard no_xvfb_path_env("PATH", (temp_dir / "path-without-xvfb").string());
+
+        std::vector<std::string> managed_headless_progress;
+        auto managed_headless_start = router.dispatch(client_start.value(), [&](std::string_view message) {
+            managed_headless_progress.emplace_back(message);
+        });
+        tests::expect(managed_headless_start.ok(), "managed Xvfb client start should succeed");
+        tests::expect(
+            managed_headless_progress.size() >= std::size_t(3),
+            "managed Xvfb client start should emit the headless display progress update"
+        );
+        tests::expect_contains(
+            managed_headless_progress[2],
+            "DISPLAY :167",
+            "headless client start should use the managed Xvfb fallback when Xvfb is not on PATH"
+        );
+
+        auto managed_headless_stop = router.dispatch(client_stop.value());
+        tests::expect(managed_headless_stop.ok(), "managed Xvfb client stop should succeed");
+        fs::remove(managed_x11_socket_path, managed_socket_cleanup_ec);
+    }
 
     const fs::path missing_library_client_dir = temp_dir / "missing-library-client";
     const fs::path missing_library_launcher_path = missing_library_client_dir / "ts3client_runscript.sh";

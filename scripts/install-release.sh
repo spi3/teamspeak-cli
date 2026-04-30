@@ -249,6 +249,10 @@ platform="linux-x86_64"
 skip_config=0
 
 client_source_dir=""
+xvfb_bin=""
+xvfb_library_path=""
+xvfb_xkb_dir=""
+xvfb_binary_dir=""
 config_created_by_installer=0
 build_dir=""
 release_archive_path=""
@@ -368,6 +372,10 @@ write_receipt() {
     printf 'release_repo=%q\n' "${release_repo}"
     printf 'release_tag=%q\n' "${release_tag}"
     printf 'release_archive_path=%q\n' "${release_archive_path}"
+    printf 'xvfb_bin_path=%q\n' "${xvfb_bin}"
+    printf 'xvfb_library_path=%q\n' "${xvfb_library_path}"
+    printf 'xvfb_xkb_dir=%q\n' "${xvfb_xkb_dir}"
+    printf 'xvfb_binary_dir=%q\n' "${xvfb_binary_dir}"
   } >"${receipt_tmp}"
 
   install -d "${share_dir}"
@@ -506,6 +514,12 @@ download_release_archive
 log "bootstrapping TeamSpeak client bundle into ${managed_dir}"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
+if declare -F ts3_runtime_resolve_xvfb >/dev/null; then
+  ts3_runtime_resolve_xvfb >/dev/null
+else
+  xvfb_bin="$(command -v Xvfb || true)"
+  [[ -n "${xvfb_bin}" ]] || die "Xvfb is required for headless operation, but this release's runtime support cannot bootstrap it automatically"
+fi
 write_install_marker "${managed_dir}" "managed-dir"
 
 extract_release_archive
@@ -532,6 +546,7 @@ TeamSpeak launcher:   ${ts3client_wrapper_path}
 Uninstaller:          ${uninstall_bin_path}
 Client bundle:        ${client_install_dir}
 Plugin library:       ${client_install_dir}/plugins/ts3cli_plugin.so
+Xvfb:                 ${xvfb_bin}
 Config path:          ${config_path}
 
 If ${prefix}/bin is not already on your PATH, add:

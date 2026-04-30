@@ -278,6 +278,24 @@ ts3_runtime_client_packages_for_soname() {
     libatomic.so.1)
       printf '%s\n' "libatomic1"
       ;;
+    libaudit.so.1)
+      printf '%s\n' "libaudit1"
+      ;;
+    libbrotlicommon.so.1|libbrotlidec.so.1)
+      printf '%s\n' "libbrotli1"
+      ;;
+    libbsd.so.0)
+      printf '%s\n' "libbsd0"
+      ;;
+    libbz2.so.1.0)
+      printf '%s\n' "libbz2-1.0"
+      ;;
+    libcap.so.2)
+      printf '%s\n' "libcap2"
+      ;;
+    libcap-ng.so.0)
+      printf '%s\n' "libcap-ng0"
+      ;;
     libc++.so.1)
       printf '%s\n' "libc++1"
       ;;
@@ -297,8 +315,17 @@ ts3_runtime_client_packages_for_soname() {
     libfontconfig.so.1)
       printf '%s\n' "libfontconfig1"
       ;;
+    libfontenc.so.1)
+      printf '%s\n' "libfontenc1"
+      ;;
     libfreetype.so.6)
       printf '%s\n' "libfreetype6"
+      ;;
+    libgcc_s.so.1)
+      printf '%s\n' "libgcc-s1"
+      ;;
+    libgcrypt.so.20)
+      printf '%s\n' "libgcrypt20"
       ;;
     libGL.so.1)
       printf '%s\n' "libgl1"
@@ -308,6 +335,9 @@ ts3_runtime_client_packages_for_soname() {
       ;;
     libGLX.so.0)
       printf '%s\n' "libglx0"
+      ;;
+    libgpg-error.so.0)
+      printf '%s\n' "libgpg-error0"
       ;;
     libglib-2.0.so.0|libgthread-2.0.so.0)
       printf '%s\n' "libglib2.0-0"
@@ -319,6 +349,15 @@ ts3_runtime_client_packages_for_soname() {
     liblcms2.so.2)
       printf '%s\n' "liblcms2-2"
       ;;
+    liblz4.so.1)
+      printf '%s\n' "liblz4-1"
+      ;;
+    liblzma.so.5)
+      printf '%s\n' "liblzma5"
+      ;;
+    libmd.so.0)
+      printf '%s\n' "libmd0"
+      ;;
     libnspr4.so|libplc4.so|libplds4.so)
       printf '%s\n' "libnspr4"
       ;;
@@ -328,8 +367,33 @@ ts3_runtime_client_packages_for_soname() {
     libpci.so.3)
       printf '%s\n' "libpci3"
       ;;
+    libpcre2-8.so.0)
+      printf '%s\n' "libpcre2-8-0"
+      ;;
+    libpixman-1.so.0)
+      printf '%s\n' "libpixman-1-0"
+      ;;
+    libpng16.so.16)
+      printf '%s\n' "libpng16-16"
+      ;;
+    libselinux.so.1)
+      printf '%s\n' "libselinux1"
+      ;;
     libSM.so.6)
       printf '%s\n' "libsm6"
+      ;;
+    libstdc++.so.6)
+      printf '%s\n' "libstdc++6"
+      ;;
+    libsystemd.so.0)
+      printf '%s\n' "libsystemd0"
+      printf '%s\n' "libelogind0"
+      ;;
+    libunwind.so.8)
+      printf '%s\n' "libunwind8"
+      ;;
+    libXau.so.6)
+      printf '%s\n' "libxau6"
       ;;
     libX11.so.6)
       printf '%s\n' "libx11-6"
@@ -343,11 +407,17 @@ ts3_runtime_client_packages_for_soname() {
     libXdamage.so.1)
       printf '%s\n' "libxdamage1"
       ;;
+    libXdmcp.so.6)
+      printf '%s\n' "libxdmcp6"
+      ;;
     libXext.so.6)
       printf '%s\n' "libxext6"
       ;;
     libXi.so.6)
       printf '%s\n' "libxi6"
+      ;;
+    libXfont2.so.2)
+      printf '%s\n' "libxfont2"
       ;;
     libXfixes.so.3)
       printf '%s\n' "libxfixes3"
@@ -417,6 +487,12 @@ ts3_runtime_client_packages_for_soname() {
       ;;
     libxslt.so.1)
       printf '%s\n' "libxslt1.1"
+      ;;
+    libz.so.1)
+      printf '%s\n' "zlib1g"
+      ;;
+    libzstd.so.1)
+      printf '%s\n' "libzstd1"
       ;;
     *)
       return 1
@@ -822,6 +898,195 @@ ts3_runtime_resolve_xdotool() {
   ts3_runtime_bootstrap_xdotool_from_apt
 }
 
+ts3_runtime_library_path_for_root() {
+  local root="$1"
+
+  find "${root}" -type f -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -
+}
+
+ts3_runtime_missing_binary_shared_libraries() {
+  local binary_path="$1"
+  local runtime_library_path="$2"
+
+  if [[ -n "${runtime_library_path}" ]]; then
+    env LD_LIBRARY_PATH="${runtime_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+      ldd "${binary_path}" 2>/dev/null
+  else
+    ldd "${binary_path}" 2>/dev/null
+  fi | awk '/=> not found/ {print $1}' | sort -u
+}
+
+ts3_runtime_xvfb_works() {
+  local xvfb_path="$1"
+  local library_path="$2"
+
+  if [[ -n "${library_path}" ]]; then
+    env LD_LIBRARY_PATH="${library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+      "${xvfb_path}" -help >/dev/null 2>&1
+    return
+  fi
+
+  "${xvfb_path}" -help >/dev/null 2>&1
+}
+
+ts3_runtime_set_managed_xvfb_paths() {
+  local extract_root="$1"
+
+  xvfb_bin="${extract_root}/usr/bin/Xvfb"
+  xvfb_library_path="$(ts3_runtime_library_path_for_root "${extract_root}")"
+  xvfb_xkb_dir=""
+  xvfb_binary_dir=""
+
+  if [[ -d "${extract_root}/usr/share/X11/xkb" ]]; then
+    xvfb_xkb_dir="${extract_root}/usr/share/X11/xkb"
+  fi
+  if [[ -d "${extract_root}/usr/bin" ]]; then
+    xvfb_binary_dir="${extract_root}/usr/bin"
+  fi
+}
+
+ts3_runtime_xvfb_bootstrap_packages() {
+  printf '%s\n' "xvfb"
+  printf '%s\n' "xserver-common"
+  printf '%s\n' "xkb-data"
+  printf '%s\n' "x11-xkb-utils"
+}
+
+ts3_runtime_extract_downloaded_debs() {
+  local package_dir="$1"
+  local extract_root="$2"
+  shift 2
+
+  local package_name
+  local deb_file
+  for package_name in "$@"; do
+    local found_package=0
+    for deb_file in "${package_dir}/${package_name}"_*.deb; do
+      [[ -f "${deb_file}" ]] || continue
+      found_package=1
+      dpkg-deb -x "${deb_file}" "${extract_root}"
+    done
+    if [[ "${found_package}" -eq 0 ]]; then
+      ts3_runtime_die "failed to locate downloaded package ${package_name}"
+    fi
+  done
+}
+
+ts3_runtime_bootstrap_xvfb_from_apt() {
+  local cache_dir="${ts3_runtime_managed_dir_default}/xvfb"
+  local package_dir="${cache_dir}/debs"
+  local extract_root="${cache_dir}/root"
+  local xvfb_candidate="${extract_root}/usr/bin/Xvfb"
+  local packages=()
+  local package_name
+  local package_string=""
+  local missing_libraries
+  local pass=0
+  local max_passes=6
+
+  ts3_runtime_require_command apt-get "Xvfb is missing and automatic bootstrap requires apt-get on this host"
+  ts3_runtime_require_command apt-cache "Xvfb is missing and automatic bootstrap requires apt-cache on this host"
+  ts3_runtime_require_command dpkg-deb "Xvfb is missing and automatic bootstrap requires dpkg-deb on this host"
+  ts3_runtime_require_command ldd "Xvfb is missing and automatic bootstrap requires ldd on this host"
+
+  if [[ -x "${xvfb_candidate}" ]]; then
+    ts3_runtime_set_managed_xvfb_paths "${extract_root}"
+    if ts3_runtime_xvfb_works "${xvfb_bin}" "${xvfb_library_path}"; then
+      return 0
+    fi
+  fi
+
+  mkdir -p "${package_dir}"
+  rm -rf "${extract_root}"
+  mkdir -p "${extract_root}"
+
+  mapfile -t packages < <(ts3_runtime_xvfb_bootstrap_packages)
+  package_string=" ${packages[*]} "
+
+  ts3_runtime_log "downloading Xvfb Debian packages"
+  (
+    cd "${package_dir}"
+    apt-get download "${packages[@]}" >/dev/null
+  ) || ts3_runtime_die "failed to download Xvfb packages via apt-get"
+
+  ts3_runtime_extract_downloaded_debs "${package_dir}" "${extract_root}" "${packages[@]}"
+
+  while (( pass < max_passes )); do
+    ts3_runtime_set_managed_xvfb_paths "${extract_root}"
+    missing_libraries="$(ts3_runtime_missing_binary_shared_libraries "${xvfb_candidate}" "${xvfb_library_path}")"
+    if [[ -z "${missing_libraries}" ]]; then
+      break
+    fi
+
+    packages=()
+    while IFS= read -r soname; do
+      [[ -n "${soname}" ]] || continue
+      package_name="$(ts3_runtime_resolve_client_package_for_soname "${soname}")" || {
+        ts3_runtime_die "unsupported or unavailable Xvfb runtime dependency: ${soname}"
+      }
+      if [[ " ${package_string} " != *" ${package_name} "* ]]; then
+        packages+=("${package_name}")
+        package_string+=" ${package_name}"
+      fi
+    done <<<"${missing_libraries}"
+
+    if [[ "${#packages[@]}" -eq 0 ]]; then
+      break
+    fi
+
+    ts3_runtime_log "downloading Xvfb runtime packages: ${packages[*]}"
+    (
+      cd "${package_dir}"
+      apt-get download "${packages[@]}" >/dev/null
+    ) || ts3_runtime_die "failed to download Xvfb runtime packages via apt-get"
+
+    ts3_runtime_extract_downloaded_debs "${package_dir}" "${extract_root}" "${packages[@]}"
+    pass=$((pass + 1))
+  done
+
+  ts3_runtime_set_managed_xvfb_paths "${extract_root}"
+  if [[ ! -x "${xvfb_bin}" ]]; then
+    ts3_runtime_die "bootstrapped Xvfb binary was not found at ${xvfb_bin}"
+  fi
+  if [[ -n "$(ts3_runtime_missing_binary_shared_libraries "${xvfb_bin}" "${xvfb_library_path}")" ]]; then
+    ts3_runtime_die "bootstrapped Xvfb runtime libraries are still incomplete"
+  fi
+  if ! ts3_runtime_xvfb_works "${xvfb_bin}" "${xvfb_library_path}"; then
+    ts3_runtime_die "bootstrapped Xvfb could not be executed"
+  fi
+}
+
+ts3_runtime_resolve_xvfb() {
+  local explicit_bin="${TS3_XVFB:-}"
+  local discovered_bin=""
+
+  xvfb_library_path="${TS3_XVFB_LIBRARY_PATH:-}"
+  xvfb_xkb_dir="${TS3_XVFB_XKB_DIR:-}"
+  xvfb_binary_dir="${TS3_XVFB_BINARY_DIR:-}"
+
+  if [[ -n "${explicit_bin}" ]]; then
+    if [[ -x "${explicit_bin}" ]] && ts3_runtime_xvfb_works "${explicit_bin}" "${xvfb_library_path}"; then
+      xvfb_bin="${explicit_bin}"
+      return 0
+    fi
+    if [[ "${explicit_bin}" != "${ts3_runtime_managed_dir_default}"* ]]; then
+      ts3_runtime_die "Xvfb failed to execute: ${explicit_bin}"
+    fi
+    ts3_runtime_log "cached Xvfb missing or unusable at ${explicit_bin}; bootstrapping again"
+  fi
+
+  discovered_bin="$(command -v Xvfb || true)"
+  if [[ -n "${discovered_bin}" ]] && ts3_runtime_xvfb_works "${discovered_bin}" ""; then
+    xvfb_bin="${discovered_bin}"
+    xvfb_library_path=""
+    xvfb_xkb_dir=""
+    xvfb_binary_dir=""
+    return 0
+  fi
+
+  ts3_runtime_bootstrap_xvfb_from_apt
+}
+
 ts3_runtime_json_expect_fragment() {
   local json_payload="$1"
   local fragment="$2"
@@ -917,6 +1182,10 @@ ts3_runtime_write_default_env_files() {
   local client_library_path="$3"
   local xdotool_path="$4"
   local xdotool_lib_path="$5"
+  local xvfb_path="$6"
+  local xvfb_lib_path="$7"
+  local xvfb_xkb_path="$8"
+  local xvfb_binary_path="$9"
   local deps_mk_path="${TS3_DEPS_MK:-${ts3_runtime_managed_dir_default}/deps.mk}"
   local deps_env_path="${TS3_DEPS_ENV:-${ts3_runtime_managed_dir_default}/deps.env}"
 
@@ -930,6 +1199,10 @@ TS3_CLIENT_DIR := ${client_source_dir}
 TS3_CLIENT_LIBRARY_PATH := ${client_library_path}
 TS3_XDOTOOL := ${xdotool_path}
 TS3_XDOTOOL_LIBRARY_PATH := ${xdotool_lib_path}
+TS3_XVFB := ${xvfb_path}
+TS3_XVFB_LIBRARY_PATH := ${xvfb_lib_path}
+TS3_XVFB_XKB_DIR := ${xvfb_xkb_path}
+TS3_XVFB_BINARY_DIR := ${xvfb_binary_path}
 EOF
 
   cat >"${deps_env_path}" <<EOF
@@ -939,5 +1212,9 @@ export TS3_CLIENT_DIR='${client_source_dir}'
 export TS3_CLIENT_LIBRARY_PATH='${client_library_path}'
 export TS3_XDOTOOL='${xdotool_path}'
 export TS3_XDOTOOL_LIBRARY_PATH='${xdotool_lib_path}'
+export TS3_XVFB='${xvfb_path}'
+export TS3_XVFB_LIBRARY_PATH='${xvfb_lib_path}'
+export TS3_XVFB_XKB_DIR='${xvfb_xkb_path}'
+export TS3_XVFB_BINARY_DIR='${xvfb_bin_path}'
 EOF
 }

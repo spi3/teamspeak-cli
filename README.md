@@ -93,6 +93,7 @@ That installer:
 - installs `ts` and the bundled docs/examples under `~/.local`
 - installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
+- resolves `Xvfb` for headless client launches, bootstrapping it into the managed cache when needed
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
@@ -141,6 +142,7 @@ By default the local-checkout installer:
 - installs `ts` and the bundled docs/examples under `~/.local`
 - installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
+- resolves `Xvfb` for headless client launches, bootstrapping it into the managed cache when needed
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
@@ -328,6 +330,10 @@ Useful overrides:
 - `TS3_CLIENT_SHA256`
 - `TS3_XDOTOOL`
 - `TS3_XDOTOOL_LIBRARY_PATH`
+- `TS3_XVFB`
+- `TS3_XVFB_LIBRARY_PATH`
+- `TS3_XVFB_XKB_DIR`
+- `TS3_XVFB_BINARY_DIR`
 
 The TeamSpeak-backed local harness starts:
 
@@ -378,7 +384,7 @@ If `ts client start` cannot find a launcher:
 
 If headless launch fails:
 
-- install `Xvfb`
+- rerun the installer so it can resolve or bootstrap `Xvfb`
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
 

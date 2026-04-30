@@ -446,6 +446,9 @@ struct ClientStatePaths {
 
 struct ClientHeadlessLaunch {
     std::filesystem::path xvfb_path;
+    std::string xvfb_library_path;
+    std::filesystem::path xvfb_xkb_dir;
+    std::filesystem::path xvfb_binary_dir;
     std::string display;
 };
 
@@ -1345,6 +1348,161 @@ auto resolve_xdotool_paths() -> std::optional<XdotoolPaths> {
     };
 }
 
+auto managed_xvfb_root_for_path(const std::filesystem::path& xvfb_path) -> std::optional<std::filesystem::path> {
+    const auto bin_dir = xvfb_path.parent_path();
+    if (bin_dir.filename() != "bin") {
+        return std::nullopt;
+    }
+
+    const auto usr_dir = bin_dir.parent_path();
+    if (usr_dir.filename() != "usr") {
+        return std::nullopt;
+    }
+
+    const auto root_dir = usr_dir.parent_path();
+    if (root_dir.empty() || root_dir.filename() != "root") {
+        return std::nullopt;
+    }
+
+    const auto package_dir = root_dir.parent_path();
+    if (package_dir.filename() != "xvfb") {
+        return std::nullopt;
+    }
+
+    return root_dir;
+}
+
+auto library_path_for_root(const std::filesystem::path& root_dir) -> std::string {
+    std::vector<std::filesystem::path> library_dirs;
+    std::error_code iterator_ec;
+    for (std::filesystem::recursive_directory_iterator iter(
+             root_dir,
+             std::filesystem::directory_options::skip_permission_denied,
+             iterator_ec
+         ),
+         end;
+         iter != end;
+         iter.increment(iterator_ec)) {
+        if (iterator_ec) {
+            iterator_ec.clear();
+            continue;
+        }
+        std::error_code type_ec;
+        if (!iter->is_regular_file(type_ec)) {
+            if (type_ec) {
+                type_ec.clear();
+            }
+            continue;
+        }
+        const auto name = iter->path().filename().string();
+        if (name.find(".so") == std::string::npos) {
+            continue;
+        }
+        const auto library_dir = iter->path().parent_path();
+        if (std::find(library_dirs.begin(), library_dirs.end(), library_dir) == library_dirs.end()) {
+            library_dirs.push_back(library_dir);
+        }
+    }
+
+    std::vector<std::string> entries;
+    entries.reserve(library_dirs.size());
+    for (const auto& dir : library_dirs) {
+        entries.push_back(dir.string());
+    }
+    return util::join(entries, ":");
+}
+
+auto path_from_env_or_receipt(std::string_view env_name, std::string_view receipt_key) -> std::filesystem::path {
+    const std::string env_key(env_name);
+    if (const char* explicit_path = std::getenv(env_key.c_str());
+        explicit_path != nullptr && *explicit_path != '\0') {
+        return explicit_path;
+    }
+    if (const auto receipt_value = read_install_receipt_value(receipt_key); receipt_value.has_value()) {
+        return *receipt_value;
+    }
+    return {};
+}
+
+auto string_from_env_or_receipt(std::string_view env_name, std::string_view receipt_key) -> std::string {
+    const std::string env_key(env_name);
+    if (const char* explicit_value = std::getenv(env_key.c_str());
+        explicit_value != nullptr && *explicit_value != '\0') {
+        return explicit_value;
+    }
+    return read_install_receipt_value(receipt_key).value_or("");
+}
+
+auto resolve_xvfb_paths() -> domain::Result<ClientHeadlessLaunch> {
+    std::filesystem::path xvfb_path;
+
+    if (const char* explicit_xvfb = std::getenv("TS_CLIENT_XVFB");
+        explicit_xvfb != nullptr && *explicit_xvfb != '\0') {
+        xvfb_path = explicit_xvfb;
+        if (!is_executable_file(xvfb_path)) {
+            return domain::fail<ClientHeadlessLaunch>(client_error(
+                "invalid_xvfb",
+                "TS_CLIENT_XVFB is not executable: " + xvfb_path.string(),
+                domain::ExitCode::not_found
+            ));
+        }
+    } else if (const auto found = find_executable_on_path("Xvfb"); found.has_value()) {
+        xvfb_path = *found;
+    } else if (auto receipt_xvfb = path_from_env_or_receipt("TS_CLIENT_XVFB", "xvfb_bin_path");
+               is_executable_file(receipt_xvfb)) {
+        xvfb_path = std::move(receipt_xvfb);
+    } else {
+        auto managed_dir = default_teamspeak_cache_dir();
+        if (const auto receipt_managed_dir = read_install_receipt_value("managed_dir"); receipt_managed_dir.has_value()) {
+            managed_dir = *receipt_managed_dir;
+        }
+        const auto managed_xvfb = managed_dir / "xvfb" / "root" / "usr" / "bin" / "Xvfb";
+        if (is_executable_file(managed_xvfb)) {
+            xvfb_path = managed_xvfb;
+        }
+    }
+
+    if (xvfb_path.empty()) {
+        return domain::fail<ClientHeadlessLaunch>(client_error(
+            "xvfb_not_found",
+            "Xvfb is required to launch the TeamSpeak client headlessly; install Xvfb or set TS_CLIENT_HEADLESS=0",
+            domain::ExitCode::not_found
+        ));
+    }
+
+    auto library_path = string_from_env_or_receipt("TS_CLIENT_XVFB_LIBRARY_PATH", "xvfb_library_path");
+    auto xkb_dir = path_from_env_or_receipt("TS_CLIENT_XVFB_XKB_DIR", "xvfb_xkb_dir");
+    auto binary_dir = path_from_env_or_receipt("TS_CLIENT_XVFB_BINARY_DIR", "xvfb_binary_dir");
+
+    if (const auto managed_root = managed_xvfb_root_for_path(xvfb_path); managed_root.has_value()) {
+        if (library_path.empty()) {
+            library_path = library_path_for_root(*managed_root);
+        }
+        if (xkb_dir.empty()) {
+            const auto candidate = *managed_root / "usr" / "share" / "X11" / "xkb";
+            std::error_code exists_ec;
+            if (std::filesystem::is_directory(candidate, exists_ec) && !exists_ec) {
+                xkb_dir = candidate;
+            }
+        }
+        if (binary_dir.empty()) {
+            const auto candidate = *managed_root / "usr" / "bin";
+            std::error_code exists_ec;
+            if (std::filesystem::is_directory(candidate, exists_ec) && !exists_ec) {
+                binary_dir = candidate;
+            }
+        }
+    }
+
+    return domain::ok(ClientHeadlessLaunch{
+        .xvfb_path = std::move(xvfb_path),
+        .xvfb_library_path = std::move(library_path),
+        .xvfb_xkb_dir = std::move(xkb_dir),
+        .xvfb_binary_dir = std::move(binary_dir),
+        .display = {},
+    });
+}
+
 auto run_command_capture_stdout(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& env_overrides = {}
@@ -1870,25 +2028,9 @@ auto resolve_client_headless_launch() -> domain::Result<std::optional<ClientHead
         return domain::ok(std::optional<ClientHeadlessLaunch>{});
     }
 
-    std::filesystem::path xvfb_path;
-    if (const char* explicit_xvfb = std::getenv("TS_CLIENT_XVFB"); explicit_xvfb != nullptr &&
-                                                            *explicit_xvfb != '\0') {
-        xvfb_path = explicit_xvfb;
-        if (!is_executable_file(xvfb_path)) {
-            return domain::fail<std::optional<ClientHeadlessLaunch>>(client_error(
-                "invalid_xvfb",
-                "TS_CLIENT_XVFB is not executable: " + xvfb_path.string(),
-                domain::ExitCode::not_found
-            ));
-        }
-    } else if (const auto found = find_executable_on_path("Xvfb"); found.has_value()) {
-        xvfb_path = *found;
-    } else {
-        return domain::fail<std::optional<ClientHeadlessLaunch>>(client_error(
-            "xvfb_not_found",
-            "Xvfb is required to launch the TeamSpeak client headlessly; install Xvfb or set TS_CLIENT_HEADLESS=0",
-            domain::ExitCode::not_found
-        ));
+    auto xvfb = resolve_xvfb_paths();
+    if (!xvfb) {
+        return domain::fail<std::optional<ClientHeadlessLaunch>>(xvfb.error());
     }
 
     std::string display;
@@ -1922,10 +2064,8 @@ auto resolve_client_headless_launch() -> domain::Result<std::optional<ClientHead
         ));
     }
 
-    return domain::ok(std::optional<ClientHeadlessLaunch>{ClientHeadlessLaunch{
-        .xvfb_path = std::move(xvfb_path),
-        .display = std::move(display),
-    }});
+    xvfb.value().display = std::move(display);
+    return domain::ok(std::optional<ClientHeadlessLaunch>{std::move(xvfb.value())});
 }
 
 auto read_pid_file(const std::filesystem::path& pid_file) -> std::optional<pid_t> {
@@ -2153,8 +2293,21 @@ auto build_client_systemd_headless_script(
     script << "export DISPLAY=" << shell_quote(headless_launch.display) << "\n";
     script << "export XDG_SESSION_TYPE='x11'\n";
     script << "unset WAYLAND_DISPLAY\n";
-    script << shell_quote(headless_launch.xvfb_path.string()) << ' '
-           << shell_quote(headless_launch.display) << " -screen 0 1280x1024x24 -ac &\n";
+    script << "env";
+    if (!headless_launch.xvfb_library_path.empty()) {
+        script << " LD_LIBRARY_PATH=" << shell_quote(headless_launch.xvfb_library_path)
+               << "${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}";
+    }
+    if (!headless_launch.xvfb_binary_dir.empty()) {
+        script << " PATH=" << shell_quote(headless_launch.xvfb_binary_dir.string())
+               << "${PATH:+:${PATH}}";
+    }
+    script << ' ' << shell_quote(headless_launch.xvfb_path.string()) << ' '
+           << shell_quote(headless_launch.display) << " -screen 0 1280x1024x24 -ac";
+    if (!headless_launch.xvfb_xkb_dir.empty()) {
+        script << " -xkbdir " << shell_quote(headless_launch.xvfb_xkb_dir.string());
+    }
+    script << " &\n";
     script << "xvfb_pid=$!\n";
     script << "for _ in $(seq 1 100); do\n";
     script << "  if [[ -e " << shell_quote(socket_path->string()) << " ]]; then\n";
@@ -2766,16 +2919,46 @@ auto launch_client_process_direct(
             }
 
             if (xvfb_pid == 0) {
-                char* const xvfb_argv[] = {
-                    const_cast<char*>(headless.xvfb_path.c_str()),
-                    const_cast<char*>(headless.display.c_str()),
-                    const_cast<char*>("-screen"),
-                    const_cast<char*>("0"),
-                    const_cast<char*>("1280x1024x24"),
-                    const_cast<char*>("-ac"),
-                    nullptr,
+                auto prepend_env_path = [&](const char* name, const std::string& prefix) {
+                    if (prefix.empty()) {
+                        return;
+                    }
+                    std::string value = prefix;
+                    if (const char* existing = std::getenv(name); existing != nullptr && *existing != '\0') {
+                        value += ":";
+                        value += existing;
+                    }
+                    if (::setenv(name, value.c_str(), 1) != 0) {
+                        const int child_errno = errno;
+                        (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));
+                        _exit(127);
+                    }
                 };
-                ::execv(headless.xvfb_path.c_str(), xvfb_argv);
+
+                prepend_env_path("LD_LIBRARY_PATH", headless.xvfb_library_path);
+                prepend_env_path("PATH", headless.xvfb_binary_dir.string());
+
+                std::vector<std::string> xvfb_args = {
+                    headless.xvfb_path.string(),
+                    headless.display,
+                    "-screen",
+                    "0",
+                    "1280x1024x24",
+                    "-ac",
+                };
+                if (!headless.xvfb_xkb_dir.empty()) {
+                    xvfb_args.push_back("-xkbdir");
+                    xvfb_args.push_back(headless.xvfb_xkb_dir.string());
+                }
+
+                std::vector<char*> xvfb_argv;
+                xvfb_argv.reserve(xvfb_args.size() + 1);
+                for (auto& argument : xvfb_args) {
+                    xvfb_argv.push_back(argument.data());
+                }
+                xvfb_argv.push_back(nullptr);
+
+                ::execv(headless.xvfb_path.c_str(), xvfb_argv.data());
 
                 const int child_errno = errno;
                 (void)::write(pipe_fds[1], &child_errno, sizeof(child_errno));

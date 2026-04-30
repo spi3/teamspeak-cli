@@ -11,6 +11,12 @@ source "${script_dir}/runtime_common.sh"
 [[ "$(ts3_runtime_client_package_for_soname "libXi.so.6")" == "libxi6" ]]
 [[ "$(ts3_runtime_client_package_for_soname "libasound.so.2")" == "libasound2" ]]
 [[ "$(ts3_runtime_client_package_for_soname "libevent-2.1.so.7")" == "libevent-2.1-7" ]]
+[[ "$(ts3_runtime_client_package_for_soname "libXfont2.so.2")" == "libxfont2" ]]
+[[ "$(ts3_runtime_client_package_for_soname "libpixman-1.so.0")" == "libpixman-1-0" ]]
+[[ "$(ts3_runtime_client_package_for_soname "libaudit.so.1")" == "libaudit1" ]]
+
+mapfile -t xvfb_packages < <(ts3_runtime_xvfb_bootstrap_packages)
+[[ "${xvfb_packages[*]}" == "xvfb xserver-common xkb-data x11-xkb-utils" ]]
 
 mapfile -t asound_packages < <(ts3_runtime_client_packages_for_soname "libasound.so.2")
 [[ "${asound_packages[*]}" == "libasound2 libasound2t64" ]]

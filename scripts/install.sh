@@ -47,6 +47,10 @@ cmake_bin=""
 ninja_bin=""
 plugin_sdk_dir=""
 client_source_dir=""
+xvfb_bin=""
+xvfb_library_path=""
+xvfb_xkb_dir=""
+xvfb_binary_dir=""
 config_created_by_installer=0
 
 usage() {
@@ -213,6 +217,10 @@ write_receipt() {
     printf 'client_alias_path=%q\n' "${client_alias_path}"
     printf 'uninstall_bin_path=%q\n' "${uninstall_bin_path}"
     printf 'receipt_path=%q\n' "${receipt_path}"
+    printf 'xvfb_bin_path=%q\n' "${xvfb_bin}"
+    printf 'xvfb_library_path=%q\n' "${xvfb_library_path}"
+    printf 'xvfb_xkb_dir=%q\n' "${xvfb_xkb_dir}"
+    printf 'xvfb_binary_dir=%q\n' "${xvfb_binary_dir}"
   } >"${receipt_tmp}"
 
   install -d "${share_dir}"
@@ -287,6 +295,7 @@ plugin_sdk_dir="$(ts3_runtime_resolve_plugin_sdk_dir)"
 client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool >/dev/null
+ts3_runtime_resolve_xvfb >/dev/null
 write_install_marker "${managed_dir}" "managed-dir"
 
 configure_and_build
@@ -323,6 +332,7 @@ TeamSpeak launcher:  ${ts3client_wrapper_path}
 Uninstaller:         ${uninstall_bin_path}
 Client bundle:       ${client_install_dir}
 Plugin library:      ${client_install_dir}/plugins/ts3cli_plugin.so
+Xvfb:                ${xvfb_bin}
 Config path:         ${config_path}
 
 If ${prefix}/bin is not already on your PATH, add:

@@ -163,6 +163,9 @@ The plugin media socket resolves in this order:
 - `TS_CLIENT_HEADLESS=0` to disable headless launch
 - `TS_CLIENT_HEADLESS=1` to force headless launch
 - `TS_CLIENT_XVFB` to point at a specific `Xvfb` binary
+- `TS_CLIENT_XVFB_LIBRARY_PATH` to point at companion runtime libraries for a managed `Xvfb` binary
+- `TS_CLIENT_XVFB_XKB_DIR` to point at companion XKB data for a managed `Xvfb` binary
+- `TS_CLIENT_XVFB_BINARY_DIR` to point at companion helper binaries for a managed `Xvfb` binary
 - `TS_CLIENT_HEADLESS_DISPLAY` to choose a specific display such as `:140`
 - `TS_CLIENT_XDOTOOL` to point at a specific `xdotool` binary used to dismiss known onboarding dialogs
 - `TS_CLIENT_XDOTOOL_LIBRARY_PATH` to point at the companion runtime libraries for that `xdotool` binary
