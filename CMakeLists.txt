@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
   teamspeak-cli
-  VERSION 0.6.2
+  VERSION 0.6.3
   DESCRIPTION "TeamSpeak client plugin CLI"
   LANGUAGES CXX
 )
