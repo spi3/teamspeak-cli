@@ -1215,6 +1215,6 @@ export TS3_XDOTOOL_LIBRARY_PATH='${xdotool_lib_path}'
 export TS3_XVFB='${xvfb_path}'
 export TS3_XVFB_LIBRARY_PATH='${xvfb_lib_path}'
 export TS3_XVFB_XKB_DIR='${xvfb_xkb_path}'
-export TS3_XVFB_BINARY_DIR='${xvfb_bin_path}'
+export TS3_XVFB_BINARY_DIR='${xvfb_binary_path}'
 EOF
 }
