@@ -385,6 +385,7 @@ If `ts client start` cannot find a launcher:
 If headless launch fails:
 
 - rerun the installer so it can resolve or bootstrap `Xvfb`
+- on Debian/Ubuntu, make sure `x11-xkb-utils` and `xkb-data` are installed if `/usr/bin/xkbcomp` or XKB data is missing
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
 

@@ -180,6 +180,9 @@ prefers a transient user service so the TeamSpeak client can survive non-interac
 `TS_CLIENT_SYSTEMD_RUN=0` to force the legacy detached launcher path, or `TS_CLIENT_SYSTEMD_RUN=1` to require the
 transient service path.
 
+Headless `Xvfb` also needs system XKB support. The installers install the Debian/Ubuntu `x11-xkb-utils` and `xkb-data`
+packages when `/usr/bin/xkbcomp` or the standard XKB data directory is missing.
+
 On the first headless TeamSpeak launch, hidden onboarding dialogs can still block the plugin bridge. `ts client start`
 tries to dismiss known license and identity dialogs with `xdotool` when available. If a headless session still wedges,
 complete the TeamSpeak license and initial identity setup once on a visible display before relying on headless mode.

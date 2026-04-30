@@ -5,6 +5,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/e2e/runtime_common.sh
 source "${script_dir}/runtime_common.sh"
 
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
 [[ "$(ts3_runtime_client_package_for_soname "libGL.so.1")" == "libgl1" ]]
 [[ "$(ts3_runtime_client_package_for_soname "libGLdispatch.so.0")" == "libglvnd0" ]]
 [[ "$(ts3_runtime_client_package_for_soname "libGLX.so.0")" == "libglx0" ]]
@@ -18,14 +21,33 @@ source "${script_dir}/runtime_common.sh"
 mapfile -t xvfb_packages < <(ts3_runtime_xvfb_bootstrap_packages)
 [[ "${xvfb_packages[*]}" == "xvfb xserver-common xkb-data x11-xkb-utils" ]]
 
+mapfile -t xvfb_system_packages < <(ts3_runtime_xvfb_system_dependency_packages)
+[[ "${xvfb_system_packages[*]}" == "x11-xkb-utils xkb-data" ]]
+
+mapfile -t missing_xvfb_system_packages < <(
+  ts3_runtime_missing_xvfb_system_dependency_packages_for_paths \
+    "${tmp_dir}/missing-xkbcomp" \
+    "${tmp_dir}/missing-xkb"
+)
+[[ "${missing_xvfb_system_packages[*]}" == "x11-xkb-utils xkb-data" ]]
+
+xkbcomp_fixture="${tmp_dir}/xkbcomp"
+xkb_data_fixture="${tmp_dir}/xkb"
+touch "${xkbcomp_fixture}"
+chmod +x "${xkbcomp_fixture}"
+mkdir -p "${xkb_data_fixture}/rules"
+mapfile -t missing_xvfb_system_packages < <(
+  ts3_runtime_missing_xvfb_system_dependency_packages_for_paths \
+    "${xkbcomp_fixture}" \
+    "${xkb_data_fixture}"
+)
+[[ "${missing_xvfb_system_packages[*]}" == "" ]]
+
 mapfile -t asound_packages < <(ts3_runtime_client_packages_for_soname "libasound.so.2")
 [[ "${asound_packages[*]}" == "libasound2 libasound2t64" ]]
 
 mapfile -t event_packages < <(ts3_runtime_client_packages_for_soname "libevent-2.1.so.7")
 [[ "${event_packages[*]}" == "libevent-2.1-7 libevent-2.1-7t64" ]]
-
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${tmp_dir}"' EXIT
 
 cat >"${tmp_dir}/apt-cache" <<'EOF'
 #!/usr/bin/env bash

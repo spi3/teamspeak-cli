@@ -945,6 +945,72 @@ ts3_runtime_set_managed_xvfb_paths() {
   fi
 }
 
+ts3_runtime_xvfb_system_dependency_packages() {
+  printf '%s\n' "x11-xkb-utils"
+  printf '%s\n' "xkb-data"
+}
+
+ts3_runtime_missing_xvfb_system_dependency_packages_for_paths() {
+  local xkbcomp_path="$1"
+  local xkb_dir="$2"
+
+  if [[ ! -x "${xkbcomp_path}" ]]; then
+    printf '%s\n' "x11-xkb-utils"
+  fi
+  if [[ ! -d "${xkb_dir}" || ! -d "${xkb_dir}/rules" ]]; then
+    printf '%s\n' "xkb-data"
+  fi
+}
+
+ts3_runtime_missing_xvfb_system_dependency_packages() {
+  ts3_runtime_missing_xvfb_system_dependency_packages_for_paths \
+    "/usr/bin/xkbcomp" \
+    "/usr/share/X11/xkb"
+}
+
+ts3_runtime_install_xvfb_system_dependency_packages() {
+  local packages=("$@")
+
+  [[ "${#packages[@]}" -gt 0 ]] || return 0
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    ts3_runtime_die \
+      "missing Xvfb keyboard support (${packages[*]}). Install packages that provide /usr/bin/xkbcomp and /usr/share/X11/xkb; on Debian/Ubuntu: sudo apt-get install -y ${packages[*]}"
+  fi
+
+  ts3_runtime_log "installing Xvfb keyboard support packages: ${packages[*]}"
+  if [[ "$(id -u)" == "0" ]]; then
+    apt-get update || ts3_runtime_die "failed to refresh apt package metadata"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || \
+      ts3_runtime_die "failed to install Xvfb keyboard support packages: ${packages[*]}"
+    return 0
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    ts3_runtime_die \
+      "missing Xvfb keyboard support (${packages[*]}), and sudo is unavailable. Install with: sudo apt-get install -y ${packages[*]}"
+  fi
+
+  sudo apt-get update || ts3_runtime_die "failed to refresh apt package metadata"
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || \
+    ts3_runtime_die "failed to install Xvfb keyboard support packages: ${packages[*]}"
+}
+
+ts3_runtime_ensure_xvfb_system_dependencies() {
+  local packages=()
+
+  mapfile -t packages < <(ts3_runtime_missing_xvfb_system_dependency_packages)
+  [[ "${#packages[@]}" -eq 0 ]] && return 0
+
+  ts3_runtime_install_xvfb_system_dependency_packages "${packages[@]}"
+
+  mapfile -t packages < <(ts3_runtime_missing_xvfb_system_dependency_packages)
+  if [[ "${#packages[@]}" -ne 0 ]]; then
+    ts3_runtime_die \
+      "Xvfb keyboard support is still incomplete after package installation: ${packages[*]}"
+  fi
+}
+
 ts3_runtime_xvfb_bootstrap_packages() {
   printf '%s\n' "xvfb"
   printf '%s\n' "xserver-common"
@@ -1059,6 +1125,8 @@ ts3_runtime_bootstrap_xvfb_from_apt() {
 ts3_runtime_resolve_xvfb() {
   local explicit_bin="${TS3_XVFB:-}"
   local discovered_bin=""
+
+  ts3_runtime_ensure_xvfb_system_dependencies
 
   xvfb_library_path="${TS3_XVFB_LIBRARY_PATH:-}"
   xvfb_xkb_dir="${TS3_XVFB_XKB_DIR:-}"
