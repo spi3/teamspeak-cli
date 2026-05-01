@@ -340,6 +340,22 @@ int main() {
         std::string("[{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"requested new TeamSpeak client connection\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.requested\"},{\"fields\":{},\"summary\":\"connection is starting\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connecting\"},{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"connected to TeamSpeak server\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connected\"}]"),
         "events watch json should keep the documented event array structure"
     );
+    teamspeak_cli::tests::expect_eq(
+        output::render(
+            output::CommandOutput{.data = output::to_value(lifecycle), .human = output::event_table(lifecycle)},
+            output::Format::ndjson
+        ),
+        std::string(
+            "{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"requested new "
+            "TeamSpeak client connection\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection."
+            "requested\"}\n"
+            "{\"fields\":{},\"summary\":\"connection is starting\",\"timestamp\":\"2023-11-14T22:13:20Z\","
+            "\"type\":\"connection.connecting\"}\n"
+            "{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"connected to "
+            "TeamSpeak server\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connected\"}"
+        ),
+        "events watch ndjson should render one event object per line"
+    );
     const output::CommandOutput connect_output{
         .data = output::make_object({
             {"result", output::make_string("connected")},

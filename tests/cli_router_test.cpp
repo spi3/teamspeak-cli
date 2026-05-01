@@ -133,7 +133,9 @@ int main() {
         help, "Run `ts <command> --help`", "top-level help should point users at command-specific help"
     );
     tests::expect_contains(
-        help, "--output <table|json|yaml>  yaml is experimental", "top-level help should mark yaml experimental"
+        help,
+        "--output <table|json|yaml|ndjson>  ndjson is only for events watch; yaml is experimental",
+        "top-level help should describe output formats"
     );
     tests::expect_contains(help, "--field <path>", "top-level help should list field extraction");
     tests::expect_contains(help, "--no-headers", "top-level help should list no-header table output");
@@ -191,8 +193,8 @@ int main() {
     tests::expect_contains(channel_help, "ts channel <subcommand>", "channel help usage");
     tests::expect_contains(
         channel_help,
-        "Global options: --output (yaml experimental)",
-        "command help should mark yaml output experimental"
+        "Global options: --output (ndjson only for events watch; yaml experimental)",
+        "command help should describe output format caveats"
     );
     tests::expect_contains(channel_help, "Subcommands:", "channel help should list subcommands");
     tests::expect_contains(channel_help, "ts channel list", "channel help should include examples");
@@ -306,6 +308,22 @@ int main() {
     tests::expect_eq(parsed.value().path[1], std::string("watch"), "command path tail");
     tests::expect_eq(parsed.value().options.at("count"), std::string("3"), "count option");
     tests::expect_eq(parsed.value().options.at("timeout-ms"), std::string("25"), "timeout option");
+
+    auto parsed_ndjson = parse_command(router, {"events", "watch", "--output", "ndjson", "--count", "2"});
+    tests::expect(parsed_ndjson.ok(), "events watch ndjson parse should succeed");
+    tests::expect_eq(
+        parsed_ndjson.value().global.format,
+        output::Format::ndjson,
+        "events watch should accept ndjson output"
+    );
+
+    auto unsupported_ndjson = parse_command(router, {"status", "--output", "ndjson"});
+    tests::expect(!unsupported_ndjson.ok(), "non-watch command should reject ndjson");
+    tests::expect_contains(
+        unsupported_ndjson.error().message,
+        "--output ndjson is supported only for ts events watch",
+        "unsupported ndjson error should name the supported command"
+    );
 
     auto parsed_field = parse_command(router, {"--json", "status", "--field", "phase"});
     tests::expect(parsed_field.ok(), "json field parse should succeed after the command");
@@ -1020,6 +1038,16 @@ int main() {
         events_watch_help,
         "JSON output is an array of domain event objects, which may be empty on timeout.",
         "events watch help should include output note"
+    );
+    tests::expect_contains(
+        events_watch_help,
+        "--output ndjson  Print one JSON event object per line. Supported only by events watch.",
+        "events watch help should document ndjson output"
+    );
+    tests::expect_contains(
+        events_watch_help,
+        "NDJSON output writes one event object per line after the watch completes.",
+        "events watch help should describe ndjson timing"
     );
 
     const std::string hook_add_help = router.render_help({"events", "hook", "add"});

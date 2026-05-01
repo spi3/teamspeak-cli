@@ -10,6 +10,8 @@
 
 This catalog covers the domain events returned by `ts events watch` and delivered to daemon hooks.
 
+`ts events watch --json` returns a JSON array after the command exits. `ts events watch --output ndjson` returns the same event shape as newline-delimited JSON, one event object per line. The current watch API collects the requested batch first, then writes and flushes each returned NDJSON line.
+
 ## Event Envelope
 
 JSON output renders every domain event as:
@@ -24,6 +26,8 @@ JSON output renders every domain event as:
   }
 }
 ```
+
+NDJSON output renders each event as the same object on its own line, without a surrounding array.
 
 All `fields` values are strings. Field sets can differ by backend because the mock backend is a deterministic development harness while the plugin backend reflects TeamSpeak callback data.
 

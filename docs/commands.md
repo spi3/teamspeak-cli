@@ -4,7 +4,7 @@
 
 Every command accepts these global flags:
 
-- `--output table|json|yaml` (`yaml` is experimental)
+- `--output table|json|yaml|ndjson` (`yaml` is experimental; `ndjson` is only for `ts events watch`)
 - `--json`
 - `--field <path>`
 - `--no-headers`
@@ -18,7 +18,7 @@ Every command accepts these global flags:
 - `--debug`
 - `--help`
 
-`--json` is shorthand for `--output json`. `--field <path>` extracts one scalar value from JSON output after the command runs; paths are dot-separated object keys, such as `phase` or `media_diagnostics.transmit_path_ready`. `--no-headers` removes table header rows, and `--wide` adds extra columns for supported table commands. Table controls do not change JSON, YAML, or `--field` output.
+`--json` is shorthand for `--output json`. `--field <path>` extracts one scalar value from JSON output after the command runs; paths are dot-separated object keys, such as `phase` or `media_diagnostics.transmit_path_ready`. `--output ndjson` is accepted only by `ts events watch` and prints one event object per line. `--no-headers` removes table header rows, and `--wide` adds extra columns for supported table commands. Table controls do not change JSON, YAML, NDJSON, or `--field` output.
 
 See [output-format.md](output-format.md) for the stdout/stderr contract, stable JSON automation guarantees, and JSON examples.
 
@@ -78,7 +78,7 @@ installs the latest published release from `spi3/teamspeak-cli`; use `--release-
 - `ts message inbox [--count N]`
 - `ts playback status`
 - `ts playback send --file <wav> [--clear] [--timeout-ms N]`
-- `ts events watch [--count N] [--timeout-ms N]`
+- `ts events watch [--count N] [--timeout-ms N] [--output ndjson]`
 - `ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]`
 - `ts events hook list`
 - `ts events hook remove <id>`
@@ -125,6 +125,8 @@ These commands stream human-readable progress when output is `table`:
 - `client stop`
 
 The same commands return one structured result at the end when output is `json` or experimental `yaml`.
+
+`ts events watch --output ndjson` writes one JSON event object per line. The current implementation waits for the requested event count or timeout, then writes and flushes each returned event line.
 
 Table output is human-oriented and is not stable for parsing. Use `--json` for scripts; see
 [output-format.md](output-format.md) for details.

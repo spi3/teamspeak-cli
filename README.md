@@ -179,6 +179,7 @@ Examples against the offline backend:
 ./build-mock/ts daemon start
 ./build-mock/ts message inbox
 ./build-mock/ts --profile mock-local events watch --count 5
+./build-mock/ts --profile mock-local events watch --count 5 --output ndjson
 ```
 
 Examples against the real plugin backend after the TeamSpeak client is running and the plugin is enabled:
@@ -213,6 +214,8 @@ When output is `table`, these commands stream human-readable progress by default
 
 When output is `json` or experimental `yaml`, they print one structured result at the end instead. Use JSON for stable automation.
 
+`events watch --output ndjson` prints one JSON event object per line for line-oriented consumers. It currently waits for the requested count or timeout, then writes and flushes each returned event line.
+
 For shell scripts that need one JSON scalar, use `--field <path>` with JSON output:
 
 ```bash
@@ -220,7 +223,7 @@ ts --json status --field phase
 ts --json plugin info --field media_diagnostics.transmit_path_ready
 ```
 
-For human tables, `--no-headers` removes header rows and `--wide` adds extra columns to supported list tables. These options do not change JSON, YAML, or `--field` output.
+For human tables, `--no-headers` removes header rows and `--wide` adds extra columns to supported list tables. These options do not change JSON, YAML, NDJSON, or `--field` output.
 
 To capture messages and trigger local scripts without keeping `ts events watch` attached, start the local daemon:
 

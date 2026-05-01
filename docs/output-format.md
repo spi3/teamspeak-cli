@@ -16,8 +16,9 @@ Failures are written to `stderr`. Scripts should treat a non-zero exit status as
 - `--json`: shorthand for `--output json`.
 - `--output json`: one JSON value on `stdout`.
 - `--output yaml`: one YAML value on `stdout`. YAML output is experimental.
+- `--output ndjson`: newline-delimited JSON for `ts events watch` only.
 
-For `json` and experimental `yaml`, successful commands emit exactly one top-level value. The value may be an object or an array depending on the command.
+For `json` and experimental `yaml`, successful commands emit exactly one top-level value. The value may be an object or an array depending on the command. `ts events watch --output ndjson` emits one event object per line instead of a top-level array. Current event watching still collects the requested batch first; after the watch completes, each returned event line is written and flushed.
 
 `--field <path>` is available only with `--json` or `--output json`. It runs the command normally, then extracts one scalar value from the JSON result using simple dot-separated object keys. Strings are written as raw text, numbers and booleans are written as their JSON literals, and `null` is written as `null`. Selecting a missing field, an invalid path, or an object/array returns a non-zero error.
 
@@ -29,6 +30,8 @@ Table controls apply only when output is `table`:
 - `--wide` adds extra columns for supported commands without changing their default table columns.
 
 JSON, experimental YAML, and `--field` output are unaffected by table controls. `--wide` currently adds `Subscribed` to `ts channel list`, `Unique Identity` to `ts client list` and `ts channel clients`, and event type/summary columns to `ts message inbox`. `ts events hook list --wide` is accepted as a no-op because the default hook table already exposes all stored hook fields.
+
+`--output ndjson` is accepted only for `ts events watch`. Other commands return a usage error.
 
 Progress-producing commands stream progress only for human/table output. With `--json` or `--output yaml`, those commands suppress progress and print one structured result at the end.
 
@@ -48,6 +51,7 @@ Scripts may rely on:
 - successful command results appearing on `stdout`
 - failures appearing on `stderr`
 - `--json` and `--output json` producing one complete JSON value per command invocation
+- `ts events watch --output ndjson` producing one JSON event object per non-empty line
 - `--field <path>` producing one raw scalar line from JSON output
 - JSON top-level type for the documented commands below, unless release notes document a compatibility change
 - JSON field names that are documented or covered by tests
@@ -58,6 +62,7 @@ Scripts must not rely on:
 - progress text wording or timing
 - parsing progress text as data
 - `json` or `yaml` output containing multiple streamed values for one command invocation
+- `ts events watch --output ndjson` flushing before the watch command has collected its returned batch
 - undocumented debug fields, especially fields that appear only with `--debug`
 - YAML as the stable automation contract
 
@@ -270,7 +275,9 @@ Top-level type: object. Shape: [Media Diagnostics](#media-diagnostics).
 
 ### `ts events watch`
 
-Top-level type: array. Each item is an [Event](#event). The array is emitted after the command exits. If no events arrive before the timeout, the result is `[]`.
+Top-level type for `--json`: array. Each item is an [Event](#event). The array is emitted after the command exits. If no events arrive before the timeout, the result is `[]`.
+
+`--output ndjson` emits the same event objects as newline-delimited JSON, one object per line and no enclosing array. With the current watch API, the command still waits for the requested count or timeout first, then writes and flushes each returned event line.
 
 ## JSON Examples
 
@@ -322,4 +329,11 @@ The examples below use the `mock-local` profile. Real plugin-backed output uses 
 
 ```json
 [{"fields":{"channel_id":"2","client_count":"2"},"summary":"Engineering activity increased","timestamp":"2026-05-01T03:13:25Z","type":"channel.updated"},{"fields":{"client_id":"3","nickname":"bob"},"summary":"bob started talking","timestamp":"2026-05-01T03:13:25Z","type":"client.talking"}]
+```
+
+`ts events watch --output ndjson` emits one event object per line:
+
+```ndjson
+{"fields":{"channel_id":"2","client_count":"2"},"summary":"Engineering activity increased","timestamp":"2026-05-01T03:13:25Z","type":"channel.updated"}
+{"fields":{"client_id":"3","nickname":"bob"},"summary":"bob started talking","timestamp":"2026-05-01T03:13:25Z","type":"client.talking"}
 ```

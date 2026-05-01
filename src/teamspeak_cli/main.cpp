@@ -59,6 +59,14 @@ int main(int argc, char** argv) {
         return static_cast<int>(result.value().exit_code);
     }
 
+    if (parsed.value().global.format == teamspeak_cli::output::Format::ndjson) {
+        for (const auto& line : teamspeak_cli::output::render_ndjson_lines(result.value().data)) {
+            std::cout << line << '\n';
+            std::cout.flush();
+        }
+        return static_cast<int>(result.value().exit_code);
+    }
+
     std::cout << teamspeak_cli::output::render(
                      result.value(),
                      parsed.value().global.format,

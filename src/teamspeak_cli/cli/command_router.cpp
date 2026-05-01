@@ -227,14 +227,22 @@ const std::vector<CommandDoc>& command_docs() {
         {{"events"}, "ts events <subcommand>", "Watch backend domain events", {}},
         {
             {"events", "watch"},
-            "ts events watch [--count N] [--timeout-ms N]",
+            "ts events watch [--count N] [--timeout-ms N] [--output ndjson]",
             "Watch backend domain events",
             {
                 {"--count <N>", "Maximum number of events to collect before returning.", "positive integer", "5"},
                 {"--timeout-ms <N>", "Maximum time to wait for events.", "integer milliseconds", "1000"},
+                {"--output ndjson", "Print one JSON event object per line. Supported only by events watch."},
             },
-            {"ts events watch", "ts events watch --count 1 --timeout-ms 5000 --json"},
-            {"JSON output is an array of domain event objects, which may be empty on timeout."},
+            {
+                "ts events watch",
+                "ts events watch --count 1 --timeout-ms 5000 --json",
+                "ts events watch --count 5 --output ndjson",
+            },
+            {
+                "JSON output is an array of domain event objects, which may be empty on timeout.",
+                "NDJSON output writes one event object per line after the watch completes.",
+            },
         },
         {{"events", "hook"}, "ts events hook <subcommand>", "Manage daemon event hooks", {}},
         {
@@ -4402,7 +4410,7 @@ auto top_level_help() -> std::string {
     out << "Usage:\n";
     out << "  ts [global options] <command> [args]\n\n";
     out << "Global options:\n";
-    out << "  --output <table|json|yaml>  yaml is experimental\n";
+    out << "  --output <table|json|yaml|ndjson>  ndjson is only for events watch; yaml is experimental\n";
     out << "  --json\n";
     out << "  --field <path>  extract a scalar field from JSON output\n";
     out << "  --no-headers  omit table header rows\n";
@@ -4706,6 +4714,13 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
         ));
     }
 
+    const bool events_watch_command = parsed.path == std::vector<std::string>{"events", "watch"};
+    if (parsed.global.format == output::Format::ndjson && !events_watch_command && !parsed.show_help) {
+        return domain::fail<ParsedCommand>(cli_error(
+            "ndjson_unsupported", "--output ndjson is supported only for ts events watch"
+        ));
+    }
+
     return domain::ok(parsed);
 }
 
@@ -4759,7 +4774,7 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
         }
     }
 
-    out << "\nGlobal options: --output (yaml experimental) --json --field --no-headers --wide --profile --server --nickname --identity --config --verbose --debug --help\n";
+    out << "\nGlobal options: --output (ndjson only for events watch; yaml experimental) --json --field --no-headers --wide --profile --server --nickname --identity --config --verbose --debug --help\n";
     return out.str();
 }
 

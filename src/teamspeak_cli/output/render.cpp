@@ -508,9 +508,30 @@ auto parse_format(const std::string& name) -> domain::Result<Format> {
     if (name == "yaml") {
         return domain::ok(Format::yaml);
     }
+    if (name == "ndjson") {
+        return domain::ok(Format::ndjson);
+    }
     return domain::fail<Format>(domain::make_error(
         "cli", "invalid_format", "invalid output format: " + name, domain::ExitCode::usage
     ));
+}
+
+auto render_ndjson_lines(const ValueHolder& value) -> std::vector<std::string> {
+    std::vector<std::string> lines;
+    if (const auto* items = std::get_if<std::vector<ValueHolder>>(&value.value)) {
+        lines.reserve(items->size());
+        for (const auto& item : *items) {
+            std::ostringstream out;
+            render_json_impl(item, out);
+            lines.push_back(out.str());
+        }
+        return lines;
+    }
+
+    std::ostringstream out;
+    render_json_impl(value, out);
+    lines.push_back(out.str());
+    return lines;
 }
 
 auto render(const CommandOutput& output, Format format, TableRenderOptions table_options) -> std::string {
@@ -523,6 +544,9 @@ auto render(const CommandOutput& output, Format format, TableRenderOptions table
         std::ostringstream out;
         render_yaml_impl(output.data, out, 0);
         return out.str();
+    }
+    if (format == Format::ndjson) {
+        return util::join(render_ndjson_lines(output.data), "\n");
     }
 
     if (const auto* table = std::get_if<Table>(&output.human)) {

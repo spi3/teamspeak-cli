@@ -98,6 +98,10 @@ assert_contains "${last_stdout}" 'Unique Identity'
 
 events_json="$("${ts_bin}" --json events watch --count 2 --timeout-ms 1500 --config "${config_path}")"
 printf '%s\n' "${events_json}" | grep -q '"type":"'
+events_ndjson="$("${ts_bin}" events watch --output ndjson --count 2 --timeout-ms 1500 --config "${config_path}")"
+[[ "$(printf '%s\n' "${events_ndjson}" | grep -c '^{"fields":')" == "2" ]]
+printf '%s\n' "${events_ndjson}" | grep -q '"type":"'
+printf '%s\n' "${events_ndjson}" | grep -qv '^\['
 
 run_ts_capture connect_table --config "${config_path}" --server voice.example.com:9987 --nickname smoke-tester connect
 assert_contains "${last_stdout}" 'Connected to voice.example.com:9987 as smoke-tester.'
