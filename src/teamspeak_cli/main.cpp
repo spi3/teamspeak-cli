@@ -34,6 +34,31 @@ int main(int argc, char** argv) {
         return static_cast<int>(result.error().exit_code);
     }
 
+    if (parsed.value().global.field_path.has_value()) {
+        auto field = teamspeak_cli::output::extract_field(
+            result.value().data, *parsed.value().global.field_path
+        );
+        if (!field) {
+            std::cerr << teamspeak_cli::output::render_error(
+                             field.error(), parsed.value().global.format, parsed.value().global.debug
+                         )
+                      << '\n';
+            return static_cast<int>(field.error().exit_code);
+        }
+
+        auto rendered = teamspeak_cli::output::render_extracted_field(field.value());
+        if (!rendered) {
+            std::cerr << teamspeak_cli::output::render_error(
+                             rendered.error(), parsed.value().global.format, parsed.value().global.debug
+                         )
+                      << '\n';
+            return static_cast<int>(rendered.error().exit_code);
+        }
+
+        std::cout << rendered.value() << '\n';
+        return static_cast<int>(result.value().exit_code);
+    }
+
     std::cout << teamspeak_cli::output::render(result.value(), parsed.value().global.format) << '\n';
     return static_cast<int>(result.value().exit_code);
 }

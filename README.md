@@ -213,6 +213,13 @@ When output is `table`, these commands stream human-readable progress by default
 
 When output is `json` or experimental `yaml`, they print one structured result at the end instead. Use JSON for stable automation.
 
+For shell scripts that need one JSON scalar, use `--field <path>` with JSON output:
+
+```bash
+ts --json status --field phase
+ts --json plugin info --field media_diagnostics.transmit_path_ready
+```
+
 To capture messages and trigger local scripts without keeping `ts events watch` attached, start the local daemon:
 
 ```bash

@@ -135,6 +135,7 @@ int main() {
     tests::expect_contains(
         help, "--output <table|json|yaml>  yaml is experimental", "top-level help should mark yaml experimental"
     );
+    tests::expect_contains(help, "--field <path>", "top-level help should list field extraction");
     tests::expect_contains(help, "mute  Mute your TeamSpeak microphone", "top-level help should list mute");
     tests::expect_contains(help, "away  Set your TeamSpeak status to away", "top-level help should list away");
     tests::expect_contains(
@@ -264,6 +265,41 @@ int main() {
     tests::expect_eq(parsed.value().path[1], std::string("watch"), "command path tail");
     tests::expect_eq(parsed.value().options.at("count"), std::string("3"), "count option");
     tests::expect_eq(parsed.value().options.at("timeout-ms"), std::string("25"), "timeout option");
+
+    auto parsed_field = parse_command(router, {"--json", "status", "--field", "phase"});
+    tests::expect(parsed_field.ok(), "json field parse should succeed after the command");
+    tests::expect(parsed_field.value().global.field_path.has_value(), "field path should be stored globally");
+    tests::expect_eq(
+        *parsed_field.value().global.field_path,
+        std::string("phase"),
+        "field path should preserve the requested dot path"
+    );
+
+    auto parsed_nested_field = parse_command(
+        router, {"--json", "plugin", "info", "--field", "media_diagnostics.transmit_path_ready"}
+    );
+    tests::expect(parsed_nested_field.ok(), "nested json field parse should succeed");
+    tests::expect_eq(
+        *parsed_nested_field.value().global.field_path,
+        std::string("media_diagnostics.transmit_path_ready"),
+        "nested field path should preserve dots"
+    );
+
+    auto table_field = parse_command(router, {"status", "--field", "phase"});
+    tests::expect(!table_field.ok(), "field extraction without json should fail during parse");
+    tests::expect_contains(
+        table_field.error().message,
+        "--field requires JSON output",
+        "field extraction should require json output"
+    );
+
+    auto yaml_field = parse_command(router, {"--output", "yaml", "status", "--field", "phase"});
+    tests::expect(!yaml_field.ok(), "field extraction with yaml should fail during parse");
+    tests::expect_contains(
+        yaml_field.error().message,
+        "--field requires JSON output",
+        "field extraction should reject yaml output"
+    );
 
     auto version = parse_command(router, {"version"});
     tests::expect(version.ok(), "version parse should succeed");

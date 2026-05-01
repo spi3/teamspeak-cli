@@ -19,6 +19,8 @@ Failures are written to `stderr`. Scripts should treat a non-zero exit status as
 
 For `json` and experimental `yaml`, successful commands emit exactly one top-level value. The value may be an object or an array depending on the command.
 
+`--field <path>` is available only with `--json` or `--output json`. It runs the command normally, then extracts one scalar value from the JSON result using simple dot-separated object keys. Strings are written as raw text, numbers and booleans are written as their JSON literals, and `null` is written as `null`. Selecting a missing field, an invalid path, or an object/array returns a non-zero error.
+
 Table output is for people reading a terminal. It may change labels, spacing, columns, order, wrapping, and explanatory text between releases. Do not parse table output in scripts.
 
 Progress-producing commands stream progress only for human/table output. With `--json` or `--output yaml`, those commands suppress progress and print one structured result at the end.
@@ -39,6 +41,7 @@ Scripts may rely on:
 - successful command results appearing on `stdout`
 - failures appearing on `stderr`
 - `--json` and `--output json` producing one complete JSON value per command invocation
+- `--field <path>` producing one raw scalar line from JSON output
 - JSON top-level type for the documented commands below, unless release notes document a compatibility change
 - JSON field names that are documented or covered by tests
 
@@ -52,6 +55,13 @@ Scripts must not rely on:
 - YAML as the stable automation contract
 
 Prefer JSON for automation. YAML currently uses a custom renderer and should remain a human-adjacent convenience format until parser-backed tests and a real serializer exist.
+
+Examples:
+
+```bash
+ts --json status --field phase
+ts --json plugin info --field media_diagnostics.transmit_path_ready
+```
 
 ## JSON Compatibility
 

@@ -52,6 +52,8 @@ auto parse_format(const std::string& name) -> domain::Result<Format>;
 auto render(const CommandOutput& output, Format format) -> std::string;
 auto render_error(const domain::Error& error, Format format, bool debug) -> std::string;
 auto render_details_block(const Details& details) -> std::string;
+auto extract_field(const ValueHolder& value, const std::string& path) -> domain::Result<ValueHolder>;
+auto render_extracted_field(const ValueHolder& value) -> domain::Result<std::string>;
 
 auto make_string(std::string value) -> ValueHolder;
 auto make_bool(bool value) -> ValueHolder;

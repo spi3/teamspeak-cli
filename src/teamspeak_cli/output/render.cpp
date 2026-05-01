@@ -467,6 +467,33 @@ auto render_error_human(
     return out.str();
 }
 
+auto output_error(std::string code, std::string message, domain::ExitCode exit_code) -> domain::Error {
+    return domain::make_error("output", std::move(code), std::move(message), exit_code);
+}
+
+auto validate_field_path(const std::string& path) -> domain::Result<std::vector<std::string>> {
+    if (path.empty()) {
+        return domain::fail<std::vector<std::string>>(output_error(
+            "invalid_field_path",
+            "--field requires a non-empty dot-separated object path",
+            domain::ExitCode::usage
+        ));
+    }
+
+    std::vector<std::string> parts;
+    for (const auto& part : util::split(path, '.')) {
+        if (part.empty()) {
+            return domain::fail<std::vector<std::string>>(output_error(
+                "invalid_field_path",
+                "invalid --field path `" + path + "`: path segments must not be empty",
+                domain::ExitCode::usage
+            ));
+        }
+        parts.push_back(part);
+    }
+    return domain::ok(std::move(parts));
+}
+
 }  // namespace
 
 auto parse_format(const std::string& name) -> domain::Result<Format> {
@@ -540,6 +567,66 @@ auto render_error(const domain::Error& error, Format format, bool debug) -> std:
 
 auto render_details_block(const Details& details) -> std::string {
     return render_details_impl(details);
+}
+
+auto extract_field(const ValueHolder& value, const std::string& path) -> domain::Result<ValueHolder> {
+    auto parts = validate_field_path(path);
+    if (!parts) {
+        return domain::fail<ValueHolder>(parts.error());
+    }
+
+    const ValueHolder* current = &value;
+    std::string prefix;
+    for (const auto& part : parts.value()) {
+        const auto* object = std::get_if<std::map<std::string, ValueHolder>>(&current->value);
+        if (object == nullptr) {
+            const std::string location = prefix.empty() ? std::string("<root>") : prefix;
+            return domain::fail<ValueHolder>(output_error(
+                "field_not_object",
+                "field path `" + path + "` cannot descend through non-object value at `" + location + "`",
+                domain::ExitCode::usage
+            ));
+        }
+
+        const auto found = object->find(part);
+        if (found == object->end()) {
+            const std::string location = prefix.empty() ? std::string("<root>") : prefix;
+            return domain::fail<ValueHolder>(output_error(
+                "field_not_found",
+                "field `" + path + "` was not found: missing `" + part + "` under `" + location + "`",
+                domain::ExitCode::not_found
+            ));
+        }
+
+        current = &found->second;
+        prefix = prefix.empty() ? part : prefix + "." + part;
+    }
+
+    return domain::ok(*current);
+}
+
+auto render_extracted_field(const ValueHolder& value) -> domain::Result<std::string> {
+    return std::visit(
+        [&](const auto& scalar) -> domain::Result<std::string> {
+            using T = std::decay_t<decltype(scalar)>;
+            if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                return domain::ok(std::string("null"));
+            } else if constexpr (std::is_same_v<T, bool>) {
+                return domain::ok(std::string(scalar ? "true" : "false"));
+            } else if constexpr (std::is_same_v<T, std::int64_t>) {
+                return domain::ok(std::to_string(scalar));
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                return domain::ok(scalar);
+            } else {
+                return domain::fail<std::string>(output_error(
+                    "field_not_scalar",
+                    "--field can only render scalar values; the selected value is an object or array",
+                    domain::ExitCode::usage
+                ));
+            }
+        },
+        value.value
+    );
 }
 
 auto make_string(std::string value) -> ValueHolder {

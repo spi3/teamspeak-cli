@@ -18,6 +18,14 @@ run_ts_capture() {
   "${ts_bin}" "$@" >"${last_stdout}" 2>"${last_stderr}"
 }
 
+run_ts_capture_allow_error() {
+  local name="${1:?missing capture name}"
+  shift
+  last_stdout="${tmp_dir}/${name}.stdout"
+  last_stderr="${tmp_dir}/${name}.stderr"
+  "${ts_bin}" "$@" >"${last_stdout}" 2>"${last_stderr}"
+}
+
 assert_contains() {
   local path="${1:?missing path}"
   local pattern="${2:?missing pattern}"
@@ -54,6 +62,19 @@ printf '%s\n' "${profile_output}" | grep -q 'mock-local'
 status_json="$("${ts_bin}" --json status --config "${config_path}")"
 printf '%s\n' "${status_json}" | grep -q '"backend":"mock"'
 printf '%s\n' "${status_json}" | grep -q '"phase":"connected"'
+
+status_phase="$("${ts_bin}" --json status --field phase --config "${config_path}")"
+[[ "${status_phase}" == "connected" ]]
+
+plugin_transmit_ready="$("${ts_bin}" --json plugin info --field media_diagnostics.transmit_path_ready --config "${config_path}")"
+[[ "${plugin_transmit_ready}" == "true" || "${plugin_transmit_ready}" == "false" ]]
+
+if run_ts_capture_allow_error missing_field --json status --field missing --config "${config_path}"; then
+  printf 'expected missing field extraction to fail\n' >&2
+  exit 1
+fi
+assert_empty "${last_stdout}"
+assert_contains "${last_stderr}" '"code":"field_not_found"'
 
 channel_json="$("${ts_bin}" --json channel list --config "${config_path}")"
 printf '%s\n' "${channel_json}" | grep -q '"name":"Lobby"'

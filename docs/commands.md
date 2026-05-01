@@ -6,6 +6,7 @@ Every command accepts these global flags:
 
 - `--output table|json|yaml` (`yaml` is experimental)
 - `--json`
+- `--field <path>`
 - `--profile <name>`
 - `--server <host[:port]>`
 - `--nickname <name>`
@@ -15,7 +16,7 @@ Every command accepts these global flags:
 - `--debug`
 - `--help`
 
-`--json` is shorthand for `--output json`.
+`--json` is shorthand for `--output json`. `--field <path>` extracts one scalar value from JSON output after the command runs; paths are dot-separated object keys, such as `phase` or `media_diagnostics.transmit_path_ready`.
 
 See [output-format.md](output-format.md) for the stdout/stderr contract, stable JSON automation guarantees, and JSON examples.
 

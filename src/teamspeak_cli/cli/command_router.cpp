@@ -4086,6 +4086,7 @@ auto top_level_help() -> std::string {
     out << "Global options:\n";
     out << "  --output <table|json|yaml>  yaml is experimental\n";
     out << "  --json\n";
+    out << "  --field <path>  extract a scalar field from JSON output\n";
     out << "  --profile <name>\n";
     out << "  --server <host[:port]>\n";
     out << "  --nickname <name>\n";
@@ -4182,6 +4183,14 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 return domain::fail<ParsedCommand>(format.error());
             }
             parsed.global.format = format.value();
+            continue;
+        }
+        if (token == "--field") {
+            auto value = consume_option(index, token);
+            if (!value) {
+                return domain::fail<ParsedCommand>(value.error());
+            }
+            parsed.global.field_path = value.value();
             continue;
         }
         if (token == "--profile") {
@@ -4290,6 +4299,7 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
             const bool takes_value =
                 option == "output" || option == "profile" || option == "server" ||
                 option == "nickname" || option == "identity" || option == "config" ||
+                option == "field" ||
                 option == "target" || option == "id" || option == "text" ||
                 option == "count" || option == "timeout-ms" || option == "poll-ms" ||
                 option == "type" || option == "exec" || option == "message-kind" ||
@@ -4312,6 +4322,8 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                     return domain::fail<ParsedCommand>(format.error());
                 }
                 parsed.global.format = format.value();
+            } else if (option == "field") {
+                parsed.global.field_path = value;
             } else if (option == "profile") {
                 parsed.global.profile = value;
             } else if (option == "server") {
@@ -4333,6 +4345,13 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
 
     if (group_command) {
         parsed.show_help = true;
+    }
+
+    if (parsed.global.field_path.has_value() && parsed.global.format != output::Format::json &&
+        !parsed.show_help) {
+        return domain::fail<ParsedCommand>(cli_error(
+            "field_requires_json", "--field requires JSON output; use --json or --output json"
+        ));
     }
 
     return domain::ok(parsed);
@@ -4372,7 +4391,7 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
         }
     }
 
-    out << "\nGlobal options: --output (yaml experimental) --json --profile --server --nickname --identity --config --verbose --debug --help\n";
+    out << "\nGlobal options: --output (yaml experimental) --json --field --profile --server --nickname --identity --config --verbose --debug --help\n";
     return out.str();
 }
 

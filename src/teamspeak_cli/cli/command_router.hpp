@@ -22,6 +22,7 @@ struct GlobalOptions {
     std::optional<std::string> server;
     std::optional<std::string> nickname;
     std::optional<std::string> identity;
+    std::optional<std::string> field_path;
     std::filesystem::path config_path;
 };
 

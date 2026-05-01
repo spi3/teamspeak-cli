@@ -199,6 +199,55 @@ int main() {
         "\"transmit_path_ready\":true",
         "plugin json should keep transmit_path_ready key unchanged"
     );
+    auto transmit_ready = output::extract_field(
+        plugin_rendered.data, "media_diagnostics.transmit_path_ready"
+    );
+    teamspeak_cli::tests::expect(transmit_ready.ok(), "field extraction should find nested bool fields");
+    auto rendered_transmit_ready = output::render_extracted_field(transmit_ready.value());
+    teamspeak_cli::tests::expect(rendered_transmit_ready.ok(), "field rendering should accept bools");
+    teamspeak_cli::tests::expect_eq(
+        rendered_transmit_ready.value(),
+        std::string("true"),
+        "extracted bool fields should render as shell-friendly literals"
+    );
+
+    auto socket_path = output::extract_field(plugin_rendered.data, "socket_path");
+    teamspeak_cli::tests::expect(socket_path.ok(), "field extraction should find top-level string fields");
+    auto rendered_socket_path = output::render_extracted_field(socket_path.value());
+    teamspeak_cli::tests::expect(rendered_socket_path.ok(), "field rendering should accept strings");
+    teamspeak_cli::tests::expect_eq(
+        rendered_socket_path.value(),
+        std::string("/tmp/ts3cli.sock"),
+        "extracted string fields should render as raw text"
+    );
+
+    auto parent_id = output::extract_field(rendered.data, "parent_id");
+    teamspeak_cli::tests::expect(parent_id.ok(), "field extraction should find null fields");
+    auto rendered_parent_id = output::render_extracted_field(parent_id.value());
+    teamspeak_cli::tests::expect(rendered_parent_id.ok(), "field rendering should accept null");
+    teamspeak_cli::tests::expect_eq(
+        rendered_parent_id.value(),
+        std::string("null"),
+        "extracted null fields should render as the literal null"
+    );
+
+    auto missing_field = output::extract_field(plugin_rendered.data, "media_diagnostics.missing");
+    teamspeak_cli::tests::expect(!missing_field.ok(), "missing field extraction should fail");
+    teamspeak_cli::tests::expect_contains(
+        missing_field.error().message,
+        "field `media_diagnostics.missing` was not found",
+        "missing field errors should name the requested path"
+    );
+
+    auto complex_field = output::extract_field(plugin_rendered.data, "media_diagnostics");
+    teamspeak_cli::tests::expect(complex_field.ok(), "field extraction should allow selecting objects");
+    auto rendered_complex_field = output::render_extracted_field(complex_field.value());
+    teamspeak_cli::tests::expect(!rendered_complex_field.ok(), "complex selected fields should fail to render");
+    teamspeak_cli::tests::expect_contains(
+        rendered_complex_field.error().message,
+        "--field can only render scalar values",
+        "complex field errors should explain the scalar-only contract"
+    );
 
     const std::string process_details = output::render_details_block(output::Details{{
         {"PIDFile", "/tmp/ts3client.pid"},
