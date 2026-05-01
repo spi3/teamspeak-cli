@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "teamspeak_cli/bridge/socket_paths.hpp"
 #include "teamspeak_cli/cli/command_router.hpp"
 #include "teamspeak_cli/config/config_store.hpp"
 #include "teamspeak_cli/daemon/runtime.hpp"
@@ -528,9 +529,11 @@ int main() {
     tests::expect(json_plugin_info.ok(), "json plugin info parse should succeed");
     auto json_plugin_info_result = router.dispatch(json_plugin_info.value());
     tests::expect(json_plugin_info_result.ok(), "json plugin info dispatch should succeed");
+    const std::string expected_mock_socket_path = bridge::default_socket_path();
     tests::expect_eq(
         output::render(json_plugin_info_result.value(), output::Format::json),
-        std::string("{\"backend\":\"mock\",\"media_diagnostics\":{\"active_speaker_count\":0,\"capture\":{\"device\":\"mock-capture\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"captured_voice_edit_attached\":false,\"consumer_connected\":false,\"custom_capture_device_id\":\"mock-capture-loop\",\"custom_capture_device_name\":\"Mock Media Bridge\",\"custom_capture_device_registered\":true,\"custom_capture_path_available\":true,\"dropped_audio_chunks\":0,\"dropped_playback_chunks\":0,\"injected_playback_attached_to_capture\":false,\"last_error\":\"\",\"playback\":{\"device\":\"mock-playback\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"playback_active\":false,\"pulse_sink\":\"\",\"pulse_source\":\"\",\"pulse_source_is_monitor\":false,\"queued_playback_samples\":0,\"transmit_path\":\"mock-capture-loop\",\"transmit_path_ready\":true},\"media_format\":\"pcm_s16le @48000 Hz mono\",\"media_socket_path\":\"\",\"media_transport\":\"\",\"note\":\"mock bridge host for local development and CI\",\"plugin_available\":true,\"plugin_name\":\"mock-plugin-host\",\"plugin_version\":\"development\",\"socket_path\":\"/run/user/1000/ts3cli.sock\",\"transport\":\"in-process\"}"),
+        std::string("{\"backend\":\"mock\",\"media_diagnostics\":{\"active_speaker_count\":0,\"capture\":{\"device\":\"mock-capture\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"captured_voice_edit_attached\":false,\"consumer_connected\":false,\"custom_capture_device_id\":\"mock-capture-loop\",\"custom_capture_device_name\":\"Mock Media Bridge\",\"custom_capture_device_registered\":true,\"custom_capture_path_available\":true,\"dropped_audio_chunks\":0,\"dropped_playback_chunks\":0,\"injected_playback_attached_to_capture\":false,\"last_error\":\"\",\"playback\":{\"device\":\"mock-playback\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"playback_active\":false,\"pulse_sink\":\"\",\"pulse_source\":\"\",\"pulse_source_is_monitor\":false,\"queued_playback_samples\":0,\"transmit_path\":\"mock-capture-loop\",\"transmit_path_ready\":true},\"media_format\":\"pcm_s16le @48000 Hz mono\",\"media_socket_path\":\"\",\"media_transport\":\"\",\"note\":\"mock bridge host for local development and CI\",\"plugin_available\":true,\"plugin_name\":\"mock-plugin-host\",\"plugin_version\":\"development\",\"socket_path\":\"") +
+            expected_mock_socket_path + "\",\"transport\":\"in-process\"}",
         "plugin info json should match the documented object shape"
     );
 
