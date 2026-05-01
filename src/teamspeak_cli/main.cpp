@@ -20,8 +20,8 @@ int main(int argc, char** argv) {
 
     const auto progress = parsed.value().global.format == teamspeak_cli::output::Format::table
         ? teamspeak_cli::cli::CommandRouter::ProgressSink([](std::string_view message) {
-              std::cout << message << '\n';
-              std::cout.flush();
+              std::cerr << message << '\n';
+              std::cerr.flush();
           })
         : teamspeak_cli::cli::CommandRouter::ProgressSink{};
 
