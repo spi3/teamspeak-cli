@@ -233,9 +233,48 @@ int main() {
 
     const std::string away_help = router.render_help({"away"});
     tests::expect_contains(away_help, "ts away [--message <text>]", "away help should include message usage");
+    tests::expect_contains(
+        away_help,
+        "--message <text>  Away message to show in TeamSpeak. (default: empty message)",
+        "away help should describe the message option"
+    );
 
     const std::string update_help = router.render_help({"update"});
     tests::expect_contains(update_help, "ts update [--release-tag TAG]", "update help should include release tag usage");
+    tests::expect_contains(
+        update_help,
+        "--release-tag <tag>  Install a specific GitHub release tag instead of the latest release. (default: latest release)",
+        "update help should describe release tag default"
+    );
+    tests::expect_contains(update_help, "ts update --release-tag v1.2.3", "update help should include examples");
+
+    const std::string status_help = router.render_help({"status"});
+    tests::expect_contains(
+        status_help,
+        "JSON output is a single connection status object suitable for --field extraction.",
+        "status help should include scriptable output note"
+    );
+
+    const std::string channel_list_help = router.render_help({"channel", "list"});
+    tests::expect_contains(
+        channel_list_help,
+        "JSON output is an array of channel objects; table output supports --wide and --no-headers.",
+        "channel list help should include output note"
+    );
+
+    const std::string client_logs_help = router.render_help({"client", "logs"});
+    tests::expect_contains(
+        client_logs_help,
+        "--count <N>  Number of recent log lines to print. (accepted: positive integer; default: 80)",
+        "client logs help should describe count default"
+    );
+
+    const std::string daemon_start_help = router.render_help({"daemon", "start"});
+    tests::expect_contains(
+        daemon_start_help,
+        "--poll-ms <N>  Polling interval used by the event daemon. (accepted: positive integer milliseconds; default: 500)",
+        "daemon start help should describe poll interval default"
+    );
 
     const std::vector<std::string> grouped_commands = {
         "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "playback", "events"
@@ -890,6 +929,18 @@ int main() {
         "invalid message target should suggest the command help"
     );
 
+    const std::string message_send_help = router.render_help({"message", "send"});
+    tests::expect_contains(
+        message_send_help,
+        "--target <client|channel>  Message destination kind. (accepted: client, channel)",
+        "message send help should describe accepted target values"
+    );
+    tests::expect_contains(
+        message_send_help,
+        "--text <message>  Message body to send.",
+        "message send help should describe text"
+    );
+
     auto playback_send = parse_command(
         router,
         {"playback", "send", "--file", "/tmp/message.wav", "--clear", "--timeout-ms", "5000"}
@@ -939,6 +990,13 @@ int main() {
         "playback status table should summarize transmit readiness"
     );
 
+    const std::string playback_send_help = router.render_help({"playback", "send"});
+    tests::expect_contains(
+        playback_send_help,
+        "--timeout-ms <N>  How long to wait for the media bridge operation. (accepted: integer milliseconds; default: 60000)",
+        "playback send help should describe timeout default"
+    );
+
     auto events_watch_empty = parse_command(
         router,
         {"events", "watch", "--count", "1", "--timeout-ms", "1", "--profile", "mock-local", "--config", config_path.string()}
@@ -950,6 +1008,25 @@ int main() {
         output::render(events_watch_empty_result.value(), output::Format::json),
         std::string("[]"),
         "events watch json should use an array top-level value when no events arrive"
+    );
+
+    const std::string events_watch_help = router.render_help({"events", "watch"});
+    tests::expect_contains(
+        events_watch_help,
+        "--count <N>  Maximum number of events to collect before returning. (accepted: positive integer; default: 5)",
+        "events watch help should describe count default"
+    );
+    tests::expect_contains(
+        events_watch_help,
+        "JSON output is an array of domain event objects, which may be empty on timeout.",
+        "events watch help should include output note"
+    );
+
+    const std::string hook_add_help = router.render_help({"events", "hook", "add"});
+    tests::expect_contains(
+        hook_add_help,
+        "--message-kind <client|channel|server>  Limit message hooks to one message kind. (accepted: client, channel, server)",
+        "hook add help should describe message kind values"
     );
 
     auto missing_profile = parse_command(

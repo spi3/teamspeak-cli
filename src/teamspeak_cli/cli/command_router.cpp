@@ -53,63 +53,201 @@ extern "C" void daemon_signal_handler(int) {
     g_daemon_stop_requested = 1;
 }
 
+struct OptionDoc {
+    std::string name{};
+    std::string description{};
+    std::string accepted_values{};
+    std::string default_value{};
+};
+
 struct CommandDoc {
-    std::vector<std::string> path;
-    std::string usage;
-    std::string summary;
-    std::vector<std::string> options;
+    std::vector<std::string> path{};
+    std::string usage{};
+    std::string summary{};
+    std::vector<OptionDoc> options{};
+    std::vector<std::string> examples{};
+    std::vector<std::string> output_notes{};
 };
 
 const std::vector<CommandDoc>& command_docs() {
     static const std::vector<CommandDoc> docs = {
         {{"version"}, "ts version", "Show CLI version information", {}},
         {{"plugin"}, "ts plugin <subcommand>", "Inspect TeamSpeak client plugin helpers", {}},
-        {{"plugin", "info"}, "ts plugin info", "Show TeamSpeak client plugin backend information", {}},
+        {
+            {"plugin", "info"},
+            "ts plugin info",
+            "Show TeamSpeak client plugin backend information",
+            {},
+            {"ts plugin info --json", "ts plugin info --json --field plugin_available"},
+            {"JSON output is an object with plugin availability, socket transport, and media diagnostics."},
+        },
         {{"sdk"}, "ts sdk <subcommand>", "Use the deprecated SDK compatibility helpers", {}},
         {{"sdk", "info"}, "ts sdk info", "Deprecated alias for plugin info", {}},
         {{"config"}, "ts config <subcommand>", "Manage CLI config files", {}},
-        {{"config", "init"}, "ts config init [--force]", "Write a starter config file", {"--force"}},
+        {
+            {"config", "init"},
+            "ts config init [--force]",
+            "Write a starter config file",
+            {{"--force", "Overwrite an existing config file."}},
+            {"ts config init", "ts config init --config ./teamspeak.ini --force"},
+        },
         {{"config", "view"}, "ts config view", "Render the current config", {}},
         {{"profile"}, "ts profile <subcommand>", "Manage config profiles", {}},
-        {{"profile", "create"}, "ts profile create <name> [--copy-from <name>] [--activate]", "Create a config profile", {"--copy-from", "--activate"}},
+        {
+            {"profile", "create"},
+            "ts profile create <name> [--copy-from <name>] [--activate]",
+            "Create a config profile",
+            {
+                {"--copy-from <name>", "Copy settings from an existing profile before creating the new one."},
+                {"--activate", "Set the new profile as the active default after it is saved."},
+            },
+            {"ts profile create qa --copy-from default --activate"},
+        },
         {{"profile", "list"}, "ts profile list", "List config profiles", {}},
         {{"profile", "use"}, "ts profile use <name>", "Set the active default profile", {}},
-        {{"update"}, "ts update [--release-tag TAG]", "Update this release install from the official GitHub release", {"--release-tag"}},
+        {
+            {"update"},
+            "ts update [--release-tag TAG]",
+            "Update this release install from the official GitHub release",
+            {{"--release-tag <tag>", "Install a specific GitHub release tag instead of the latest release.", {}, "latest release"}},
+            {"ts update", "ts update --release-tag v1.2.3"},
+        },
         {{"connect"}, "ts connect", "Open a TeamSpeak server connection and wait for completion", {}},
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"mute"}, "ts mute", "Mute your TeamSpeak microphone", {}},
         {{"unmute"}, "ts unmute", "Unmute your TeamSpeak microphone", {}},
-        {{"away"}, "ts away [--message <text>]", "Set your TeamSpeak status to away", {"--message"}},
+        {
+            {"away"},
+            "ts away [--message <text>]",
+            "Set your TeamSpeak status to away",
+            {{"--message <text>", "Away message to show in TeamSpeak.", {}, "empty message"}},
+            {"ts away", "ts away --message \"Back after standup\""},
+        },
         {{"back"}, "ts back", "Clear your TeamSpeak away status", {}},
-        {{"status"}, "ts status", "Show current TeamSpeak client connection status", {}},
+        {
+            {"status"},
+            "ts status",
+            "Show current TeamSpeak client connection status",
+            {},
+            {"ts status --json", "ts status --json --field phase"},
+            {"JSON output is a single connection status object suitable for --field extraction."},
+        },
         {{"server"}, "ts server <subcommand>", "Inspect the current server session", {}},
         {{"server", "info"}, "ts server info", "Show server details", {}},
         {{"channel"}, "ts channel <subcommand>", "Inspect and join channels", {}},
-        {{"channel", "list"}, "ts channel list", "List channels", {}},
+        {
+            {"channel", "list"},
+            "ts channel list",
+            "List channels",
+            {},
+            {"ts channel list --json", "ts channel list --wide --no-headers"},
+            {"JSON output is an array of channel objects; table output supports --wide and --no-headers."},
+        },
         {{"channel", "clients"}, "ts channel clients [id-or-name]", "List clients in one channel or across all channels", {}},
         {{"channel", "get"}, "ts channel get <id-or-name>", "Show one channel", {}},
         {{"channel", "join"}, "ts channel join <id-or-name>", "Join a channel if supported", {}},
         {{"client"}, "ts client <subcommand>", "Inspect connected clients and manage the local TeamSpeak client", {}},
         {{"client", "status"}, "ts client status", "Show the tracked local TeamSpeak client process status", {}},
         {{"client", "start"}, "ts client start", "Launch the local TeamSpeak client process", {}},
-        {{"client", "stop"}, "ts client stop [--force]", "Stop the tracked local TeamSpeak client process", {"--force"}},
-        {{"client", "logs"}, "ts client logs [--count N]", "Show recent TeamSpeak client logs", {"--count"}},
-        {{"client", "list"}, "ts client list", "List connected clients", {}},
+        {
+            {"client", "stop"},
+            "ts client stop [--force]",
+            "Stop the tracked local TeamSpeak client process",
+            {{"--force", "Send SIGKILL if the tracked process does not exit cleanly."}},
+            {"ts client stop", "ts client stop --force"},
+        },
+        {
+            {"client", "logs"},
+            "ts client logs [--count N]",
+            "Show recent TeamSpeak client logs",
+            {{"--count <N>", "Number of recent log lines to print.", "positive integer", "80"}},
+            {"ts client logs", "ts client logs --count 200"},
+        },
+        {
+            {"client", "list"},
+            "ts client list",
+            "List connected clients",
+            {},
+            {"ts client list --json", "ts client list --wide"},
+            {"JSON output is an array of client objects; table output supports --wide for unique identities."},
+        },
         {{"client", "get"}, "ts client get <id-or-name>", "Show one client", {}},
         {{"daemon"}, "ts daemon <subcommand>", "Manage the local TeamSpeak event daemon", {}},
-        {{"daemon", "start"}, "ts daemon start [--foreground] [--poll-ms N]", "Start the local TeamSpeak event daemon", {"--foreground", "--poll-ms"}},
-        {{"daemon", "stop"}, "ts daemon stop [--timeout-ms N]", "Stop the local TeamSpeak event daemon", {"--timeout-ms"}},
+        {
+            {"daemon", "start"},
+            "ts daemon start [--foreground] [--poll-ms N]",
+            "Start the local TeamSpeak event daemon",
+            {
+                {"--foreground", "Run the daemon in the current process instead of forking into the background."},
+                {"--poll-ms <N>", "Polling interval used by the event daemon.", "positive integer milliseconds", "500"},
+            },
+            {"ts daemon start", "ts daemon start --foreground --poll-ms 250"},
+        },
+        {
+            {"daemon", "stop"},
+            "ts daemon stop [--timeout-ms N]",
+            "Stop the local TeamSpeak event daemon",
+            {{"--timeout-ms <N>", "How long to wait for daemon shutdown before reporting a timeout.", "integer milliseconds", "3000"}},
+            {"ts daemon stop", "ts daemon stop --timeout-ms 10000"},
+        },
         {{"daemon", "status"}, "ts daemon status", "Show TeamSpeak event daemon status", {}},
         {{"message"}, "ts message <subcommand>", "Send TeamSpeak text messages", {}},
-        {{"message", "send"}, "ts message send --target <client|channel> --id <id-or-name> --text <message>", "Send a text message if supported", {"--target", "--id", "--text"}},
-        {{"message", "inbox"}, "ts message inbox [--count N]", "Show messages captured by the local TeamSpeak event daemon", {"--count"}},
+        {
+            {"message", "send"},
+            "ts message send --target <client|channel> --id <id-or-name> --text <message>",
+            "Send a text message if supported",
+            {
+                {"--target <client|channel>", "Message destination kind.", "client, channel"},
+                {"--id <id-or-name>", "Client or channel ID/name to send to."},
+                {"--text <message>", "Message body to send."},
+            },
+            {"ts message send --target channel --id Lobby --text \"hello\""},
+        },
+        {
+            {"message", "inbox"},
+            "ts message inbox [--count N]",
+            "Show messages captured by the local TeamSpeak event daemon",
+            {{"--count <N>", "Maximum number of captured messages to show.", "positive integer", "20"}},
+            {"ts message inbox", "ts message inbox --count 50 --json"},
+            {"JSON output is an array of captured message events from the local daemon inbox."},
+        },
         {{"playback"}, "ts playback <subcommand>", "Send outbound TeamSpeak playback audio", {}},
         {{"playback", "status"}, "ts playback status", "Show media playback and audio routing diagnostics", {}},
-        {{"playback", "send"}, "ts playback send --file <wav> [--clear] [--timeout-ms N]", "Send a WAV file through the plugin media bridge", {"--file", "--clear", "--timeout-ms"}},
+        {
+            {"playback", "send"},
+            "ts playback send --file <wav> [--clear] [--timeout-ms N]",
+            "Send a WAV file through the plugin media bridge",
+            {
+                {"--file <wav>", "WAV file to send through the media bridge.", "pcm_s16le, 48000 Hz, mono WAV"},
+                {"--clear", "Clear queued playback before sending the file."},
+                {"--timeout-ms <N>", "How long to wait for the media bridge operation.", "integer milliseconds", "60000"},
+            },
+            {"ts playback send --file ./prompt.wav", "ts playback send --file ./prompt.wav --clear --timeout-ms 10000"},
+        },
         {{"events"}, "ts events <subcommand>", "Watch backend domain events", {}},
-        {{"events", "watch"}, "ts events watch [--count N] [--timeout-ms N]", "Watch backend domain events", {"--count", "--timeout-ms"}},
+        {
+            {"events", "watch"},
+            "ts events watch [--count N] [--timeout-ms N]",
+            "Watch backend domain events",
+            {
+                {"--count <N>", "Maximum number of events to collect before returning.", "positive integer", "5"},
+                {"--timeout-ms <N>", "Maximum time to wait for events.", "integer milliseconds", "1000"},
+            },
+            {"ts events watch", "ts events watch --count 1 --timeout-ms 5000 --json"},
+            {"JSON output is an array of domain event objects, which may be empty on timeout."},
+        },
         {{"events", "hook"}, "ts events hook <subcommand>", "Manage daemon event hooks", {}},
-        {{"events", "hook", "add"}, "ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]", "Add a daemon hook for an event type", {"--type", "--exec", "--message-kind"}},
+        {
+            {"events", "hook", "add"},
+            "ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]",
+            "Add a daemon hook for an event type",
+            {
+                {"--type <event-type>", "Event type that should trigger the hook, such as message.received."},
+                {"--exec <command>", "Command line executed by the daemon when the event matches."},
+                {"--message-kind <client|channel|server>", "Limit message hooks to one message kind.", "client, channel, server"},
+            },
+            {"ts events hook add --type message.received --message-kind channel --exec ./on-message.sh"},
+        },
         {{"events", "hook", "list"}, "ts events hook list", "List daemon hook commands", {}},
         {{"events", "hook", "remove"}, "ts events hook remove <id>", "Remove one daemon hook command", {}},
         {{"completion"}, "ts completion bash|zsh|fish|powershell", "Emit a shell completion script", {}},
@@ -4290,6 +4428,22 @@ auto top_level_help() -> std::string {
     return out.str();
 }
 
+auto render_option_doc(const OptionDoc& option) -> std::string {
+    std::ostringstream out;
+    out << "  " << option.name << "  " << option.description;
+    std::vector<std::string> qualifiers;
+    if (!option.accepted_values.empty()) {
+        qualifiers.push_back("accepted: " + option.accepted_values);
+    }
+    if (!option.default_value.empty()) {
+        qualifiers.push_back("default: " + option.default_value);
+    }
+    if (!qualifiers.empty()) {
+        out << " (" << util::join(qualifiers, "; ") << ')';
+    }
+    return out.str();
+}
+
 }  // namespace
 
 auto read_install_receipt_value_for_test(std::string_view value) -> std::string {
@@ -4572,7 +4726,7 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
     if (!doc->options.empty()) {
         out << "\nOptions:\n";
         for (const auto& option : doc->options) {
-            out << "  " << option << '\n';
+            out << render_option_doc(option) << '\n';
         }
     }
 
@@ -4583,9 +4737,25 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
             out << "  " << child->path.back() << "  " << child->summary << '\n';
         }
 
+    }
+
+    if (!doc->examples.empty() || !children.empty()) {
         out << "\nExamples:\n";
-        for (const auto* child : children) {
-            out << "  " << child->usage << '\n';
+        if (!doc->examples.empty()) {
+            for (const auto& example : doc->examples) {
+                out << "  " << example << '\n';
+            }
+        } else {
+            for (const auto* child : children) {
+                out << "  " << child->usage << '\n';
+            }
+        }
+    }
+
+    if (!doc->output_notes.empty()) {
+        out << "\nOutput:\n";
+        for (const auto& output_note : doc->output_notes) {
+            out << "  " << output_note << '\n';
         }
     }
 
