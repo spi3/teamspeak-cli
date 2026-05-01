@@ -102,6 +102,21 @@ auto parse_command(
     return router.parse(static_cast<int>(argv.size()), argv.data());
 }
 
+auto normalize_json_timestamps(std::string value) -> std::string {
+    constexpr std::string_view needle = "\"timestamp\":\"";
+    std::size_t pos = 0;
+    while ((pos = value.find(needle, pos)) != std::string::npos) {
+        const auto timestamp_start = pos + needle.size();
+        const auto timestamp_end = value.find('"', timestamp_start);
+        if (timestamp_end == std::string::npos) {
+            break;
+        }
+        value.replace(timestamp_start, timestamp_end - timestamp_start, "<timestamp>");
+        pos = timestamp_start + std::string_view("<timestamp>").size();
+    }
+    return value;
+}
+
 }  // namespace
 
 int main() {
@@ -379,6 +394,54 @@ int main() {
     tests::expect(init_result.ok(), "config init dispatch should succeed");
     tests::expect(fs::exists(config_path), "config init should write a config file");
 
+    auto json_status = parse_command(
+        router, {"status", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(json_status.ok(), "json status parse should succeed");
+    auto json_status_result = router.dispatch(json_status.value());
+    tests::expect(json_status_result.ok(), "json status dispatch should succeed");
+    tests::expect_eq(
+        output::render(json_status_result.value(), output::Format::json),
+        std::string("{\"backend\":\"mock\",\"connection\":\"42\",\"identity\":\"mock-local-identity\",\"mode\":\"one-shot\",\"nickname\":\"terminal\",\"phase\":\"connected\",\"port\":9987,\"profile\":\"mock-local\",\"server\":\"127.0.0.1\"}"),
+        "status json should match the documented connection state shape"
+    );
+
+    auto json_plugin_info = parse_command(
+        router, {"plugin", "info", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(json_plugin_info.ok(), "json plugin info parse should succeed");
+    auto json_plugin_info_result = router.dispatch(json_plugin_info.value());
+    tests::expect(json_plugin_info_result.ok(), "json plugin info dispatch should succeed");
+    tests::expect_eq(
+        output::render(json_plugin_info_result.value(), output::Format::json),
+        std::string("{\"backend\":\"mock\",\"media_diagnostics\":{\"active_speaker_count\":0,\"capture\":{\"device\":\"mock-capture\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"captured_voice_edit_attached\":false,\"consumer_connected\":false,\"custom_capture_device_id\":\"mock-capture-loop\",\"custom_capture_device_name\":\"Mock Media Bridge\",\"custom_capture_device_registered\":true,\"custom_capture_path_available\":true,\"dropped_audio_chunks\":0,\"dropped_playback_chunks\":0,\"injected_playback_attached_to_capture\":false,\"last_error\":\"\",\"playback\":{\"device\":\"mock-playback\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"playback_active\":false,\"pulse_sink\":\"\",\"pulse_source\":\"\",\"pulse_source_is_monitor\":false,\"queued_playback_samples\":0,\"transmit_path\":\"mock-capture-loop\",\"transmit_path_ready\":true},\"media_format\":\"pcm_s16le @48000 Hz mono\",\"media_socket_path\":\"\",\"media_transport\":\"\",\"note\":\"mock bridge host for local development and CI\",\"plugin_available\":true,\"plugin_name\":\"mock-plugin-host\",\"plugin_version\":\"development\",\"socket_path\":\"/run/user/1000/ts3cli.sock\",\"transport\":\"in-process\"}"),
+        "plugin info json should match the documented object shape"
+    );
+
+    auto json_channel_list = parse_command(
+        router, {"channel", "list", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(json_channel_list.ok(), "json channel list parse should succeed");
+    auto json_channel_list_result = router.dispatch(json_channel_list.value());
+    tests::expect(json_channel_list_result.ok(), "json channel list dispatch should succeed");
+    tests::expect_eq(
+        output::render(json_channel_list_result.value(), output::Format::json),
+        std::string("[{\"client_count\":1,\"id\":\"1\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":2,\"id\":\"2\",\"is_default\":false,\"name\":\"Engineering\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":1,\"id\":\"3\",\"is_default\":false,\"name\":\"Operations\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":0,\"id\":\"4\",\"is_default\":false,\"name\":\"Breakout\",\"parent_id\":\"2\",\"subscribed\":true}]"),
+        "channel list json should match the documented array shape"
+    );
+
+    auto json_client_list = parse_command(
+        router, {"client", "list", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(json_client_list.ok(), "json client list parse should succeed");
+    auto json_client_list_result = router.dispatch(json_client_list.value());
+    tests::expect(json_client_list_result.ok(), "json client list dispatch should succeed");
+    tests::expect_eq(
+        output::render(json_client_list_result.value(), output::Format::json),
+        std::string("[{\"channel_id\":\"1\",\"id\":\"1\",\"nickname\":\"terminal\",\"self\":true,\"talking\":false,\"unique_identity\":\"mock-local-identity\"},{\"channel_id\":\"2\",\"id\":\"2\",\"nickname\":\"alice\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-alice\"},{\"channel_id\":\"2\",\"id\":\"3\",\"nickname\":\"bob\",\"self\":false,\"talking\":true,\"unique_identity\":\"sdk-bob\"},{\"channel_id\":\"3\",\"id\":\"4\",\"nickname\":\"ops-bot\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-ops-bot\"}]"),
+        "client list json should match the documented array shape"
+    );
+
     auto create_profile = parse_command(
         router,
         {
@@ -473,6 +536,11 @@ int main() {
         "connect progress should describe the final connected phase"
     );
     const auto connect_json = output::render(connect_result.value(), output::Format::json);
+    tests::expect_eq(
+        normalize_json_timestamps(connect_json),
+        std::string("{\"connected\":true,\"lifecycle\":[{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"requested new mock TeamSpeak connection\",\"timestamp\":\"<timestamp>\",\"type\":\"connection.requested\"},{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"connection is starting\",\"timestamp\":\"<timestamp>\",\"type\":\"connection.connecting\"},{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"connected to mock TeamSpeak server\",\"timestamp\":\"<timestamp>\",\"type\":\"connection.connected\"}],\"result\":\"connected\",\"state\":{\"backend\":\"mock\",\"connection\":\"42\",\"identity\":\"mock-local-identity\",\"mode\":\"one-shot\",\"nickname\":\"cli-tester\",\"phase\":\"connected\",\"port\":9987,\"profile\":\"mock-local\",\"server\":\"voice.example.com\"},\"timed_out\":false,\"timeout_ms\":15000}"),
+        "connect json should match the documented object shape"
+    );
     tests::expect_contains(connect_json, "\"result\":\"connected\"", "connect json should report success");
     tests::expect_contains(connect_json, "\"lifecycle\":[", "connect json should include the lifecycle");
     tests::expect_contains(
@@ -571,6 +639,11 @@ int main() {
         "disconnect should narrate the disconnection event"
     );
     const auto disconnect_json = output::render(disconnect_result.value(), output::Format::json);
+    tests::expect_eq(
+        normalize_json_timestamps(disconnect_json),
+        std::string("{\"disconnected\":true,\"lifecycle\":[{\"fields\":{},\"summary\":\"ts disconnect\",\"timestamp\":\"<timestamp>\",\"type\":\"connection.disconnected\"}],\"result\":\"disconnected\",\"state\":{\"backend\":\"mock\",\"connection\":\"0\",\"identity\":\"mock-local-identity\",\"mode\":\"one-shot\",\"nickname\":\"terminal\",\"phase\":\"disconnected\",\"port\":9987,\"profile\":\"mock-local\",\"server\":\"127.0.0.1\"},\"timed_out\":false,\"timeout_ms\":10000}"),
+        "disconnect json should match the documented object shape"
+    );
     tests::expect_contains(
         disconnect_json,
         "\"result\":\"disconnected\"",
@@ -713,6 +786,11 @@ int main() {
     auto playback_status_result = router.dispatch(playback_status.value());
     tests::expect(playback_status_result.ok(), "playback status dispatch should succeed");
     const auto playback_status_json = output::render(playback_status_result.value(), output::Format::json);
+    tests::expect_eq(
+        playback_status_json,
+        std::string("{\"active_speaker_count\":0,\"capture\":{\"device\":\"mock-capture\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"captured_voice_edit_attached\":false,\"consumer_connected\":false,\"custom_capture_device_id\":\"mock-capture-loop\",\"custom_capture_device_name\":\"Mock Media Bridge\",\"custom_capture_device_registered\":true,\"custom_capture_path_available\":true,\"dropped_audio_chunks\":0,\"dropped_playback_chunks\":0,\"injected_playback_attached_to_capture\":false,\"last_error\":\"\",\"playback\":{\"device\":\"mock-playback\",\"is_default\":true,\"known\":true,\"mode\":\"mock\"},\"playback_active\":false,\"pulse_sink\":\"\",\"pulse_source\":\"\",\"pulse_source_is_monitor\":false,\"queued_playback_samples\":0,\"transmit_path\":\"mock-capture-loop\",\"transmit_path_ready\":true}"),
+        "playback status json should match the documented media diagnostics shape"
+    );
     tests::expect_contains(
         playback_status_json,
         "\"device\":\"mock-capture\"",
@@ -727,6 +805,19 @@ int main() {
         output::render(playback_status_result.value(), output::Format::table),
         "Transmit path ready",
         "playback status table should summarize transmit readiness"
+    );
+
+    auto events_watch_empty = parse_command(
+        router,
+        {"events", "watch", "--count", "1", "--timeout-ms", "1", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(events_watch_empty.ok(), "events watch parse should succeed");
+    auto events_watch_empty_result = router.dispatch(events_watch_empty.value());
+    tests::expect(events_watch_empty_result.ok(), "events watch dispatch should succeed");
+    tests::expect_eq(
+        output::render(events_watch_empty_result.value(), output::Format::json),
+        std::string("[]"),
+        "events watch json should use an array top-level value when no events arrive"
     );
 
     auto missing_profile = parse_command(
@@ -772,6 +863,11 @@ int main() {
     auto channel_clients_all_result = router.dispatch(channel_clients_all.value());
     tests::expect(channel_clients_all_result.ok(), "channel clients dispatch should succeed");
     const auto channel_clients_all_json = output::render(channel_clients_all_result.value(), output::Format::json);
+    tests::expect_eq(
+        channel_clients_all_json,
+        std::string("[{\"channel\":{\"client_count\":1,\"id\":\"1\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true},\"clients\":[{\"channel_id\":\"1\",\"id\":\"1\",\"nickname\":\"terminal\",\"self\":true,\"talking\":false,\"unique_identity\":\"mock-local-identity\"}]},{\"channel\":{\"client_count\":2,\"id\":\"2\",\"is_default\":false,\"name\":\"Engineering\",\"parent_id\":null,\"subscribed\":true},\"clients\":[{\"channel_id\":\"2\",\"id\":\"2\",\"nickname\":\"alice\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-alice\"},{\"channel_id\":\"2\",\"id\":\"3\",\"nickname\":\"bob\",\"self\":false,\"talking\":true,\"unique_identity\":\"sdk-bob\"}]},{\"channel\":{\"client_count\":1,\"id\":\"3\",\"is_default\":false,\"name\":\"Operations\",\"parent_id\":null,\"subscribed\":true},\"clients\":[{\"channel_id\":\"3\",\"id\":\"4\",\"nickname\":\"ops-bot\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-ops-bot\"}]},{\"channel\":{\"client_count\":0,\"id\":\"4\",\"is_default\":false,\"name\":\"Breakout\",\"parent_id\":\"2\",\"subscribed\":true},\"clients\":[]}]"),
+        "channel clients json should match the documented array-of-groups shape"
+    );
     tests::expect_contains(
         channel_clients_all_json,
         "\"name\":\"Engineering\"",
@@ -817,6 +913,11 @@ int main() {
     auto channel_clients_one_result = router.dispatch(channel_clients_one.value());
     tests::expect(channel_clients_one_result.ok(), "channel clients with selector dispatch should succeed");
     const auto channel_clients_one_json = output::render(channel_clients_one_result.value(), output::Format::json);
+    tests::expect_eq(
+        channel_clients_one_json,
+        std::string("{\"channel\":{\"client_count\":2,\"id\":\"2\",\"is_default\":false,\"name\":\"Engineering\",\"parent_id\":null,\"subscribed\":true},\"clients\":[{\"channel_id\":\"2\",\"id\":\"2\",\"nickname\":\"alice\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-alice\"},{\"channel_id\":\"2\",\"id\":\"3\",\"nickname\":\"bob\",\"self\":false,\"talking\":true,\"unique_identity\":\"sdk-bob\"}]}"),
+        "channel clients selector json should match the documented group object shape"
+    );
     tests::expect_contains(
         channel_clients_one_json,
         "\"name\":\"Engineering\"",

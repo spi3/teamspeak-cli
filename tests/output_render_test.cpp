@@ -26,6 +26,58 @@ int main() {
 
     const std::string json = output::render(rendered, output::Format::json);
     teamspeak_cli::tests::expect(json.find("\"name\":\"Lobby\"") != std::string::npos, "json output should include name");
+    teamspeak_cli::tests::expect_eq(
+        json,
+        std::string("{\"client_count\":3,\"id\":\"7\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true}"),
+        "channel json should keep the documented object structure"
+    );
+
+    const std::vector<domain::Channel> channel_list{
+        channel,
+        domain::Channel{
+            .id = {8},
+            .name = "Breakout",
+            .parent_id = domain::ChannelId{7},
+            .client_count = 0,
+            .is_default = false,
+            .subscribed = false,
+        },
+    };
+    teamspeak_cli::tests::expect_eq(
+        output::render(
+            output::CommandOutput{.data = output::to_value(channel_list), .human = output::channel_table(channel_list)},
+            output::Format::json
+        ),
+        std::string("[{\"client_count\":3,\"id\":\"7\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":0,\"id\":\"8\",\"is_default\":false,\"name\":\"Breakout\",\"parent_id\":\"7\",\"subscribed\":false}]"),
+        "channel list json should keep the documented array structure and nullable parent_id"
+    );
+
+    const std::vector<domain::Client> client_list{
+        domain::Client{
+            .id = {1},
+            .nickname = "terminal",
+            .unique_identity = "identity",
+            .channel_id = domain::ChannelId{7},
+            .self = true,
+            .talking = false,
+        },
+        domain::Client{
+            .id = {2},
+            .nickname = "detached",
+            .unique_identity = "",
+            .channel_id = std::nullopt,
+            .self = false,
+            .talking = true,
+        },
+    };
+    teamspeak_cli::tests::expect_eq(
+        output::render(
+            output::CommandOutput{.data = output::to_value(client_list), .human = output::client_table(client_list)},
+            output::Format::json
+        ),
+        std::string("[{\"channel_id\":\"7\",\"id\":\"1\",\"nickname\":\"terminal\",\"self\":true,\"talking\":false,\"unique_identity\":\"identity\"},{\"channel_id\":null,\"id\":\"2\",\"nickname\":\"detached\",\"self\":false,\"talking\":true,\"unique_identity\":\"\"}]"),
+        "client list json should keep the documented array structure and nullable channel_id"
+    );
 
     const std::string control_value =
         std::string{"A"} + '\0' + '\x01' + '\b' + '\t' + '\n' + '\v' + '\f' + '\r' + '\x1f' + '"' + '\\' + 'Z';
@@ -122,6 +174,11 @@ int main() {
         "plugin details should not expose PascalCase labels"
     );
     const std::string plugin_json = output::render(plugin_rendered, output::Format::json);
+    teamspeak_cli::tests::expect_eq(
+        plugin_json,
+        std::string("{\"backend\":\"plugin\",\"media_diagnostics\":{\"active_speaker_count\":0,\"capture\":{\"device\":\"\",\"is_default\":false,\"known\":false,\"mode\":\"\"},\"captured_voice_edit_attached\":false,\"consumer_connected\":false,\"custom_capture_device_id\":\"\",\"custom_capture_device_name\":\"\",\"custom_capture_device_registered\":false,\"custom_capture_path_available\":false,\"dropped_audio_chunks\":0,\"dropped_playback_chunks\":0,\"injected_playback_attached_to_capture\":false,\"last_error\":\"\",\"playback\":{\"device\":\"\",\"is_default\":false,\"known\":false,\"mode\":\"\"},\"playback_active\":false,\"pulse_sink\":\"\",\"pulse_source\":\"\",\"pulse_source_is_monitor\":false,\"queued_playback_samples\":128,\"transmit_path\":\"\",\"transmit_path_ready\":true},\"media_format\":\"pcm_s16le\",\"media_socket_path\":\"/tmp/ts3cli-media.sock\",\"media_transport\":\"unix\",\"note\":\"ready\",\"plugin_available\":true,\"plugin_name\":\"ts3cli\",\"plugin_version\":\"1.2.3\",\"socket_path\":\"/tmp/ts3cli.sock\",\"transport\":\"unix\"}"),
+        "plugin info json should keep the documented object structure"
+    );
     teamspeak_cli::tests::expect_contains(
         plugin_json,
         "\"socket_path\":\"/tmp/ts3cli.sock\"",
@@ -169,20 +226,60 @@ int main() {
         .profile = "plugin-local",
         .mode = "plugin-control",
     };
+    teamspeak_cli::tests::expect_eq(
+        output::render(
+            output::CommandOutput{.data = output::to_value(state), .human = output::connection_status_view(state)},
+            output::Format::json
+        ),
+        std::string("{\"backend\":\"plugin\",\"connection\":\"42\",\"identity\":\"identity\",\"mode\":\"plugin-control\",\"nickname\":\"terminal\",\"phase\":\"connected\",\"port\":9987,\"profile\":\"plugin-local\",\"server\":\"voice.example.com\"}"),
+        "status json should keep the documented connection state structure"
+    );
+
+    const auto fixed_event_time = std::chrono::system_clock::from_time_t(1700000000);
     const std::vector<domain::Event> lifecycle = {
         domain::Event{
             .type = "connection.requested",
             .summary = "requested new TeamSpeak client connection",
-            .at = std::chrono::system_clock::now(),
+            .at = fixed_event_time,
             .fields = {{"server", "voice.example.com"}, {"port", "9987"}},
         },
         domain::Event{
             .type = "connection.connecting",
             .summary = "connection is starting",
-            .at = std::chrono::system_clock::now(),
+            .at = fixed_event_time,
             .fields = {},
         },
+        domain::Event{
+            .type = "connection.connected",
+            .summary = "connected to TeamSpeak server",
+            .at = fixed_event_time,
+            .fields = {{"server", "voice.example.com"}, {"port", "9987"}},
+        },
     };
+    teamspeak_cli::tests::expect_eq(
+        output::render(
+            output::CommandOutput{.data = output::to_value(lifecycle), .human = output::event_table(lifecycle)},
+            output::Format::json
+        ),
+        std::string("[{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"requested new TeamSpeak client connection\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.requested\"},{\"fields\":{},\"summary\":\"connection is starting\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connecting\"},{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"connected to TeamSpeak server\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connected\"}]"),
+        "events watch json should keep the documented event array structure"
+    );
+    const output::CommandOutput connect_output{
+        .data = output::make_object({
+            {"result", output::make_string("connected")},
+            {"connected", output::make_bool(true)},
+            {"timed_out", output::make_bool(false)},
+            {"timeout_ms", output::make_int(15000)},
+            {"state", output::to_value(state)},
+            {"lifecycle", output::to_value(lifecycle)},
+        }),
+        .human = output::connect_view(state, lifecycle, true, false, std::chrono::seconds(15), true),
+    };
+    teamspeak_cli::tests::expect_eq(
+        output::render(connect_output, output::Format::json),
+        std::string("{\"connected\":true,\"lifecycle\":[{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"requested new TeamSpeak client connection\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.requested\"},{\"fields\":{},\"summary\":\"connection is starting\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connecting\"},{\"fields\":{\"port\":\"9987\",\"server\":\"voice.example.com\"},\"summary\":\"connected to TeamSpeak server\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.connected\"}],\"result\":\"connected\",\"state\":{\"backend\":\"plugin\",\"connection\":\"42\",\"identity\":\"identity\",\"mode\":\"plugin-control\",\"nickname\":\"terminal\",\"phase\":\"connected\",\"port\":9987,\"profile\":\"plugin-local\",\"server\":\"voice.example.com\"},\"timed_out\":false,\"timeout_ms\":15000}"),
+        "connect json should keep the documented object structure"
+    );
     const std::string connect_human = output::connect_view(
         state, lifecycle, true, false, std::chrono::seconds(15), true
     );
@@ -215,8 +312,35 @@ int main() {
         .profile = "plugin-local",
         .mode = "plugin-control",
     };
+    const std::vector<domain::Event> disconnect_lifecycle = {
+        domain::Event{
+            .type = "connection.disconnected",
+            .summary = "ts disconnect",
+            .at = fixed_event_time,
+            .fields = {},
+        },
+    };
+    const output::CommandOutput disconnect_output{
+        .data = output::make_object({
+            {"result", output::make_string("disconnected")},
+            {"disconnected", output::make_bool(true)},
+            {"timed_out", output::make_bool(false)},
+            {"timeout_ms", output::make_int(10000)},
+            {"state", output::to_value(stalled_state)},
+            {"lifecycle", output::to_value(disconnect_lifecycle)},
+        }),
+        .human = output::disconnect_view(
+            stalled_state, disconnect_lifecycle, true, false, std::chrono::seconds(10), true
+        ),
+    };
+    teamspeak_cli::tests::expect_eq(
+        output::render(disconnect_output, output::Format::json),
+        std::string("{\"disconnected\":true,\"lifecycle\":[{\"fields\":{},\"summary\":\"ts disconnect\",\"timestamp\":\"2023-11-14T22:13:20Z\",\"type\":\"connection.disconnected\"}],\"result\":\"disconnected\",\"state\":{\"backend\":\"plugin\",\"connection\":\"0\",\"identity\":\"identity\",\"mode\":\"plugin-control\",\"nickname\":\"terminal\",\"phase\":\"disconnected\",\"port\":9987,\"profile\":\"plugin-local\",\"server\":\"voice.example.com\"},\"timed_out\":false,\"timeout_ms\":10000}"),
+        "disconnect json should keep the documented object structure"
+    );
+    const std::vector<domain::Event> stalled_lifecycle{lifecycle[0], lifecycle[1]};
     const std::string stalled_connect_human = output::connect_view(
-        stalled_state, lifecycle, false, true, std::chrono::seconds(15), true
+        stalled_state, stalled_lifecycle, false, true, std::chrono::seconds(15), true
     );
     teamspeak_cli::tests::expect_contains(
         stalled_connect_human,
@@ -250,6 +374,11 @@ int main() {
     );
 
     const std::string error_json = output::render_error(error, output::Format::json, false);
+    teamspeak_cli::tests::expect_eq(
+        error_json,
+        std::string("{\"category\":\"bridge\",\"code\":\"socket_connect_failed\",\"hints\":[\"Run `ts client start` to launch the local TeamSpeak client.\",\"Run `ts plugin info` to verify the ts3cli plugin bridge is available.\"],\"message\":\"Unable to read TeamSpeak status because the TeamSpeak client is not running or the ts3cli plugin is unavailable.\"}"),
+        "json error output should keep the documented structured error shape"
+    );
     teamspeak_cli::tests::expect(
         error_json.find("\"hints\":[") != std::string::npos,
         "json error output should include structured hints"
@@ -260,6 +389,11 @@ int main() {
     );
 
     const std::string error_debug_json = output::render_error(error, output::Format::json, true);
+    teamspeak_cli::tests::expect_eq(
+        error_debug_json,
+        std::string("{\"category\":\"bridge\",\"code\":\"socket_connect_failed\",\"details\":{\"socket_path\":\"/tmp/ts3cli.sock\"},\"hints\":[\"Run `ts client start` to launch the local TeamSpeak client.\",\"Run `ts plugin info` to verify the ts3cli plugin bridge is available.\"],\"message\":\"Unable to read TeamSpeak status because the TeamSpeak client is not running or the ts3cli plugin is unavailable.\"}"),
+        "debug json error output should add only debug details to the structured error shape"
+    );
     teamspeak_cli::tests::expect(
         error_debug_json.find("\"details\":") != std::string::npos,
         "debug json error output should include debug details"
