@@ -45,6 +45,119 @@ int main() {
     const std::string yaml = output::render(rendered, output::Format::yaml);
     teamspeak_cli::tests::expect(yaml.find("name: Lobby") != std::string::npos, "yaml output should include name");
 
+    const domain::ServerInfo server_info{
+        .name = "Example",
+        .host = "voice.example.com",
+        .port = 9987,
+        .backend = "mock",
+        .current_channel = domain::ChannelId{7},
+        .channel_count = 4,
+        .client_count = 12,
+    };
+    const output::CommandOutput server_rendered{
+        .data = output::to_value(server_info),
+        .human = output::server_view(server_info),
+    };
+    const std::string server_table = output::render(server_rendered, output::Format::table);
+    teamspeak_cli::tests::expect_contains(
+        server_table,
+        "Current channel",
+        "server details should render readable current channel label"
+    );
+    teamspeak_cli::tests::expect(
+        server_table.find("CurrentChannel") == std::string::npos,
+        "server details should not expose PascalCase current channel label"
+    );
+    const std::string server_json = output::render(server_rendered, output::Format::json);
+    teamspeak_cli::tests::expect_contains(
+        server_json,
+        "\"current_channel\":\"7\"",
+        "server json should keep current_channel key unchanged"
+    );
+
+    domain::PluginInfo plugin_info{
+        .backend = "plugin",
+        .transport = "unix",
+        .plugin_name = "ts3cli",
+        .plugin_version = "1.2.3",
+        .plugin_available = true,
+        .socket_path = "/tmp/ts3cli.sock",
+        .media_transport = "unix",
+        .media_socket_path = "/tmp/ts3cli-media.sock",
+        .media_format = "pcm_s16le",
+        .media_diagnostics = {},
+        .note = "ready",
+    };
+    plugin_info.media_diagnostics.queued_playback_samples = 128;
+    plugin_info.media_diagnostics.transmit_path_ready = true;
+    const output::CommandOutput plugin_rendered{
+        .data = output::to_value(plugin_info),
+        .human = output::plugin_info_view(plugin_info),
+    };
+    const std::string plugin_table = output::render(plugin_rendered, output::Format::table);
+    teamspeak_cli::tests::expect_contains(
+        plugin_table,
+        "Socket path",
+        "plugin details should render readable socket path label"
+    );
+    teamspeak_cli::tests::expect_contains(
+        plugin_table,
+        "Media transport",
+        "plugin details should render readable media transport label"
+    );
+    teamspeak_cli::tests::expect_contains(
+        plugin_table,
+        "Queued playback samples",
+        "plugin details should render readable queued playback samples label"
+    );
+    teamspeak_cli::tests::expect_contains(
+        plugin_table,
+        "Transmit path ready",
+        "plugin details should render readable transmit path ready label"
+    );
+    teamspeak_cli::tests::expect(
+        plugin_table.find("SocketPath") == std::string::npos &&
+            plugin_table.find("QueuedPlaybackSamples") == std::string::npos &&
+            plugin_table.find("TransmitPathReady") == std::string::npos,
+        "plugin details should not expose PascalCase labels"
+    );
+    const std::string plugin_json = output::render(plugin_rendered, output::Format::json);
+    teamspeak_cli::tests::expect_contains(
+        plugin_json,
+        "\"socket_path\":\"/tmp/ts3cli.sock\"",
+        "plugin json should keep socket_path key unchanged"
+    );
+    teamspeak_cli::tests::expect_contains(
+        plugin_json,
+        "\"media_transport\":\"unix\"",
+        "plugin json should keep media_transport key unchanged"
+    );
+    teamspeak_cli::tests::expect_contains(
+        plugin_json,
+        "\"queued_playback_samples\":128",
+        "plugin json should keep queued_playback_samples key unchanged"
+    );
+    teamspeak_cli::tests::expect_contains(
+        plugin_json,
+        "\"transmit_path_ready\":true",
+        "plugin json should keep transmit_path_ready key unchanged"
+    );
+
+    const std::string process_details = output::render_details_block(output::Details{{
+        {"PIDFile", "/tmp/ts3client.pid"},
+        {"LogFile", "/tmp/ts3client.log"},
+    }});
+    teamspeak_cli::tests::expect_contains(
+        process_details,
+        "PID file",
+        "ad hoc details should preserve acronym labels while lowercasing words"
+    );
+    teamspeak_cli::tests::expect_contains(
+        process_details,
+        "Log file",
+        "ad hoc details should render readable log file label"
+    );
+
     const domain::ConnectionState state{
         .phase = domain::ConnectionPhase::connected,
         .backend = "plugin",

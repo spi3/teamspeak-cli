@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <string>
 #include <string_view>
 
 #include "teamspeak_cli/util/strings.hpp"
@@ -210,20 +211,95 @@ auto render_table_impl(const Table& table) -> std::string {
     return out.str();
 }
 
+auto is_ascii_upper(char ch) -> bool {
+    return ch >= 'A' && ch <= 'Z';
+}
+
+auto is_ascii_lower(char ch) -> bool {
+    return ch >= 'a' && ch <= 'z';
+}
+
+auto is_ascii_digit(char ch) -> bool {
+    return ch >= '0' && ch <= '9';
+}
+
+auto ascii_lower(char ch) -> char {
+    if (is_ascii_upper(ch)) {
+        return static_cast<char>(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+auto should_split_label_word(std::string_view label, std::size_t index) -> bool {
+    if (index == 0 || index >= label.size()) {
+        return false;
+    }
+
+    const char current = label[index];
+    const char previous = label[index - 1];
+    if (!is_ascii_upper(current)) {
+        return false;
+    }
+    if (is_ascii_lower(previous) || is_ascii_digit(previous)) {
+        return true;
+    }
+    if (is_ascii_upper(previous) && index + 1 < label.size() && is_ascii_lower(label[index + 1])) {
+        return true;
+    }
+    return false;
+}
+
+auto human_detail_label(std::string_view label) -> std::string {
+    std::string normalized;
+    normalized.reserve(label.size() + 4);
+    bool after_space = false;
+
+    for (std::size_t index = 0; index < label.size(); ++index) {
+        const char ch = label[index];
+        if (ch == '_' || ch == '-') {
+            if (!normalized.empty() && normalized.back() != ' ') {
+                normalized.push_back(' ');
+            }
+            after_space = true;
+            continue;
+        }
+        if (should_split_label_word(label, index) && !normalized.empty() && normalized.back() != ' ') {
+            normalized.push_back(' ');
+            after_space = true;
+        }
+
+        if (after_space && is_ascii_upper(ch)) {
+            normalized.push_back(ascii_lower(ch));
+        } else {
+            normalized.push_back(ch);
+        }
+        after_space = false;
+    }
+
+    return normalized;
+}
+
 auto render_details_impl(const Details& details) -> std::string {
     if (details.fields.empty()) {
         return "(empty)";
     }
+
+    std::vector<std::pair<std::string, std::string>> fields;
+    fields.reserve(details.fields.size());
+    for (const auto& [key, value] : details.fields) {
+        fields.emplace_back(human_detail_label(key), value);
+    }
+
     std::size_t width = 0;
-    for (const auto& [key, _] : details.fields) {
+    for (const auto& [key, _] : fields) {
         width = std::max(width, key.size());
     }
 
     std::ostringstream out;
-    for (std::size_t index = 0; index < details.fields.size(); ++index) {
-        const auto& [key, value] = details.fields[index];
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        const auto& [key, value] = fields[index];
         out << std::left << std::setw(static_cast<int>(width)) << key << "  " << value;
-        if (index + 1 != details.fields.size()) {
+        if (index + 1 != fields.size()) {
             out << '\n';
         }
     }

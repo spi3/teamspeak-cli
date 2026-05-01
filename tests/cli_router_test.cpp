@@ -725,7 +725,7 @@ int main() {
     );
     tests::expect_contains(
         output::render(playback_status_result.value(), output::Format::table),
-        "TransmitPathReady",
+        "Transmit path ready",
         "playback status table should summarize transmit readiness"
     );
 
