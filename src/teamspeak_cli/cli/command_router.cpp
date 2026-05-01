@@ -4084,7 +4084,7 @@ auto top_level_help() -> std::string {
     out << "Usage:\n";
     out << "  ts [global options] <command> [args]\n\n";
     out << "Global options:\n";
-    out << "  --output <table|json|yaml>\n";
+    out << "  --output <table|json|yaml>  yaml is experimental\n";
     out << "  --json\n";
     out << "  --profile <name>\n";
     out << "  --server <host[:port]>\n";
@@ -4372,7 +4372,7 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
         }
     }
 
-    out << "\nGlobal options: --output --json --profile --server --nickname --identity --config --verbose --debug --help\n";
+    out << "\nGlobal options: --output (yaml experimental) --json --profile --server --nickname --identity --config --verbose --debug --help\n";
     return out.str();
 }
 

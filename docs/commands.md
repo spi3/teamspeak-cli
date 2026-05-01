@@ -4,7 +4,7 @@
 
 Every command accepts these global flags:
 
-- `--output table|json|yaml`
+- `--output table|json|yaml` (`yaml` is experimental)
 - `--json`
 - `--profile <name>`
 - `--server <host[:port]>`
@@ -17,7 +17,7 @@ Every command accepts these global flags:
 
 `--json` is shorthand for `--output json`.
 
-See [output-format.md](output-format.md) for the stdout/stderr contract, machine-output guarantees, and JSON examples.
+See [output-format.md](output-format.md) for the stdout/stderr contract, stable JSON automation guarantees, and JSON examples.
 
 ## Command Groups
 
@@ -121,7 +121,7 @@ These commands stream human-readable progress when output is `table`:
 - `client start`
 - `client stop`
 
-The same commands return one structured result at the end when output is `json` or `yaml`.
+The same commands return one structured result at the end when output is `json` or experimental `yaml`.
 
 Table output is human-oriented and is not stable for parsing. Use `--json` for scripts; see
 [output-format.md](output-format.md) for details.

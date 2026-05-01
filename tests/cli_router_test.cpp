@@ -132,6 +132,9 @@ int main() {
     tests::expect_contains(
         help, "Run `ts <command> --help`", "top-level help should point users at command-specific help"
     );
+    tests::expect_contains(
+        help, "--output <table|json|yaml>  yaml is experimental", "top-level help should mark yaml experimental"
+    );
     tests::expect_contains(help, "mute  Mute your TeamSpeak microphone", "top-level help should list mute");
     tests::expect_contains(help, "away  Set your TeamSpeak status to away", "top-level help should list away");
     tests::expect_contains(
@@ -183,6 +186,11 @@ int main() {
 
     const std::string channel_help = router.render_help({"channel"});
     tests::expect_contains(channel_help, "ts channel <subcommand>", "channel help usage");
+    tests::expect_contains(
+        channel_help,
+        "Global options: --output (yaml experimental)",
+        "command help should mark yaml output experimental"
+    );
     tests::expect_contains(channel_help, "Subcommands:", "channel help should list subcommands");
     tests::expect_contains(channel_help, "ts channel list", "channel help should include examples");
     tests::expect_contains(channel_help, "ts channel clients [id-or-name]", "channel help should include channel clients");

@@ -211,7 +211,7 @@ When output is `table`, these commands stream human-readable progress by default
 - `client start`
 - `client stop`
 
-When output is `json` or `yaml`, they print one structured result at the end instead.
+When output is `json` or experimental `yaml`, they print one structured result at the end instead. Use JSON for stable automation.
 
 To capture messages and trigger local scripts without keeping `ts events watch` attached, start the local daemon:
 

@@ -15,9 +15,9 @@ Failures are written to `stderr`. Scripts should treat a non-zero exit status as
 - `--output table`: human-oriented text. This is the default.
 - `--json`: shorthand for `--output json`.
 - `--output json`: one JSON value on `stdout`.
-- `--output yaml`: one YAML value on `stdout`.
+- `--output yaml`: one YAML value on `stdout`. YAML output is experimental.
 
-For `json` and `yaml`, successful commands emit exactly one top-level value. The value may be an object or an array depending on the command.
+For `json` and experimental `yaml`, successful commands emit exactly one top-level value. The value may be an object or an array depending on the command.
 
 Table output is for people reading a terminal. It may change labels, spacing, columns, order, wrapping, and explanatory text between releases. Do not parse table output in scripts.
 
@@ -39,7 +39,6 @@ Scripts may rely on:
 - successful command results appearing on `stdout`
 - failures appearing on `stderr`
 - `--json` and `--output json` producing one complete JSON value per command invocation
-- `--output yaml` producing one complete YAML value per command invocation
 - JSON top-level type for the documented commands below, unless release notes document a compatibility change
 - JSON field names that are documented or covered by tests
 
@@ -50,9 +49,9 @@ Scripts must not rely on:
 - parsing progress text as data
 - `json` or `yaml` output containing multiple streamed values for one command invocation
 - undocumented debug fields, especially fields that appear only with `--debug`
-- YAML as the primary stable scripting format when JSON can be used instead
+- YAML as the stable automation contract
 
-Prefer JSON for automation.
+Prefer JSON for automation. YAML currently uses a custom renderer and should remain a human-adjacent convenience format until parser-backed tests and a real serializer exist.
 
 ## JSON Compatibility
 
