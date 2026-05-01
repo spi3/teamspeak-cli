@@ -27,6 +27,7 @@ client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool
 ts3_runtime_resolve_xvfb
+ts3_runtime_prepare_pulseaudio_runtime
 
 tmp_dir="$(mktemp -d)"
 client_runtime_dir="${tmp_dir}/client"

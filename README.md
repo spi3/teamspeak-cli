@@ -94,6 +94,7 @@ That installer:
 - installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
 - resolves `Xvfb` for headless client launches, bootstrapping it into the managed cache when needed
+- installs PulseAudio-compatible audio tooling for safe headless/media routing when it is missing
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
@@ -143,6 +144,7 @@ By default the local-checkout installer:
 - installs the TeamSpeak client and `ts3cli_plugin.so` under `~/.local/share/teamspeak-cli/teamspeak3-client`
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
 - resolves `Xvfb` for headless client launches, bootstrapping it into the managed cache when needed
+- installs PulseAudio-compatible audio tooling for safe headless/media routing when it is missing
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
@@ -400,6 +402,7 @@ If headless launch fails:
 
 - rerun the installer so it can resolve or bootstrap `Xvfb`
 - on Debian/Ubuntu, make sure `x11-xkb-utils` and `xkb-data` are installed if `/usr/bin/xkbcomp` or XKB data is missing
+- on Debian/Ubuntu, make sure `pulseaudio-utils` and either `pulseaudio` or `pipewire-pulse` are installed if the launcher reports that audio preflight is unavailable
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
 

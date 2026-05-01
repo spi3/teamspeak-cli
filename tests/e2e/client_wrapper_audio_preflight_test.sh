@@ -42,7 +42,10 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 client_dir="${tmp_dir}/client"
 wrapper_path="${tmp_dir}/ts3client"
 fake_bin_dir="${tmp_dir}/bin"
-mkdir -p "${client_dir}" "${fake_bin_dir}"
+no_pactl_bin_dir="${tmp_dir}/no-pactl-bin"
+mkdir -p "${client_dir}" "${fake_bin_dir}" "${no_pactl_bin_dir}"
+ln -s "$(command -v bash)" "${no_pactl_bin_dir}/bash"
+ln -s "$(command -v env)" "${no_pactl_bin_dir}/env"
 
 cat >"${client_dir}/ts3client_runscript.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -86,6 +89,10 @@ OUT
 Default Sink: auto_null
 Default Source: auto_null.monitor
 OUT
+        ;;
+      unavailable)
+        printf 'Connection failure: Connection refused\n' >&2
+        exit 1
         ;;
     esac
     exit 0
@@ -155,6 +162,27 @@ chmod +x "${fake_bin_dir}/pactl"
 "${repo_root}/scripts/write-client-wrapper.sh" "${wrapper_path}" "${client_dir}"
 pactl_log_path="${tmp_dir}/pactl.log"
 : >"${pactl_log_path}"
+
+no_pactl_output="$(
+  PATH="${no_pactl_bin_dir}" TS3CLIENT_SKIP_LIBRARY_PREFLIGHT=1 "${wrapper_path}" --demo 2>&1
+)"
+expect_fragment "${no_pactl_output}" "RUNSCRIPT_OK" "wrapper should still launch when pactl is missing"
+expect_fragment "${no_pactl_output}" "[ts3client] PulseAudio/PipeWire audio preflight unavailable because pactl is missing." \
+  "wrapper should explain that pactl is required for audio preflight"
+expect_fragment "${no_pactl_output}" "PULSE_SINK=" \
+  "wrapper should not set playback overrides when pactl is unavailable"
+
+unavailable_output="$(
+  PATH="${fake_bin_dir}:${PATH}" \
+    PACTL_FIXTURE=unavailable \
+    TS3CLIENT_SKIP_LIBRARY_PREFLIGHT=1 \
+    "${wrapper_path}" --demo 2>&1
+)"
+expect_fragment "${unavailable_output}" "RUNSCRIPT_OK" "wrapper should still launch when the audio server is unavailable"
+expect_fragment "${unavailable_output}" "[ts3client] PulseAudio/PipeWire audio preflight unavailable because no compatible server is reachable." \
+  "wrapper should explain that the PulseAudio-compatible server is required for audio preflight"
+expect_fragment "${unavailable_output}" "PULSE_SOURCE=" \
+  "wrapper should not set capture overrides when the audio server is unavailable"
 
 missing_output="$(
   PATH="${fake_bin_dir}:${PATH}" PACTL_FIXTURE=missing PACTL_LOG_PATH="${pactl_log_path}" "${wrapper_path}" --demo 2>&1

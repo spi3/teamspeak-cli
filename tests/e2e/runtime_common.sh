@@ -1011,6 +1011,100 @@ ts3_runtime_ensure_xvfb_system_dependencies() {
   fi
 }
 
+ts3_runtime_pulseaudio_system_dependency_packages() {
+  printf '%s\n' "pulseaudio-utils"
+  printf '%s\n' "pulseaudio"
+}
+
+ts3_runtime_missing_pulseaudio_system_dependency_packages_for_paths() {
+  local pactl_path="$1"
+  local pulseaudio_path="$2"
+  local pipewire_pulse_path="$3"
+
+  if [[ ! -x "${pactl_path}" ]]; then
+    printf '%s\n' "pulseaudio-utils"
+  fi
+  if [[ ! -x "${pulseaudio_path}" && ! -x "${pipewire_pulse_path}" ]]; then
+    printf '%s\n' "pulseaudio"
+  fi
+}
+
+ts3_runtime_missing_pulseaudio_system_dependency_packages() {
+  local pactl_path=""
+  local pulseaudio_path=""
+  local pipewire_pulse_path=""
+
+  pactl_path="$(command -v pactl || true)"
+  pulseaudio_path="$(command -v pulseaudio || true)"
+  pipewire_pulse_path="$(command -v pipewire-pulse || true)"
+
+  ts3_runtime_missing_pulseaudio_system_dependency_packages_for_paths \
+    "${pactl_path}" \
+    "${pulseaudio_path}" \
+    "${pipewire_pulse_path}"
+}
+
+ts3_runtime_install_pulseaudio_system_dependency_packages() {
+  local packages=("$@")
+
+  [[ "${#packages[@]}" -gt 0 ]] || return 0
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    ts3_runtime_die \
+      "missing PulseAudio-compatible audio support (${packages[*]}). Install packages that provide pactl and a PulseAudio-compatible server; on Debian/Ubuntu: sudo apt-get install -y ${packages[*]}"
+  fi
+
+  ts3_runtime_log "installing PulseAudio-compatible audio packages: ${packages[*]}"
+  if [[ "$(id -u)" == "0" ]]; then
+    apt-get update || ts3_runtime_die "failed to refresh apt package metadata"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || \
+      ts3_runtime_die "failed to install PulseAudio-compatible audio packages: ${packages[*]}"
+    return 0
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    ts3_runtime_die \
+      "missing PulseAudio-compatible audio support (${packages[*]}), and sudo is unavailable. Install with: sudo apt-get install -y ${packages[*]}"
+  fi
+
+  sudo apt-get update || ts3_runtime_die "failed to refresh apt package metadata"
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || \
+    ts3_runtime_die "failed to install PulseAudio-compatible audio packages: ${packages[*]}"
+}
+
+ts3_runtime_ensure_pulseaudio_system_dependencies() {
+  local packages=()
+
+  mapfile -t packages < <(ts3_runtime_missing_pulseaudio_system_dependency_packages)
+  [[ "${#packages[@]}" -eq 0 ]] && return 0
+
+  ts3_runtime_install_pulseaudio_system_dependency_packages "${packages[@]}"
+
+  mapfile -t packages < <(ts3_runtime_missing_pulseaudio_system_dependency_packages)
+  if [[ "${#packages[@]}" -ne 0 ]]; then
+    ts3_runtime_die \
+      "PulseAudio-compatible audio support is still incomplete after package installation: ${packages[*]}"
+  fi
+}
+
+ts3_runtime_prepare_pulseaudio_runtime() {
+  ts3_runtime_ensure_pulseaudio_system_dependencies
+
+  if ! command -v pactl >/dev/null 2>&1; then
+    return 0
+  fi
+  if pactl info >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v pulseaudio >/dev/null 2>&1; then
+    ts3_runtime_log "starting PulseAudio user daemon"
+    pulseaudio --start >/dev/null 2>&1 || true
+  fi
+  if ! pactl info >/dev/null 2>&1; then
+    ts3_runtime_log "PulseAudio/PipeWire server is not reachable yet; the TeamSpeak launcher will retry audio setup at runtime"
+  fi
+}
+
 ts3_runtime_xvfb_bootstrap_packages() {
   printf '%s\n' "xvfb"
   printf '%s\n' "xserver-common"

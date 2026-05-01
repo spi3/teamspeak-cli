@@ -194,7 +194,9 @@ prefers a transient user service so the TeamSpeak client can survive non-interac
 transient service path.
 
 Headless `Xvfb` also needs system XKB support. The installers install the Debian/Ubuntu `x11-xkb-utils` and `xkb-data`
-packages when `/usr/bin/xkbcomp` or the standard XKB data directory is missing.
+packages when `/usr/bin/xkbcomp` or the standard XKB data directory is missing. The installers also ensure
+PulseAudio-compatible audio control is available for media routing by installing `pulseaudio-utils` and, when neither
+`pulseaudio` nor `pipewire-pulse` is present, `pulseaudio`.
 
 On the first headless TeamSpeak launch, hidden onboarding dialogs can still block the plugin bridge. `ts client start`
 tries to dismiss known license and identity dialogs with `xdotool` when available. If a headless session still wedges,

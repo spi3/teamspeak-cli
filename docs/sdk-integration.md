@@ -120,6 +120,7 @@ That command:
 - resolves the TeamSpeak 3 Client Plugin SDK
 - resolves `xdotool`
 - resolves `Xvfb` for headless operation
+- ensures PulseAudio-compatible audio control is available for media routing
 - writes reusable defaults to `third_party/teamspeak/managed/deps.mk`
 - writes shell exports to `third_party/teamspeak/managed/deps.env`
 
@@ -138,6 +139,7 @@ This harness is useful, but it is still best-effort local automation. It is more
 
 - Docker access
 - `Xvfb`, resolved from the managed cache when it is not already available on `PATH`
+- `pactl` and a reachable PulseAudio-compatible server for automatic media routing
 - TeamSpeak first-run dialogs and onboarding screens
 - upstream client UI behavior
 - host-specific runtime quirks such as audio and display behavior

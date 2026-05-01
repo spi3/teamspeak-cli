@@ -56,6 +56,35 @@ log_warning() {
   printf '[ts3client] %s\n' "\$*" >&2
 }
 
+audio_preflight_ready_checked=0
+audio_preflight_ready=0
+
+audio_preflight_available() {
+  if [[ "\${audio_preflight_ready_checked}" -eq 1 ]]; then
+    if [[ "\${audio_preflight_ready}" -eq 1 ]]; then
+      return 0
+    fi
+    return 1
+  fi
+
+  audio_preflight_ready_checked=1
+
+  if ! have_command pactl; then
+    log_warning "PulseAudio/PipeWire audio preflight unavailable because pactl is missing."
+    log_warning "Install pulseaudio-utils or rerun the teamspeak-cli installer to enable safe audio routing."
+    return 1
+  fi
+
+  if ! pactl info >/dev/null 2>&1; then
+    log_warning "PulseAudio/PipeWire audio preflight unavailable because no compatible server is reachable."
+    log_warning "Start PulseAudio or pipewire-pulse, or set TS3CLIENT_SKIP_AUDIO_PREFLIGHT=1 after verifying audio routing manually."
+    return 1
+  fi
+
+  audio_preflight_ready=1
+  return 0
+}
+
 library_search_path_contains_soname() {
   local soname="\$1"
   local search_path="\$2"
@@ -164,7 +193,7 @@ warn_if_audio_nodes_missing_descriptions() {
   local suspect=""
 
   [[ "\${TS3CLIENT_SKIP_AUDIO_PREFLIGHT:-0}" == "1" ]] && return 0
-  have_command pactl || return 0
+  audio_preflight_available || return 0
 
   suspects+="\$(emit_missing_description_entries sink Sink)"
   if [[ -n "\${suspects}" ]]; then
@@ -309,7 +338,7 @@ configure_safe_virtual_audio() {
 
   [[ "\${TS3CLIENT_SKIP_AUDIO_PREFLIGHT:-0}" == "1" ]] && return 0
   [[ "\${TS3CLIENT_SKIP_AUDIO_ROUTING:-0}" == "1" ]] && return 0
-  have_command pactl || return 0
+  audio_preflight_available || return 0
 
   default_sink="\$(pactl_info_value "Default Sink" || true)"
   default_source="\$(pactl_info_value "Default Source" || true)"

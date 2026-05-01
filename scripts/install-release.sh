@@ -520,6 +520,9 @@ else
   xvfb_bin="$(command -v Xvfb || true)"
   [[ -n "${xvfb_bin}" ]] || die "Xvfb is required for headless operation, but this release's runtime support cannot bootstrap it automatically"
 fi
+if declare -F ts3_runtime_prepare_pulseaudio_runtime >/dev/null; then
+  ts3_runtime_prepare_pulseaudio_runtime
+fi
 write_install_marker "${managed_dir}" "managed-dir"
 
 extract_release_archive

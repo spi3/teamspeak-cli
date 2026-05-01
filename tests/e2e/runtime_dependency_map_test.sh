@@ -24,12 +24,23 @@ mapfile -t xvfb_packages < <(ts3_runtime_xvfb_bootstrap_packages)
 mapfile -t xvfb_system_packages < <(ts3_runtime_xvfb_system_dependency_packages)
 [[ "${xvfb_system_packages[*]}" == "x11-xkb-utils xkb-data" ]]
 
+mapfile -t pulseaudio_system_packages < <(ts3_runtime_pulseaudio_system_dependency_packages)
+[[ "${pulseaudio_system_packages[*]}" == "pulseaudio-utils pulseaudio" ]]
+
 mapfile -t missing_xvfb_system_packages < <(
   ts3_runtime_missing_xvfb_system_dependency_packages_for_paths \
     "${tmp_dir}/missing-xkbcomp" \
     "${tmp_dir}/missing-xkb"
 )
 [[ "${missing_xvfb_system_packages[*]}" == "x11-xkb-utils xkb-data" ]]
+
+mapfile -t missing_pulseaudio_system_packages < <(
+  ts3_runtime_missing_pulseaudio_system_dependency_packages_for_paths \
+    "${tmp_dir}/missing-pactl" \
+    "${tmp_dir}/missing-pulseaudio" \
+    "${tmp_dir}/missing-pipewire-pulse"
+)
+[[ "${missing_pulseaudio_system_packages[*]}" == "pulseaudio-utils pulseaudio" ]]
 
 xkbcomp_fixture="${tmp_dir}/xkbcomp"
 xkb_data_fixture="${tmp_dir}/xkb"
@@ -42,6 +53,37 @@ mapfile -t missing_xvfb_system_packages < <(
     "${xkb_data_fixture}"
 )
 [[ "${missing_xvfb_system_packages[*]}" == "" ]]
+
+pactl_fixture="${tmp_dir}/pactl"
+pulseaudio_fixture="${tmp_dir}/pulseaudio"
+pipewire_pulse_fixture="${tmp_dir}/pipewire-pulse"
+touch "${pactl_fixture}" "${pipewire_pulse_fixture}"
+chmod +x "${pactl_fixture}" "${pipewire_pulse_fixture}"
+mapfile -t missing_pulseaudio_system_packages < <(
+  ts3_runtime_missing_pulseaudio_system_dependency_packages_for_paths \
+    "${pactl_fixture}" \
+    "${tmp_dir}/missing-pulseaudio" \
+    "${pipewire_pulse_fixture}"
+)
+[[ "${missing_pulseaudio_system_packages[*]}" == "" ]]
+
+mapfile -t missing_pulseaudio_system_packages < <(
+  ts3_runtime_missing_pulseaudio_system_dependency_packages_for_paths \
+    "${pactl_fixture}" \
+    "${pulseaudio_fixture}" \
+    "${tmp_dir}/missing-pipewire-pulse"
+)
+[[ "${missing_pulseaudio_system_packages[*]}" == "pulseaudio" ]]
+
+touch "${pulseaudio_fixture}"
+chmod +x "${pulseaudio_fixture}"
+mapfile -t missing_pulseaudio_system_packages < <(
+  ts3_runtime_missing_pulseaudio_system_dependency_packages_for_paths \
+    "${pactl_fixture}" \
+    "${pulseaudio_fixture}" \
+    "${tmp_dir}/missing-pipewire-pulse"
+)
+[[ "${missing_pulseaudio_system_packages[*]}" == "" ]]
 
 mapfile -t asound_packages < <(ts3_runtime_client_packages_for_soname "libasound.so.2")
 [[ "${asound_packages[*]}" == "libasound2 libasound2t64" ]]

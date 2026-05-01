@@ -35,13 +35,14 @@ managed_dir="${tmp_dir}/managed"
 config_path="${tmp_dir}/config.ini"
 fake_client_source="${tmp_dir}/fake-client-source"
 fake_xvfb_path="${tmp_dir}/fake-Xvfb"
+fake_audio_bin_dir="${tmp_dir}/fake-audio-bin"
 release_tag="vstdin-test"
 release_archive_dir="${tmp_dir}/archive/ts-${release_tag}-linux-x86_64"
 release_cache_dir="${managed_dir}/releases/${release_tag}"
 release_archive_path="${release_cache_dir}/ts-${release_tag}-linux-x86_64.tar.gz"
 release_checksum_path="${release_archive_path}.sha256"
 
-mkdir -p "${home_dir}" "${fake_client_source}" "${release_archive_dir}/bin" "${release_archive_dir}/plugins" "${release_archive_dir}/share/teamspeak-cli" "${release_cache_dir}"
+mkdir -p "${home_dir}" "${fake_client_source}" "${fake_audio_bin_dir}" "${release_archive_dir}/bin" "${release_archive_dir}/plugins" "${release_archive_dir}/share/teamspeak-cli" "${release_cache_dir}"
 
 cat >"${fake_client_source}/ts3client_runscript.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -64,6 +65,22 @@ fi
 exit 1
 EOF
 chmod +x "${fake_xvfb_path}"
+
+cat >"${fake_audio_bin_dir}/pactl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "info" ]]; then
+  printf 'Server Name: fake-pulse\n'
+fi
+EOF
+chmod +x "${fake_audio_bin_dir}/pactl"
+
+cat >"${fake_audio_bin_dir}/pipewire-pulse" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+EOF
+chmod +x "${fake_audio_bin_dir}/pipewire-pulse"
 
 cat >"${release_archive_dir}/bin/ts" <<'EOF'
 #!/usr/bin/env bash
@@ -103,6 +120,7 @@ cat "${repo_root}/scripts/install-release.sh" | env \
 	  INSTALL_SCRIPT_BASE_URL="file://${repo_root}" \
 	  TS3_CLIENT_DIR="${fake_client_source}" \
 	  TS3_XVFB="${fake_xvfb_path}" \
+	  PATH="${fake_audio_bin_dir}:${PATH}" \
 	  bash -s -- \
     --release-tag "${release_tag}" \
     --prefix "${prefix}" \

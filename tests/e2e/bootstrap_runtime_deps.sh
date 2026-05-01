@@ -10,6 +10,7 @@ client_source_dir="$(ts3_runtime_resolve_client_source_dir)"
 ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool
 ts3_runtime_resolve_xvfb
+ts3_runtime_prepare_pulseaudio_runtime
 ts3_runtime_write_default_env_files \
   "${plugin_sdk_dir}" \
   "${client_source_dir}" \
