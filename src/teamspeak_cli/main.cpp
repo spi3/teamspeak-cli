@@ -59,6 +59,13 @@ int main(int argc, char** argv) {
         return static_cast<int>(result.value().exit_code);
     }
 
-    std::cout << teamspeak_cli::output::render(result.value(), parsed.value().global.format) << '\n';
+    std::cout << teamspeak_cli::output::render(
+                     result.value(),
+                     parsed.value().global.format,
+                     teamspeak_cli::output::TableRenderOptions{
+                         .show_headers = !parsed.value().global.no_headers,
+                     }
+                 )
+              << '\n';
     return static_cast<int>(result.value().exit_code);
 }

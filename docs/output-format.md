@@ -23,6 +23,13 @@ For `json` and experimental `yaml`, successful commands emit exactly one top-lev
 
 Table output is for people reading a terminal. It may change labels, spacing, columns, order, wrapping, and explanatory text between releases. Do not parse table output in scripts.
 
+Table controls apply only when output is `table`:
+
+- `--no-headers` removes the table header row while keeping the same data rows.
+- `--wide` adds extra columns for supported commands without changing their default table columns.
+
+JSON, experimental YAML, and `--field` output are unaffected by table controls. `--wide` currently adds `Subscribed` to `ts channel list`, `Unique Identity` to `ts client list` and `ts channel clients`, and event type/summary columns to `ts message inbox`. `ts events hook list --wide` is accepted as a no-op because the default hook table already exposes all stored hook fields.
+
 Progress-producing commands stream progress only for human/table output. With `--json` or `--output yaml`, those commands suppress progress and print one structured result at the end.
 
 Current progress-producing commands include:

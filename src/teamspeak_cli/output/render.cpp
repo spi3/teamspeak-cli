@@ -171,7 +171,7 @@ void render_yaml_impl(const ValueHolder& holder, std::ostringstream& out, int in
     );
 }
 
-auto render_table_impl(const Table& table) -> std::string {
+auto render_table_impl(const Table& table, TableRenderOptions options) -> std::string {
     if (table.rows.empty()) {
         return "(none)";
     }
@@ -188,13 +188,15 @@ auto render_table_impl(const Table& table) -> std::string {
     }
 
     std::ostringstream out;
-    for (std::size_t index = 0; index < table.columns.size(); ++index) {
-        if (index != 0) {
-            out << "  ";
+    if (options.show_headers) {
+        for (std::size_t index = 0; index < table.columns.size(); ++index) {
+            if (index != 0) {
+                out << "  ";
+            }
+            out << std::left << std::setw(static_cast<int>(widths[index])) << table.columns[index];
         }
-        out << std::left << std::setw(static_cast<int>(widths[index])) << table.columns[index];
+        out << '\n';
     }
-    out << '\n';
 
     for (std::size_t row_index = 0; row_index < table.rows.size(); ++row_index) {
         const auto& row = table.rows[row_index];
@@ -511,7 +513,7 @@ auto parse_format(const std::string& name) -> domain::Result<Format> {
     ));
 }
 
-auto render(const CommandOutput& output, Format format) -> std::string {
+auto render(const CommandOutput& output, Format format, TableRenderOptions table_options) -> std::string {
     if (format == Format::json) {
         std::ostringstream out;
         render_json_impl(output.data, out);
@@ -524,7 +526,7 @@ auto render(const CommandOutput& output, Format format) -> std::string {
     }
 
     if (const auto* table = std::get_if<Table>(&output.human)) {
-        return render_table_impl(*table);
+        return render_table_impl(*table, table_options);
     }
     if (const auto* details = std::get_if<Details>(&output.human)) {
         return render_details_impl(*details);

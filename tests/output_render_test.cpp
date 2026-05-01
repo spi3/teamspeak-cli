@@ -51,6 +51,33 @@ int main() {
         std::string("[{\"client_count\":3,\"id\":\"7\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":0,\"id\":\"8\",\"is_default\":false,\"name\":\"Breakout\",\"parent_id\":\"7\",\"subscribed\":false}]"),
         "channel list json should keep the documented array structure and nullable parent_id"
     );
+    const output::CommandOutput channel_list_output{
+        .data = output::to_value(channel_list),
+        .human = output::channel_table(channel_list),
+    };
+    const std::string default_channel_table = output::render(channel_list_output, output::Format::table);
+    teamspeak_cli::tests::expect_contains(
+        default_channel_table,
+        "ID  Name      Parent  Clients  Default",
+        "default channel table should keep its existing headers"
+    );
+    teamspeak_cli::tests::expect(
+        default_channel_table.find("Subscribed") == std::string::npos,
+        "default channel table should not include wide columns"
+    );
+    const std::string no_header_channel_table = output::render(
+        channel_list_output,
+        output::Format::table,
+        output::TableRenderOptions{.show_headers = false}
+    );
+    teamspeak_cli::tests::expect(
+        no_header_channel_table.find("ID  Name") == std::string::npos,
+        "no-header channel table should omit only the header row"
+    );
+    teamspeak_cli::tests::expect(
+        no_header_channel_table.rfind("7   Lobby", 0) == 0,
+        "no-header channel table should keep data rows"
+    );
 
     const std::vector<domain::Client> client_list{
         domain::Client{

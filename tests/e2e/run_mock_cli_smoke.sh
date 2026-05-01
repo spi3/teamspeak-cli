@@ -65,6 +65,8 @@ printf '%s\n' "${status_json}" | grep -q '"phase":"connected"'
 
 status_phase="$("${ts_bin}" --json status --field phase --config "${config_path}")"
 [[ "${status_phase}" == "connected" ]]
+status_phase_table_options="$("${ts_bin}" --json status --field phase --wide --no-headers --config "${config_path}")"
+[[ "${status_phase_table_options}" == "connected" ]]
 
 plugin_transmit_ready="$("${ts_bin}" --json plugin info --field media_diagnostics.transmit_path_ready --config "${config_path}")"
 [[ "${plugin_transmit_ready}" == "true" || "${plugin_transmit_ready}" == "false" ]]
@@ -79,9 +81,20 @@ assert_contains "${last_stderr}" '"code":"field_not_found"'
 channel_json="$("${ts_bin}" --json channel list --config "${config_path}")"
 printf '%s\n' "${channel_json}" | grep -q '"name":"Lobby"'
 printf '%s\n' "${channel_json}" | grep -q '"name":"Engineering"'
+channel_json_wide="$("${ts_bin}" --json channel list --wide --no-headers --config "${config_path}")"
+[[ "${channel_json_wide}" == "${channel_json}" ]]
+
+run_ts_capture channel_no_headers channel list --no-headers --config "${config_path}"
+assert_not_contains "${last_stdout}" '^ID'
+assert_contains "${last_stdout}" 'Lobby'
+
+run_ts_capture channel_wide channel list --wide --config "${config_path}"
+assert_contains "${last_stdout}" 'Subscribed'
 
 client_json="$("${ts_bin}" --json client list --config "${config_path}")"
 printf '%s\n' "${client_json}" | grep -q '"nickname":"terminal"'
+run_ts_capture client_wide client list --wide --config "${config_path}"
+assert_contains "${last_stdout}" 'Unique Identity'
 
 events_json="$("${ts_bin}" --json events watch --count 2 --timeout-ms 1500 --config "${config_path}")"
 printf '%s\n' "${events_json}" | grep -q '"type":"'

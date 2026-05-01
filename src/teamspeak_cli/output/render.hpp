@@ -36,6 +36,10 @@ struct Table {
     std::vector<std::vector<std::string>> rows;
 };
 
+struct TableRenderOptions {
+    bool show_headers = true;
+};
+
 struct Details {
     std::vector<std::pair<std::string, std::string>> fields;
 };
@@ -49,7 +53,7 @@ struct CommandOutput {
 };
 
 auto parse_format(const std::string& name) -> domain::Result<Format>;
-auto render(const CommandOutput& output, Format format) -> std::string;
+auto render(const CommandOutput& output, Format format, TableRenderOptions table_options = {}) -> std::string;
 auto render_error(const domain::Error& error, Format format, bool debug) -> std::string;
 auto render_details_block(const Details& details) -> std::string;
 auto extract_field(const ValueHolder& value, const std::string& path) -> domain::Result<ValueHolder>;

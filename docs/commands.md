@@ -7,6 +7,8 @@ Every command accepts these global flags:
 - `--output table|json|yaml` (`yaml` is experimental)
 - `--json`
 - `--field <path>`
+- `--no-headers`
+- `--wide`
 - `--profile <name>`
 - `--server <host[:port]>`
 - `--nickname <name>`
@@ -16,7 +18,7 @@ Every command accepts these global flags:
 - `--debug`
 - `--help`
 
-`--json` is shorthand for `--output json`. `--field <path>` extracts one scalar value from JSON output after the command runs; paths are dot-separated object keys, such as `phase` or `media_diagnostics.transmit_path_ready`.
+`--json` is shorthand for `--output json`. `--field <path>` extracts one scalar value from JSON output after the command runs; paths are dot-separated object keys, such as `phase` or `media_diagnostics.transmit_path_ready`. `--no-headers` removes table header rows, and `--wide` adds extra columns for supported table commands. Table controls do not change JSON, YAML, or `--field` output.
 
 See [output-format.md](output-format.md) for the stdout/stderr contract, stable JSON automation guarantees, and JSON examples.
 
@@ -126,6 +128,9 @@ The same commands return one structured result at the end when output is `json` 
 
 Table output is human-oriented and is not stable for parsing. Use `--json` for scripts; see
 [output-format.md](output-format.md) for details.
+
+`--wide` currently adds extra columns for `channel list`, `client list`, `channel clients`, and `message inbox`.
+`events hook list` already shows all stored hook fields, so `--wide` is accepted as a no-op there.
 
 ## Profile And Socket Notes
 

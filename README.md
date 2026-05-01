@@ -220,6 +220,8 @@ ts --json status --field phase
 ts --json plugin info --field media_diagnostics.transmit_path_ready
 ```
 
+For human tables, `--no-headers` removes header rows and `--wide` adds extra columns to supported list tables. These options do not change JSON, YAML, or `--field` output.
+
 To capture messages and trigger local scripts without keeping `ts events watch` attached, start the local daemon:
 
 ```bash

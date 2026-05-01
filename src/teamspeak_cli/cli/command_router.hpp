@@ -23,6 +23,8 @@ struct GlobalOptions {
     std::optional<std::string> nickname;
     std::optional<std::string> identity;
     std::optional<std::string> field_path;
+    bool no_headers = false;
+    bool wide = false;
     std::filesystem::path config_path;
 };
 

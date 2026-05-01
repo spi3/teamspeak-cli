@@ -136,6 +136,8 @@ int main() {
         help, "--output <table|json|yaml>  yaml is experimental", "top-level help should mark yaml experimental"
     );
     tests::expect_contains(help, "--field <path>", "top-level help should list field extraction");
+    tests::expect_contains(help, "--no-headers", "top-level help should list no-header table output");
+    tests::expect_contains(help, "--wide", "top-level help should list wide table output");
     tests::expect_contains(help, "mute  Mute your TeamSpeak microphone", "top-level help should list mute");
     tests::expect_contains(help, "away  Set your TeamSpeak status to away", "top-level help should list away");
     tests::expect_contains(
@@ -283,6 +285,19 @@ int main() {
         *parsed_nested_field.value().global.field_path,
         std::string("media_diagnostics.transmit_path_ready"),
         "nested field path should preserve dots"
+    );
+
+    auto parsed_table_options = parse_command(router, {"channel", "list", "--no-headers", "--wide"});
+    tests::expect(parsed_table_options.ok(), "table option parse should succeed after the command");
+    tests::expect(parsed_table_options.value().global.no_headers, "no-headers should be stored globally");
+    tests::expect(parsed_table_options.value().global.wide, "wide should be stored globally");
+
+    auto parsed_json_table_options = parse_command(router, {"--json", "channel", "list", "--wide", "--no-headers"});
+    tests::expect(parsed_json_table_options.ok(), "json output should accept table options");
+    tests::expect_eq(
+        parsed_json_table_options.value().global.format,
+        output::Format::json,
+        "json table option parse should preserve json format"
     );
 
     auto table_field = parse_command(router, {"status", "--field", "phase"});
@@ -468,10 +483,54 @@ int main() {
     tests::expect(json_channel_list.ok(), "json channel list parse should succeed");
     auto json_channel_list_result = router.dispatch(json_channel_list.value());
     tests::expect(json_channel_list_result.ok(), "json channel list dispatch should succeed");
+    const std::string expected_channel_list_json =
+        "[{\"client_count\":1,\"id\":\"1\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":2,\"id\":\"2\",\"is_default\":false,\"name\":\"Engineering\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":1,\"id\":\"3\",\"is_default\":false,\"name\":\"Operations\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":0,\"id\":\"4\",\"is_default\":false,\"name\":\"Breakout\",\"parent_id\":\"2\",\"subscribed\":true}]";
     tests::expect_eq(
         output::render(json_channel_list_result.value(), output::Format::json),
-        std::string("[{\"client_count\":1,\"id\":\"1\",\"is_default\":true,\"name\":\"Lobby\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":2,\"id\":\"2\",\"is_default\":false,\"name\":\"Engineering\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":1,\"id\":\"3\",\"is_default\":false,\"name\":\"Operations\",\"parent_id\":null,\"subscribed\":true},{\"client_count\":0,\"id\":\"4\",\"is_default\":false,\"name\":\"Breakout\",\"parent_id\":\"2\",\"subscribed\":true}]"),
+        expected_channel_list_json,
         "channel list json should match the documented array shape"
+    );
+    const auto default_channel_list_table = output::render(json_channel_list_result.value(), output::Format::table);
+    tests::expect_contains(
+        default_channel_list_table,
+        "ID  Name         Parent  Clients  Default",
+        "default channel list table should keep existing headers"
+    );
+    tests::expect(
+        default_channel_list_table.find("Subscribed") == std::string::npos,
+        "default channel list table should not include wide columns"
+    );
+
+    auto wide_channel_list = parse_command(
+        router, {"channel", "list", "--wide", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(wide_channel_list.ok(), "wide channel list parse should succeed");
+    auto wide_channel_list_result = router.dispatch(wide_channel_list.value());
+    tests::expect(wide_channel_list_result.ok(), "wide channel list dispatch should succeed");
+    const auto wide_channel_list_table = output::render(wide_channel_list_result.value(), output::Format::table);
+    tests::expect_contains(
+        wide_channel_list_table,
+        "Subscribed",
+        "wide channel list table should include subscription state"
+    );
+    tests::expect_eq(
+        output::render(wide_channel_list_result.value(), output::Format::json),
+        expected_channel_list_json,
+        "wide channel list json should remain unchanged"
+    );
+    const auto no_header_channel_list_table = output::render(
+        json_channel_list_result.value(),
+        output::Format::table,
+        output::TableRenderOptions{.show_headers = false}
+    );
+    tests::expect(
+        no_header_channel_list_table.find("ID  Name") == std::string::npos,
+        "no-header channel list table should omit headers"
+    );
+    tests::expect_contains(
+        no_header_channel_list_table,
+        "Lobby",
+        "no-header channel list table should keep rows"
     );
 
     auto json_client_list = parse_command(
@@ -480,10 +539,39 @@ int main() {
     tests::expect(json_client_list.ok(), "json client list parse should succeed");
     auto json_client_list_result = router.dispatch(json_client_list.value());
     tests::expect(json_client_list_result.ok(), "json client list dispatch should succeed");
+    const std::string expected_client_list_json =
+        "[{\"channel_id\":\"1\",\"id\":\"1\",\"nickname\":\"terminal\",\"self\":true,\"talking\":false,\"unique_identity\":\"mock-local-identity\"},{\"channel_id\":\"2\",\"id\":\"2\",\"nickname\":\"alice\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-alice\"},{\"channel_id\":\"2\",\"id\":\"3\",\"nickname\":\"bob\",\"self\":false,\"talking\":true,\"unique_identity\":\"sdk-bob\"},{\"channel_id\":\"3\",\"id\":\"4\",\"nickname\":\"ops-bot\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-ops-bot\"}]";
     tests::expect_eq(
         output::render(json_client_list_result.value(), output::Format::json),
-        std::string("[{\"channel_id\":\"1\",\"id\":\"1\",\"nickname\":\"terminal\",\"self\":true,\"talking\":false,\"unique_identity\":\"mock-local-identity\"},{\"channel_id\":\"2\",\"id\":\"2\",\"nickname\":\"alice\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-alice\"},{\"channel_id\":\"2\",\"id\":\"3\",\"nickname\":\"bob\",\"self\":false,\"talking\":true,\"unique_identity\":\"sdk-bob\"},{\"channel_id\":\"3\",\"id\":\"4\",\"nickname\":\"ops-bot\",\"self\":false,\"talking\":false,\"unique_identity\":\"sdk-ops-bot\"}]"),
+        expected_client_list_json,
         "client list json should match the documented array shape"
+    );
+    const auto default_client_list_table = output::render(json_client_list_result.value(), output::Format::table);
+    tests::expect_contains(
+        default_client_list_table,
+        "ID  Nickname",
+        "default client list table should keep existing headers"
+    );
+    tests::expect(
+        default_client_list_table.find("Unique Identity") == std::string::npos,
+        "default client list table should not include unique identities"
+    );
+
+    auto wide_client_list = parse_command(
+        router, {"client", "list", "--wide", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(wide_client_list.ok(), "wide client list parse should succeed");
+    auto wide_client_list_result = router.dispatch(wide_client_list.value());
+    tests::expect(wide_client_list_result.ok(), "wide client list dispatch should succeed");
+    tests::expect_contains(
+        output::render(wide_client_list_result.value(), output::Format::table),
+        "Unique Identity",
+        "wide client list table should include unique identities"
+    );
+    tests::expect_eq(
+        output::render(wide_client_list_result.value(), output::Format::json),
+        expected_client_list_json,
+        "wide client list json should remain unchanged"
     );
 
     auto create_profile = parse_command(
@@ -947,6 +1035,33 @@ int main() {
         channel_clients_all_table,
         "Breakout",
         "channel clients table should include empty channels"
+    );
+    tests::expect(
+        channel_clients_all_table.find("Unique Identity") == std::string::npos,
+        "default channel clients table should not include wide columns"
+    );
+
+    auto wide_channel_clients = parse_command(
+        router, {"channel", "clients", "--wide", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(wide_channel_clients.ok(), "wide channel clients parse should succeed");
+    auto wide_channel_clients_result = router.dispatch(wide_channel_clients.value());
+    tests::expect(wide_channel_clients_result.ok(), "wide channel clients dispatch should succeed");
+    const auto wide_channel_clients_table = output::render(wide_channel_clients_result.value(), output::Format::table);
+    tests::expect_contains(
+        wide_channel_clients_table,
+        "Unique Identity",
+        "wide channel clients table should include unique identities"
+    );
+    tests::expect_contains(
+        wide_channel_clients_table,
+        "sdk-bob",
+        "wide channel clients table should include client identity values"
+    );
+    tests::expect_eq(
+        output::render(wide_channel_clients_result.value(), output::Format::json),
+        channel_clients_all_json,
+        "wide channel clients json should remain unchanged"
     );
 
     auto channel_clients_one = parse_command(
@@ -1819,6 +1934,95 @@ int main() {
     tests::expect(::kill(discovered_child, 0) != 0, "client stop should terminate a discovered process");
     discovery_guard();
 
+    const fs::path daemon_state_dir = temp_dir / "daemon-state";
+    EnvGuard daemon_state_env("TS_DAEMON_STATE_DIR", daemon_state_dir.string());
+
+    auto hook_add = parse_command(
+        router,
+        {
+            "events",
+            "hook",
+            "add",
+            "--type",
+            "message.received",
+            "--exec",
+            "printf daemon-hook",
+            "--message-kind",
+            "client",
+        }
+    );
+    tests::expect(hook_add.ok(), "events hook add parse should succeed");
+    auto hook_add_result = router.dispatch(hook_add.value());
+    tests::expect(hook_add_result.ok(), "events hook add dispatch should succeed");
+    const auto hook_add_json = output::render(hook_add_result.value(), output::Format::json);
+    tests::expect_contains(hook_add_json, "\"type\":\"message.received\"", "hook add should return the event type");
+    tests::expect_contains(hook_add_json, "\"message_kind\":\"client\"", "hook add should return the message kind");
+
+    auto hook_list = parse_command(router, {"events", "hook", "list"});
+    tests::expect(hook_list.ok(), "events hook list parse should succeed");
+    auto hook_list_result = router.dispatch(hook_list.value());
+    tests::expect(hook_list_result.ok(), "events hook list dispatch should succeed");
+    const auto hook_list_table = output::render(hook_list_result.value(), output::Format::table);
+    tests::expect_contains(hook_list_table, "message.received", "hook list should include the event type");
+    tests::expect_contains(hook_list_table, "client", "hook list should include the message kind");
+    auto wide_hook_list = parse_command(router, {"events", "hook", "list", "--wide"});
+    tests::expect(wide_hook_list.ok(), "wide events hook list parse should succeed");
+    auto wide_hook_list_result = router.dispatch(wide_hook_list.value());
+    tests::expect(wide_hook_list_result.ok(), "wide events hook list dispatch should succeed");
+    tests::expect_eq(
+        output::render(wide_hook_list_result.value(), output::Format::table),
+        hook_list_table,
+        "wide events hook list should be a no-op because the table already exposes all hook fields"
+    );
+
+    const auto daemon_paths = daemon::state_paths_for(daemon_state_dir);
+    auto appended_inbox = daemon::append_inbox_event(
+        daemon_paths,
+        domain::Event{
+            .type = "message.received",
+            .summary = "received TeamSpeak text message",
+            .at = std::chrono::system_clock::now(),
+            .fields =
+                {
+                    {"from_name", "alice"},
+                    {"message_kind", "client"},
+                    {"text", "hello from inbox"},
+                },
+        }
+    );
+    tests::expect(appended_inbox.ok(), "appending daemon inbox event should succeed");
+
+    auto inbox_command = parse_command(router, {"message", "inbox", "--count", "1"});
+    tests::expect(inbox_command.ok(), "message inbox parse should succeed");
+    auto inbox_result = router.dispatch(inbox_command.value());
+    tests::expect(inbox_result.ok(), "message inbox dispatch should succeed");
+    const auto inbox_table = output::render(inbox_result.value(), output::Format::table);
+    tests::expect_contains(inbox_table, "alice", "message inbox should render the sender");
+    tests::expect_contains(inbox_table, "hello from inbox", "message inbox should render the message text");
+    tests::expect(
+        inbox_table.find("Event") == std::string::npos,
+        "default message inbox table should not include wide columns"
+    );
+    auto wide_inbox_command = parse_command(router, {"message", "inbox", "--count", "1", "--wide"});
+    tests::expect(wide_inbox_command.ok(), "wide message inbox parse should succeed");
+    auto wide_inbox_result = router.dispatch(wide_inbox_command.value());
+    tests::expect(wide_inbox_result.ok(), "wide message inbox dispatch should succeed");
+    const auto wide_inbox_table = output::render(wide_inbox_result.value(), output::Format::table);
+    tests::expect_contains(wide_inbox_table, "Event", "wide message inbox should include event type column");
+    tests::expect_contains(wide_inbox_table, "Summary", "wide message inbox should include summary column");
+    tests::expect_contains(wide_inbox_table, "message.received", "wide message inbox should show event types");
+
+    auto daemon_status = parse_command(router, {"daemon", "status"});
+    tests::expect(daemon_status.ok(), "daemon status parse should succeed");
+    auto daemon_status_result = router.dispatch(daemon_status.value());
+    tests::expect(daemon_status_result.ok(), "daemon status dispatch should succeed");
+    const auto daemon_status_table = output::render(daemon_status_result.value(), output::Format::table);
+    tests::expect_contains(
+        daemon_status_table,
+        "not running",
+        "daemon status should explain when the daemon is not running"
+    );
+
     auto loaded_for_status = config_store.load(config_path);
     tests::expect(loaded_for_status.ok(), "config should load before status error test");
     auto plugin_profile_for_status = config_store.find_profile(loaded_for_status.value(), "plugin-local");
@@ -1856,74 +2060,6 @@ int main() {
         status_error_json,
         "ts client start",
         "status error json should include the client start hint"
-    );
-
-    const fs::path daemon_state_dir = temp_dir / "daemon-state";
-    EnvGuard daemon_state_env("TS_DAEMON_STATE_DIR", daemon_state_dir.string());
-
-    auto hook_add = parse_command(
-        router,
-        {
-            "events",
-            "hook",
-            "add",
-            "--type",
-            "message.received",
-            "--exec",
-            "printf daemon-hook",
-            "--message-kind",
-            "client",
-        }
-    );
-    tests::expect(hook_add.ok(), "events hook add parse should succeed");
-    auto hook_add_result = router.dispatch(hook_add.value());
-    tests::expect(hook_add_result.ok(), "events hook add dispatch should succeed");
-    const auto hook_add_json = output::render(hook_add_result.value(), output::Format::json);
-    tests::expect_contains(hook_add_json, "\"type\":\"message.received\"", "hook add should return the event type");
-    tests::expect_contains(hook_add_json, "\"message_kind\":\"client\"", "hook add should return the message kind");
-
-    auto hook_list = parse_command(router, {"events", "hook", "list"});
-    tests::expect(hook_list.ok(), "events hook list parse should succeed");
-    auto hook_list_result = router.dispatch(hook_list.value());
-    tests::expect(hook_list_result.ok(), "events hook list dispatch should succeed");
-    const auto hook_list_table = output::render(hook_list_result.value(), output::Format::table);
-    tests::expect_contains(hook_list_table, "message.received", "hook list should include the event type");
-    tests::expect_contains(hook_list_table, "client", "hook list should include the message kind");
-
-    const auto daemon_paths = daemon::state_paths_for(daemon_state_dir);
-    auto appended_inbox = daemon::append_inbox_event(
-        daemon_paths,
-        domain::Event{
-            .type = "message.received",
-            .summary = "received TeamSpeak text message",
-            .at = std::chrono::system_clock::now(),
-            .fields =
-                {
-                    {"from_name", "alice"},
-                    {"message_kind", "client"},
-                    {"text", "hello from inbox"},
-                },
-        }
-    );
-    tests::expect(appended_inbox.ok(), "appending daemon inbox event should succeed");
-
-    auto inbox_command = parse_command(router, {"message", "inbox", "--count", "1"});
-    tests::expect(inbox_command.ok(), "message inbox parse should succeed");
-    auto inbox_result = router.dispatch(inbox_command.value());
-    tests::expect(inbox_result.ok(), "message inbox dispatch should succeed");
-    const auto inbox_table = output::render(inbox_result.value(), output::Format::table);
-    tests::expect_contains(inbox_table, "alice", "message inbox should render the sender");
-    tests::expect_contains(inbox_table, "hello from inbox", "message inbox should render the message text");
-
-    auto daemon_status = parse_command(router, {"daemon", "status"});
-    tests::expect(daemon_status.ok(), "daemon status parse should succeed");
-    auto daemon_status_result = router.dispatch(daemon_status.value());
-    tests::expect(daemon_status_result.ok(), "daemon status dispatch should succeed");
-    const auto daemon_status_table = output::render(daemon_status_result.value(), output::Format::table);
-    tests::expect_contains(
-        daemon_status_table,
-        "not running",
-        "daemon status should explain when the daemon is not running"
     );
 
     fs::remove_all(temp_dir);

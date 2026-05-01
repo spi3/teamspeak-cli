@@ -3888,6 +3888,186 @@ auto inbox_table(const std::vector<domain::Event>& events) -> output::Table {
     return table;
 }
 
+auto value_object(const output::ValueHolder& value)
+    -> const std::map<std::string, output::ValueHolder>* {
+    return std::get_if<std::map<std::string, output::ValueHolder>>(&value.value);
+}
+
+auto value_array(const output::ValueHolder& value) -> const std::vector<output::ValueHolder>* {
+    return std::get_if<std::vector<output::ValueHolder>>(&value.value);
+}
+
+auto value_string(const output::ValueHolder& value) -> std::optional<std::string> {
+    if (const auto* text = std::get_if<std::string>(&value.value); text != nullptr) {
+        return *text;
+    }
+    return std::nullopt;
+}
+
+auto object_string_field(
+    const std::map<std::string, output::ValueHolder>& object,
+    std::string_view key,
+    std::string fallback = "-"
+) -> std::string {
+    const auto it = object.find(std::string(key));
+    if (it == object.end()) {
+        return fallback;
+    }
+    return value_string(it->second).value_or(std::move(fallback));
+}
+
+auto object_bool_field(
+    const std::map<std::string, output::ValueHolder>& object,
+    std::string_view key,
+    std::string fallback = "-"
+) -> std::string {
+    const auto it = object.find(std::string(key));
+    if (it == object.end()) {
+        return fallback;
+    }
+    if (const auto* value = std::get_if<bool>(&it->second.value); value != nullptr) {
+        return *value ? "yes" : "no";
+    }
+    return fallback;
+}
+
+auto object_array_field(
+    const std::map<std::string, output::ValueHolder>& object,
+    std::string_view key
+) -> const std::vector<output::ValueHolder>* {
+    const auto it = object.find(std::string(key));
+    if (it == object.end()) {
+        return nullptr;
+    }
+    return value_array(it->second);
+}
+
+auto append_wide_column(
+    output::Table& table,
+    std::string column,
+    const std::vector<std::string>& values
+) -> void {
+    if (values.size() != table.rows.size()) {
+        return;
+    }
+    table.columns.push_back(std::move(column));
+    for (std::size_t index = 0; index < table.rows.size(); ++index) {
+        table.rows[index].push_back(values[index]);
+    }
+}
+
+auto add_array_string_column(
+    output::Table& table,
+    const output::ValueHolder& data,
+    std::string column,
+    std::string_view field
+) -> void {
+    const auto* items = value_array(data);
+    if (items == nullptr) {
+        return;
+    }
+
+    std::vector<std::string> values;
+    values.reserve(items->size());
+    for (const auto& item : *items) {
+        const auto* object = value_object(item);
+        values.push_back(object == nullptr ? "-" : object_string_field(*object, field));
+    }
+    append_wide_column(table, std::move(column), values);
+}
+
+auto add_array_bool_column(
+    output::Table& table,
+    const output::ValueHolder& data,
+    std::string column,
+    std::string_view field
+) -> void {
+    const auto* items = value_array(data);
+    if (items == nullptr) {
+        return;
+    }
+
+    std::vector<std::string> values;
+    values.reserve(items->size());
+    for (const auto& item : *items) {
+        const auto* object = value_object(item);
+        values.push_back(object == nullptr ? "-" : object_bool_field(*object, field));
+    }
+    append_wide_column(table, std::move(column), values);
+}
+
+auto add_channel_clients_wide_columns(output::Table& table, const output::ValueHolder& data) -> void {
+    std::vector<const output::ValueHolder*> group_values;
+    if (const auto* groups = value_array(data); groups != nullptr) {
+        group_values.reserve(groups->size());
+        for (const auto& group : *groups) {
+            group_values.push_back(&group);
+        }
+    } else {
+        group_values.push_back(&data);
+    }
+
+    std::vector<std::string> identities;
+    for (const auto* group_value : group_values) {
+        const auto* group = value_object(*group_value);
+        if (group == nullptr) {
+            continue;
+        }
+        const auto* clients = object_array_field(*group, "clients");
+        if (clients == nullptr || clients->empty()) {
+            identities.push_back("-");
+            continue;
+        }
+        for (const auto& client_value : *clients) {
+            const auto* client = value_object(client_value);
+            identities.push_back(client == nullptr ? "-" : object_string_field(*client, "unique_identity"));
+        }
+    }
+
+    append_wide_column(table, "Unique Identity", identities);
+}
+
+auto add_message_inbox_wide_columns(output::Table& table, const output::ValueHolder& data) -> void {
+    const auto* events = value_array(data);
+    if (events == nullptr) {
+        return;
+    }
+
+    std::vector<std::string> types;
+    std::vector<std::string> summaries;
+    types.reserve(events->size());
+    summaries.reserve(events->size());
+    for (const auto& event_value : *events) {
+        const auto* event = value_object(event_value);
+        types.push_back(event == nullptr ? "-" : object_string_field(*event, "type"));
+        summaries.push_back(event == nullptr ? "-" : object_string_field(*event, "summary"));
+    }
+    append_wide_column(table, "Event", types);
+    append_wide_column(table, "Summary", summaries);
+}
+
+auto apply_wide_table_columns(const ParsedCommand& command, output::CommandOutput& command_output) -> void {
+    if (!command.global.wide || command.global.format != output::Format::table) {
+        return;
+    }
+
+    auto* table = std::get_if<output::Table>(&command_output.human);
+    if (table == nullptr) {
+        return;
+    }
+
+    const std::string path = util::join(command.path, " ");
+    if (path == "channel list") {
+        add_array_bool_column(*table, command_output.data, "Subscribed", "subscribed");
+    } else if (path == "client list") {
+        add_array_string_column(*table, command_output.data, "Unique Identity", "unique_identity");
+    } else if (path == "channel clients") {
+        add_channel_clients_wide_columns(*table, command_output.data);
+    } else if (path == "message inbox") {
+        add_message_inbox_wide_columns(*table, command_output.data);
+    }
+}
+
 auto hook_value(const daemon::Hook& hook) -> output::ValueHolder {
     return output::make_object({
         {"id", output::make_string(hook.id)},
@@ -4087,6 +4267,8 @@ auto top_level_help() -> std::string {
     out << "  --output <table|json|yaml>  yaml is experimental\n";
     out << "  --json\n";
     out << "  --field <path>  extract a scalar field from JSON output\n";
+    out << "  --no-headers  omit table header rows\n";
+    out << "  --wide  add extra columns to supported tables\n";
     out << "  --profile <name>\n";
     out << "  --server <host[:port]>\n";
     out << "  --nickname <name>\n";
@@ -4193,6 +4375,14 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
             parsed.global.field_path = value.value();
             continue;
         }
+        if (token == "--no-headers") {
+            parsed.global.no_headers = true;
+            continue;
+        }
+        if (token == "--wide") {
+            parsed.global.wide = true;
+            continue;
+        }
         if (token == "--profile") {
             auto value = consume_option(index, token);
             if (!value) {
@@ -4294,6 +4484,14 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
             parsed.global.debug = true;
             continue;
         }
+        if (token == "--no-headers") {
+            parsed.global.no_headers = true;
+            continue;
+        }
+        if (token == "--wide") {
+            parsed.global.wide = true;
+            continue;
+        }
         if (token.rfind("--", 0) == 0) {
             const std::string option = token.substr(2);
             const bool takes_value =
@@ -4391,7 +4589,7 @@ auto CommandRouter::render_help(const std::vector<std::string>& path) const -> s
         }
     }
 
-    out << "\nGlobal options: --output (yaml experimental) --json --field --profile --server --nickname --identity --config --verbose --debug --help\n";
+    out << "\nGlobal options: --output (yaml experimental) --json --field --no-headers --wide --profile --server --nickname --identity --config --verbose --debug --help\n";
     return out.str();
 }
 
@@ -5421,7 +5619,9 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
     if (!result) {
         return domain::fail<output::CommandOutput>(contextualize_error(command, result.error()));
     }
-    return result;
+    auto output = result.value();
+    apply_wide_table_columns(command, output);
+    return domain::ok(std::move(output));
 }
 
 }  // namespace teamspeak_cli::cli
