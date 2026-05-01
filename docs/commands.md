@@ -17,6 +17,8 @@ Every command accepts these global flags:
 
 `--json` is shorthand for `--output json`.
 
+See [output-format.md](output-format.md) for the stdout/stderr contract, machine-output guarantees, and JSON examples.
+
 ## Command Groups
 
 ### Core
@@ -120,6 +122,9 @@ These commands stream human-readable progress when output is `table`:
 - `client stop`
 
 The same commands return one structured result at the end when output is `json` or `yaml`.
+
+Table output is human-oriented and is not stable for parsing. Use `--json` for scripts; see
+[output-format.md](output-format.md) for details.
 
 ## Profile And Socket Notes
 

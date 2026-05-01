@@ -6,7 +6,7 @@ This project is not ServerQuery, not WebQuery, and not a standalone TeamSpeak `C
 
 Quick links: [Highlights](#highlights) • [Project Status](#project-status) • [Quick Start](#quick-start) • [Installation](#installation) • [Usage](#usage) • [Configuration](#configuration-and-profiles) • [Development](#development) • [Troubleshooting](#troubleshooting) • [Documentation](#documentation) • [Contributing](CONTRIBUTING.md) • [Security](SECURITY.md) • [License](#license)
 
-Docs: [Architecture](docs/architecture.md) • [Plugin integration](docs/sdk-integration.md) • [Command reference](docs/commands.md) • [Event catalog](docs/events.md) • [Roadmap](docs/roadmap.md) • [Contributing](CONTRIBUTING.md) • [Security](SECURITY.md)
+Docs: [Architecture](docs/architecture.md) • [Plugin integration](docs/sdk-integration.md) • [Command reference](docs/commands.md) • [Output format](docs/output-format.md) • [Event catalog](docs/events.md) • [Roadmap](docs/roadmap.md) • [Contributing](CONTRIBUTING.md) • [Security](SECURITY.md)
 
 ## Highlights
 
@@ -224,6 +224,8 @@ ts message inbox --count 20
 See [docs/events.md](docs/events.md) for the supported event types, backend availability, payload fields, and the
 separate media bridge event surface.
 
+See [docs/output-format.md](docs/output-format.md) for the stdout/stderr and machine-output contract.
+
 ## Configuration And Profiles
 
 `ts` uses an INI config file.
@@ -420,6 +422,7 @@ If `make test-e2e` fails after the client starts:
 - [Architecture](docs/architecture.md)
 - [Plugin integration](docs/sdk-integration.md)
 - [Command reference](docs/commands.md)
+- [Output format](docs/output-format.md)
 - [Event catalog](docs/events.md)
 - [Roadmap](docs/roadmap.md)
 
