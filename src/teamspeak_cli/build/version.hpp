@@ -1,5 +1,5 @@
 #pragma once
 
 #ifndef TSCLI_VERSION
-#define TSCLI_VERSION "0.7.2"
+#define TSCLI_VERSION "0.8.0"
 #endif
