@@ -1088,6 +1088,11 @@ ts3_runtime_ensure_pulseaudio_system_dependencies() {
 }
 
 ts3_runtime_prepare_pulseaudio_runtime() {
+  if [[ "${TS3_RUNTIME_MOCK_PULSEAUDIO:-0}" == "1" ]]; then
+    ts3_runtime_log "using mocked PulseAudio-compatible audio runtime"
+    return 0
+  fi
+
   ts3_runtime_ensure_pulseaudio_system_dependencies
 
   if ! command -v pactl >/dev/null 2>&1; then

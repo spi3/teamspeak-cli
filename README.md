@@ -290,7 +290,7 @@ Leave `control_socket_path=` blank unless you intentionally want to pin one fixe
 - `make build-mock`: build the offline development tree
 - `make test-mock`: run the offline suite
 - `make build`: build the TeamSpeak-backed tree and bootstrap managed dependencies
-- `make test`: run the default automated suite without the Docker/`Xvfb` E2E case
+- `make test`: run the default automated suite without the Docker/`Xvfb` E2E case; this mocks PulseAudio bootstrap instead of installing host audio packages
 - `make test-e2e`: run the TeamSpeak-backed local integration harness
 - `make env-up`, `make env-info`, `make env-down`: keep the TeamSpeak-backed environment running for manual checks
 

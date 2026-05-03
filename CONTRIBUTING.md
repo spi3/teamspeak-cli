@@ -32,7 +32,7 @@ Common commands:
 - `make build-mock`: build the offline development tree
 - `make test-mock`: run the offline suite
 - `make build`: build the TeamSpeak-backed tree and bootstrap managed dependencies
-- `make test`: run the default automated suite without the Docker/`Xvfb` E2E case
+- `make test`: run the default automated suite without the Docker/`Xvfb` E2E case; this mocks PulseAudio bootstrap instead of installing host audio packages
 - `make test-e2e`: run the TeamSpeak-backed local integration harness
 
 If you use raw CMake, remember that plugin builds are opt-in with `-DTS_ENABLE_TS3_PLUGIN=ON`.

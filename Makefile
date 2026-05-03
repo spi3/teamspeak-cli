@@ -32,6 +32,7 @@ TS3_CLIENT_URL ?=
 TS3_CLIENT_SHA256 ?=
 TS3_XDOTOOL ?=
 TS3_XDOTOOL_LIBRARY_PATH ?=
+TS3_RUNTIME_MOCK_PULSEAUDIO ?=
 
 ENV_STATE_REF ?= $(TS3_MANAGED_DIR)/env.state
 ENV_OUTPUT_REF ?= $(TS3_MANAGED_DIR)/env.output
@@ -56,6 +57,7 @@ define bootstrap_runtime_deps
 	TS3_CLIENT_SHA256="$(TS3_CLIENT_SHA256)" \
 	TS3_XDOTOOL="$(TS3_XDOTOOL)" \
 	TS3_XDOTOOL_LIBRARY_PATH="$(TS3_XDOTOOL_LIBRARY_PATH)" \
+	TS3_RUNTIME_MOCK_PULSEAUDIO="$(TS3_RUNTIME_MOCK_PULSEAUDIO)" \
 	./tests/e2e/bootstrap_runtime_deps.sh
 endef
 
@@ -118,6 +120,7 @@ configure: deps ## Configure the default TeamSpeak-backed build in ./build
 build: configure ## Build the default TeamSpeak-backed tree
 	$(CMAKE) --build $(BUILD_DIR)
 
+test: TS3_RUNTIME_MOCK_PULSEAUDIO=1
 test: build ## Run the default automated suite without the Docker/Xvfb E2E case
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure -E ts_plugin_server_e2e_test
 

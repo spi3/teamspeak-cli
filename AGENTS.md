@@ -21,7 +21,7 @@ Prefer the top-level `Makefile` unless you specifically need raw CMake control:
 - `make build-mock` to build the offline development path
 - `make test-mock` to run the offline suite
 - `make build` to build the TeamSpeak-backed tree and bootstrap managed dependencies
-- `make test` to run the default automated suite without the Docker and `Xvfb` E2E case
+- `make test` to run the default automated suite without the Docker and `Xvfb` E2E case; this path mocks PulseAudio bootstrap instead of installing host audio packages
 - `make test-e2e` to run the TeamSpeak-backed local integration harness
 - `./scripts/install.sh` for a user-level install
 - `./scripts/uninstall.sh` or `ts-uninstall` to remove a user-level install

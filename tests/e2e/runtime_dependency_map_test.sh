@@ -85,6 +85,13 @@ mapfile -t missing_pulseaudio_system_packages < <(
 )
 [[ "${missing_pulseaudio_system_packages[*]}" == "" ]]
 
+pulseaudio_mock_path="${tmp_dir}/pulseaudio-mock-path"
+mkdir -p "${pulseaudio_mock_path}"
+(
+  PATH="${pulseaudio_mock_path}"
+  TS3_RUNTIME_MOCK_PULSEAUDIO=1 ts3_runtime_prepare_pulseaudio_runtime
+)
+
 mapfile -t asound_packages < <(ts3_runtime_client_packages_for_soname "libasound.so.2")
 [[ "${asound_packages[*]}" == "libasound2 libasound2t64" ]]
 
