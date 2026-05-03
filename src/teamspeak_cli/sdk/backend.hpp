@@ -50,6 +50,7 @@ class Backend {
     virtual auto rename_channel(const domain::Selector& selector, std::string_view name)
         -> domain::Result<domain::Channel> = 0;
     virtual auto set_self_muted(bool muted) -> domain::Result<void> = 0;
+    virtual auto set_self_speakers_muted(bool muted) -> domain::Result<void> = 0;
     virtual auto set_self_away(bool away, std::string_view message) -> domain::Result<void> = 0;
     virtual auto send_message(const domain::MessageRequest& request) -> domain::Result<void> = 0;
     virtual auto apply_server_group(const domain::ServerGroupApplicationRequest& request)

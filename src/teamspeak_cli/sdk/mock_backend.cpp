@@ -145,6 +145,7 @@ auto MockBackend::initialize(const InitOptions& options) -> domain::Result<void>
         state_.phase = domain::ConnectionPhase::connected;
         state_.connection = {42};
         self_muted_ = false;
+        self_speakers_muted_ = false;
         self_away_ = false;
         self_away_message_.clear();
     }
@@ -179,6 +180,7 @@ auto MockBackend::connect(const ConnectRequest& request) -> domain::Result<void>
         state_.identity = request.identity.empty() ? "mock-generated-identity" : request.identity;
         state_.profile = request.profile_name;
         self_muted_ = false;
+        self_speakers_muted_ = false;
         self_away_ = false;
         self_away_message_.clear();
 
@@ -220,6 +222,7 @@ auto MockBackend::disconnect(std::string_view reason) -> domain::Result<void> {
     state_.phase = domain::ConnectionPhase::disconnected;
     state_.connection = {0};
     self_muted_ = false;
+    self_speakers_muted_ = false;
     self_away_ = false;
     self_away_message_.clear();
     events_.push(now_event("connection.disconnected", std::string(reason)));
@@ -360,6 +363,25 @@ auto MockBackend::set_self_muted(bool muted) -> domain::Result<void> {
     events_.push(now_event(
         "client.self_muted",
         muted ? "muted own microphone" : "unmuted own microphone",
+        {{"muted", muted ? "true" : "false"}}
+    ));
+    return domain::ok();
+}
+
+auto MockBackend::set_self_speakers_muted(bool muted) -> domain::Result<void> {
+    const auto connected = require_connected();
+    if (!connected) {
+        return domain::fail(connected.error());
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        self_speakers_muted_ = muted;
+    }
+
+    events_.push(now_event(
+        "client.self_speakers_muted",
+        muted ? "muted own speakers" : "unmuted own speakers",
         {{"muted", muted ? "true" : "false"}}
     ));
     return domain::ok();

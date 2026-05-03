@@ -49,6 +49,7 @@ All `fields` values are strings. Field sets can differ by backend because the mo
 | `channel.joined` | no | yes | yes | no | no |
 | `channel.updated` | no | yes | yes | no | no |
 | `client.self_muted` | no | yes | yes | no | no |
+| `client.self_speakers_muted` | no | yes | yes | no | no |
 | `client.self_away` | no | yes | yes | no | no |
 | `message.sent` | no | yes | yes | no | no |
 | `heartbeat` | no | yes | yes | no | no |
@@ -99,6 +100,7 @@ These events come from the deterministic mock backend used by `mock-local`, test
 | `channel.updated` | The mock background event loop reported channel activity. | `channel_id`, `client_count` |
 | `client.talking` | The mock background event loop reported a talking client. | `client_id`, `nickname` |
 | `client.self_muted` | The mock local user mute state changed. | `muted` |
+| `client.self_speakers_muted` | The mock local speaker mute state changed. | `muted` |
 | `client.self_away` | The mock local user away state changed. | `away`, `message` |
 | `message.sent` | The mock backend accepted an outgoing message command. | `target_kind`, `target`, `text` |
 | `message.received` | The mock background event loop reported an incoming channel message. | `from`, `channel_id`, `text` |

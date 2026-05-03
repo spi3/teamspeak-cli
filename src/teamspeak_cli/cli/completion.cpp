@@ -4,7 +4,8 @@ namespace teamspeak_cli::cli::completion {
 namespace {
 
 constexpr const char* kTopLevelCommands =
-    "version update plugin sdk daemon config profile connect disconnect mute unmute away back status server channel client message playback events completion";
+    "version update plugin sdk daemon config profile connect disconnect mute unmute speakers away back status server "
+    "channel client message playback events completion";
 
 constexpr const char* kGlobalFlags =
     "--help --output --json --field --no-headers --wide --profile --server --nickname --identity --config --verbose --debug";
@@ -59,6 +60,7 @@ auto generate(const std::string& shell) -> domain::Result<std::string> {
         script +=
             "\" -- \"$cur\") ) ;;\n"
             "    server) COMPREPLY=( $(compgen -W \"info --help\" -- \"$cur\") ) ;;\n"
+            "    speakers) COMPREPLY=( $(compgen -W \"mute unmute --help\" -- \"$cur\") ) ;;\n"
             "    channel) COMPREPLY=( $(compgen -W \"list clients get join --help\" -- \"$cur\") ) ;;\n"
             "    client) COMPREPLY=( $(compgen -W \"status start inspect-windows stop logs list get --accept-license --force --count --help\" -- \"$cur\") ) ;;\n"
             "    message) COMPREPLY=( $(compgen -W \"send inbox --target --id --text --count --help\" -- \"$cur\") ) ;;\n"
@@ -142,6 +144,7 @@ auto generate(const std::string& shell) -> domain::Result<std::string> {
         script += kProfileCompletions;
         script +=
             "'\n"
+            "complete -c ts -n '__fish_seen_subcommand_from speakers' -a 'mute unmute --help'\n"
             "complete -c ts -n '__fish_seen_subcommand_from completion' -a '";
         script += kCompletionShells;
         script += "'\n";
@@ -167,6 +170,7 @@ auto generate(const std::string& shell) -> domain::Result<std::string> {
         script += profile_words;
         script +=
             "' -split ' ' }\n"
+            "      'speakers' { $items = 'mute unmute --help' -split ' ' }\n"
             "      'completion' { $items = '";
         script += kCompletionShells;
         script +=

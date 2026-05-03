@@ -254,6 +254,10 @@ auto SessionService::set_self_muted(bool muted) -> domain::Result<void> {
     return backend_->set_self_muted(muted);
 }
 
+auto SessionService::set_self_speakers_muted(bool muted) -> domain::Result<void> {
+    return backend_->set_self_speakers_muted(muted);
+}
+
 auto SessionService::set_self_away(bool away, std::string_view message) -> domain::Result<void> {
     return backend_->set_self_away(away, message);
 }

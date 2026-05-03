@@ -172,6 +172,10 @@ class CountingBackend final : public sdk::Backend {
         return domain::fail(counting_backend_error("set_self_muted"));
     }
 
+    auto set_self_speakers_muted(bool) -> domain::Result<void> override {
+        return domain::fail(counting_backend_error("set_self_speakers_muted"));
+    }
+
     auto set_self_away(bool, std::string_view) -> domain::Result<void> override {
         return domain::fail(counting_backend_error("set_self_away"));
     }
@@ -320,6 +324,9 @@ int main() {
 
     auto muted = backend.set_self_muted(true);
     tests::expect(muted.ok(), "set_self_muted should succeed");
+
+    auto speakers_muted = backend.set_self_speakers_muted(true);
+    tests::expect(speakers_muted.ok(), "set_self_speakers_muted should succeed");
 
     auto away = backend.set_self_away(true, "Lunch");
     tests::expect(away.ok(), "set_self_away should succeed");

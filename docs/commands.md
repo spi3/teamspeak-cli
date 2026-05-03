@@ -40,6 +40,8 @@ See [output-format.md](output-format.md) for the stdout/stderr contract, stable 
 - `ts disconnect`
 - `ts mute`
 - `ts unmute`
+- `ts speakers mute`
+- `ts speakers unmute`
 - `ts away [--message "<text>"]`
 - `ts back`
 - `ts status`
@@ -112,6 +114,7 @@ and the boundary between domain events and media bridge frames.
 - `connect` waits for completion for up to 15 seconds.
 - `disconnect` waits for completion for up to 10 seconds.
 - `mute` and `unmute` update your own TeamSpeak microphone mute state.
+- `speakers mute` and `speakers unmute` update your own TeamSpeak speaker mute state without changing the microphone mute command.
 - `away` sets your own TeamSpeak away status and optionally an away message.
 - `back` clears your own TeamSpeak away status and any away message set through `ts away`.
 - `channel rename` updates a channel name when the active user has permission to edit that channel.

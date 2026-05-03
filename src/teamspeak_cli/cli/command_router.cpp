@@ -140,6 +140,9 @@ const std::vector<CommandDoc>& command_docs() {
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"mute"}, "ts mute", "Mute your TeamSpeak microphone", {}},
         {{"unmute"}, "ts unmute", "Unmute your TeamSpeak microphone", {}},
+        {{"speakers"}, "ts speakers <subcommand>", "Manage your TeamSpeak speaker mute state", {}},
+        {{"speakers", "mute"}, "ts speakers mute", "Mute your TeamSpeak speakers", {}},
+        {{"speakers", "unmute"}, "ts speakers unmute", "Unmute your TeamSpeak speakers", {}},
         {
             {"away"},
             "ts away [--message <text>]",
@@ -436,6 +439,12 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     }
     if (path == "unmute") {
         return "unmute your TeamSpeak microphone";
+    }
+    if (path == "speakers mute") {
+        return "mute your TeamSpeak speakers";
+    }
+    if (path == "speakers unmute") {
+        return "unmute your TeamSpeak speakers";
     }
     if (path == "away") {
         return "set your TeamSpeak away status";
@@ -6406,6 +6415,44 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                         {"muted", output::make_bool(false)},
                     }),
                     .human = std::string("Unmuted your TeamSpeak microphone."),
+                });
+            });
+        }
+
+        if (path == "speakers mute") {
+            const auto unexpected = reject_unexpected_positionals(command, 0);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto muted = session.set_self_speakers_muted(true);
+                if (!muted) {
+                    return domain::fail<output::CommandOutput>(muted.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"muted", output::make_bool(true)},
+                    }),
+                    .human = std::string("Muted your TeamSpeak speakers."),
+                });
+            });
+        }
+
+        if (path == "speakers unmute") {
+            const auto unexpected = reject_unexpected_positionals(command, 0);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
+                auto muted = session.set_self_speakers_muted(false);
+                if (!muted) {
+                    return domain::fail<output::CommandOutput>(muted.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::make_object({
+                        {"muted", output::make_bool(false)},
+                    }),
+                    .human = std::string("Unmuted your TeamSpeak speakers."),
                 });
             });
         }

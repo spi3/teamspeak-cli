@@ -65,7 +65,7 @@ The plugin target:
 
 - receives the TeamSpeak client function table through `ts3plugin_setFunctionPointers`
 - starts the local bridge server in `ts3plugin_init`
-- exposes status, channel, client, join, self mute, away, message, and event operations to the CLI
+- exposes status, channel, client, join, self microphone mute, self speaker mute, away, message, and event operations to the CLI
 - translates selected TeamSpeak callbacks into domain events for `ts events watch`
 - exposes a dedicated media bridge for speaker events, ingress voice chunks, and half-duplex playback injection
   through a plugin-managed custom capture device

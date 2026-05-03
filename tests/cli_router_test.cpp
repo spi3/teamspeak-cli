@@ -148,6 +148,11 @@ int main() {
     tests::expect_contains(help, "--no-headers", "top-level help should list no-header table output");
     tests::expect_contains(help, "--wide", "top-level help should list wide table output");
     tests::expect_contains(help, "mute  Mute your TeamSpeak microphone", "top-level help should list mute");
+    tests::expect_contains(
+        help,
+        "speakers  Manage your TeamSpeak speaker mute state",
+        "top-level help should list speakers"
+    );
     tests::expect_contains(help, "away  Set your TeamSpeak status to away", "top-level help should list away");
     tests::expect_contains(
         help,
@@ -247,6 +252,15 @@ int main() {
         "client help should include the client logs example"
     );
 
+    const std::string speakers_help = router.render_help({"speakers"});
+    tests::expect_contains(speakers_help, "ts speakers <subcommand>", "speakers help usage");
+    tests::expect_contains(speakers_help, "mute  Mute your TeamSpeak speakers", "speakers help should list mute");
+    tests::expect_contains(
+        speakers_help,
+        "unmute  Unmute your TeamSpeak speakers",
+        "speakers help should list unmute"
+    );
+
     const std::string playback_help = router.render_help({"playback"});
     tests::expect_contains(
         playback_help,
@@ -310,7 +324,8 @@ int main() {
     );
 
     const std::vector<std::string> grouped_commands = {
-        "plugin", "sdk", "config", "profile", "server", "channel", "client", "message", "playback", "events"
+        "plugin", "sdk", "config", "profile", "speakers", "server",
+        "channel", "client", "message", "playback", "events",
     };
     for (const auto& grouped_command : grouped_commands) {
         auto grouped = parse_command(router, {grouped_command});
@@ -1380,6 +1395,23 @@ int main() {
         "mute table should summarize the action"
     );
 
+    auto speakers_mute_command = parse_command(
+        router, {"speakers", "mute", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(speakers_mute_command.ok(), "speakers mute parse should succeed");
+    auto speakers_mute_result = router.dispatch(speakers_mute_command.value());
+    tests::expect(speakers_mute_result.ok(), "speakers mute dispatch should succeed");
+    tests::expect_contains(
+        output::render(speakers_mute_result.value(), output::Format::json),
+        "\"muted\":true",
+        "speakers mute json should report muted"
+    );
+    tests::expect_contains(
+        output::render(speakers_mute_result.value(), output::Format::table),
+        "Muted your TeamSpeak speakers.",
+        "speakers mute table should summarize the action"
+    );
+
     auto away_command = parse_command(
         router,
         {"away", "--message", "In a meeting", "--profile", "mock-local", "--config", config_path.string()}
@@ -1427,6 +1459,18 @@ int main() {
         output::render(unmute_result.value(), output::Format::json),
         "\"muted\":false",
         "unmute json should report unmuted"
+    );
+
+    auto speakers_unmute_command = parse_command(
+        router, {"speakers", "unmute", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(speakers_unmute_command.ok(), "speakers unmute parse should succeed");
+    auto speakers_unmute_result = router.dispatch(speakers_unmute_command.value());
+    tests::expect(speakers_unmute_result.ok(), "speakers unmute dispatch should succeed");
+    tests::expect_contains(
+        output::render(speakers_unmute_result.value(), output::Format::json),
+        "\"muted\":false",
+        "speakers unmute json should report unmuted"
     );
 
     auto invalid_message = parse_command(

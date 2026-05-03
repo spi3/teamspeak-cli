@@ -537,6 +537,24 @@ void SocketBridgeServer::handle_client(int client_fd) {
         return;
     }
 
+    if (command == "set_self_speakers_muted") {
+        if (fields.size() != 3 || (fields[2] != "0" && fields[2] != "1")) {
+            send_error(client_fd, bridge_error(
+                "invalid_request",
+                "set_self_speakers_muted expects a boolean argument",
+                domain::ExitCode::usage
+            ));
+            return;
+        }
+        auto updated = backend_->set_self_speakers_muted(fields[2] == "1");
+        if (!updated) {
+            send_error(client_fd, updated.error());
+            return;
+        }
+        send_ok(client_fd, "void", {});
+        return;
+    }
+
     if (command == "set_self_away") {
         if (fields.size() != 4 || (fields[2] != "0" && fields[2] != "1")) {
             send_error(client_fd, bridge_error(

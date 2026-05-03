@@ -56,6 +56,7 @@ class SessionService {
     auto rename_channel(const domain::Selector& selector, std::string_view name)
         -> domain::Result<domain::Channel>;
     auto set_self_muted(bool muted) -> domain::Result<void>;
+    auto set_self_speakers_muted(bool muted) -> domain::Result<void>;
     auto set_self_away(bool away, std::string_view message) -> domain::Result<void>;
     auto send_message(const domain::MessageRequest& request) -> domain::Result<void>;
     auto apply_server_group(const domain::ServerGroupApplicationRequest& request)

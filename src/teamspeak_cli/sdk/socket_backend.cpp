@@ -500,6 +500,22 @@ auto SocketBackend::set_self_muted(bool muted) -> domain::Result<void> {
     return expect_type(response.value(), "void");
 }
 
+auto SocketBackend::set_self_speakers_muted(bool muted) -> domain::Result<void> {
+    auto response = exchange(
+        muted ? "mute your TeamSpeak speakers" : "unmute your TeamSpeak speakers",
+        {
+            std::string(bridge::protocol::kMagic),
+            "set_self_speakers_muted",
+            muted ? "1" : "0",
+        },
+        command_timeout()
+    );
+    if (!response) {
+        return domain::fail(response.error());
+    }
+    return expect_type(response.value(), "void");
+}
+
 auto SocketBackend::set_self_away(bool away, std::string_view message) -> domain::Result<void> {
     auto response = exchange(
         away ? "set your TeamSpeak away status" : "clear your TeamSpeak away status",

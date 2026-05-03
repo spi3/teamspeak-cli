@@ -125,6 +125,12 @@ class StuckConnectingBackend final : public teamspeak_cli::sdk::Backend {
         ));
     }
 
+    auto set_self_speakers_muted(bool) -> teamspeak_cli::domain::Result<void> override {
+        return teamspeak_cli::domain::fail(stub_error(
+            "unsupported", "set_self_speakers_muted is not used by this test backend"
+        ));
+    }
+
     auto set_self_away(bool, std::string_view) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "set_self_away is not used by this test backend"
@@ -283,6 +289,12 @@ class FailedConnectionBackend final : public teamspeak_cli::sdk::Backend {
         ));
     }
 
+    auto set_self_speakers_muted(bool) -> teamspeak_cli::domain::Result<void> override {
+        return teamspeak_cli::domain::fail(stub_error(
+            "unsupported", "set_self_speakers_muted is not used by this test backend"
+        ));
+    }
+
     auto set_self_away(bool, std::string_view) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "set_self_away is not used by this test backend"
@@ -427,6 +439,12 @@ class PollingConnectedBackend final : public teamspeak_cli::sdk::Backend {
     auto set_self_muted(bool) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "set_self_muted is not used by this test backend"
+        ));
+    }
+
+    auto set_self_speakers_muted(bool) -> teamspeak_cli::domain::Result<void> override {
+        return teamspeak_cli::domain::fail(stub_error(
+            "unsupported", "set_self_speakers_muted is not used by this test backend"
         ));
     }
 

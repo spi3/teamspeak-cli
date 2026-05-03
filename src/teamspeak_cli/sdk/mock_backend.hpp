@@ -35,6 +35,7 @@ class MockBackend final : public Backend, public bridge::MediaBridgeHost, public
     auto rename_channel(const domain::Selector& selector, std::string_view name)
         -> domain::Result<domain::Channel> override;
     auto set_self_muted(bool muted) -> domain::Result<void> override;
+    auto set_self_speakers_muted(bool muted) -> domain::Result<void> override;
     auto set_self_away(bool away, std::string_view message) -> domain::Result<void> override;
     auto send_message(const domain::MessageRequest& request) -> domain::Result<void> override;
     auto apply_server_group(const domain::ServerGroupApplicationRequest& request)
@@ -67,6 +68,7 @@ class MockBackend final : public Backend, public bridge::MediaBridgeHost, public
     InitOptions options_;
     bool initialized_ = false;
     bool self_muted_ = false;
+    bool self_speakers_muted_ = false;
     bool self_away_ = false;
     std::string self_away_message_;
     std::jthread event_thread_;

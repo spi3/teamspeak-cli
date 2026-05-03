@@ -476,6 +476,32 @@ int main() {
     auto initialized = backend.initialize(sdk::InitOptions{});
     tests::expect(initialized.ok(), "plugin host backend should initialize with fake TeamSpeak functions");
 
+    auto speakers_muted = backend.set_self_speakers_muted(true);
+    tests::expect(speakers_muted.ok(), "plugin backend should mute TeamSpeak speakers");
+    auto speakers_unmuted = backend.set_self_speakers_muted(false);
+    tests::expect(speakers_unmuted.ok(), "plugin backend should unmute TeamSpeak speakers");
+    {
+        auto& state = host_state();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        tests::expect_eq(
+            state.self_variable_updates[0],
+            std::make_pair<std::size_t, int>(CLIENT_OUTPUTONLY_MUTED, MUTEOUTPUT_MUTED),
+            "speaker mute should set the output-only mute flag"
+        );
+        tests::expect_eq(
+            state.self_variable_updates[1],
+            std::make_pair<std::size_t, int>(CLIENT_OUTPUTONLY_MUTED, MUTEOUTPUT_NONE),
+            "speaker unmute should clear the output-only mute flag"
+        );
+        tests::expect_eq(
+            state.flush_client_self_updates_calls,
+            2,
+            "speaker mute changes should be flushed to TeamSpeak"
+        );
+        state.self_variable_updates.clear();
+        state.flush_client_self_updates_calls = 0;
+    }
+
     auto initial_info = backend.plugin_info();
     tests::expect(initial_info.ok(), "plugin info should expose media diagnostics");
     tests::expect_eq(

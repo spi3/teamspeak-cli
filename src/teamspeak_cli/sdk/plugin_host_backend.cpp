@@ -981,6 +981,45 @@ auto PluginHostBackend::set_self_muted(bool muted) -> domain::Result<void> {
     return domain::ok();
 }
 
+auto PluginHostBackend::set_self_speakers_muted(bool muted) -> domain::Result<void> {
+    auto handler_id = resolve_handler_id(true);
+    if (!handler_id) {
+        return domain::fail(handler_id.error());
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+
+    if (functions.setClientSelfVariableAsInt == nullptr || functions.flushClientSelfUpdates == nullptr) {
+        return domain::fail(backend_error(
+            "client_self_update_unavailable",
+            "TeamSpeak self-update functions are not available in the loaded plugin host"
+        ));
+    }
+
+    const unsigned int set_error = functions.setClientSelfVariableAsInt(
+        handler_id.value(), CLIENT_OUTPUTONLY_MUTED, muted ? MUTEOUTPUT_MUTED : MUTEOUTPUT_NONE
+    );
+    if (!ts3_call_succeeded(set_error)) {
+        return domain::fail(translate_error(set_error, "failed to update TeamSpeak speaker mute state"));
+    }
+
+    const unsigned int flush_error = functions.flushClientSelfUpdates(handler_id.value(), nullptr);
+    if (!ts3_call_succeeded(flush_error)) {
+        return domain::fail(translate_error(flush_error, "failed to flush TeamSpeak speaker mute update"));
+    }
+
+    return domain::ok();
+}
+
 auto PluginHostBackend::set_self_away(bool away, std::string_view message) -> domain::Result<void> {
     auto handler_id = resolve_handler_id(true);
     if (!handler_id) {
