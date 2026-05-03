@@ -495,6 +495,32 @@ void SocketBridgeServer::handle_client(int client_fd) {
         return;
     }
 
+    if (command == "rename_channel") {
+        if (fields.size() != 4) {
+            send_error(client_fd, bridge_error(
+                "invalid_request", "rename_channel expects 2 arguments", domain::ExitCode::usage
+            ));
+            return;
+        }
+        auto selector = decode_hex_arg(fields, 2, "selector");
+        auto name = decode_hex_arg(fields, 3, "name");
+        if (!selector) {
+            send_error(client_fd, selector.error());
+            return;
+        }
+        if (!name) {
+            send_error(client_fd, name.error());
+            return;
+        }
+        auto channel = backend_->rename_channel(domain::Selector{selector.value()}, name.value());
+        if (!channel) {
+            send_error(client_fd, channel.error());
+            return;
+        }
+        send_ok(client_fd, "channel", {protocol::encode(channel.value())});
+        return;
+    }
+
     if (command == "set_self_muted") {
         if (fields.size() != 3 || (fields[2] != "0" && fields[2] != "1")) {
             send_error(client_fd, bridge_error(
@@ -595,6 +621,53 @@ void SocketBridgeServer::handle_client(int client_fd) {
             return;
         }
         send_ok(client_fd, "void", {});
+        return;
+    }
+
+    if (command == "apply_server_group") {
+        if (fields.size() != 5) {
+            send_error(client_fd, bridge_error(
+                "invalid_request", "apply_server_group expects 3 arguments", domain::ExitCode::usage
+            ));
+            return;
+        }
+        auto group = decode_hex_arg(fields, 2, "group");
+        auto target = decode_hex_arg(fields, 4, "target");
+        if (!group) {
+            send_error(client_fd, group.error());
+            return;
+        }
+        if (!target) {
+            send_error(client_fd, target.error());
+            return;
+        }
+
+        domain::ServerGroupApplicationRequest request{};
+        request.group = group.value();
+        if (fields[3] == "client") {
+            request.client = target.value();
+        } else if (fields[3] == "client_database_id") {
+            const auto parsed = util::parse_u64(target.value());
+            if (!parsed.has_value()) {
+                send_error(client_fd, bridge_error(
+                    "invalid_argument", "invalid client database id", domain::ExitCode::usage
+                ));
+                return;
+            }
+            request.client_database_id = domain::ClientDatabaseId{*parsed};
+        } else {
+            send_error(client_fd, bridge_error(
+                "invalid_target", "invalid server group target", domain::ExitCode::usage
+            ));
+            return;
+        }
+
+        auto applied = backend_->apply_server_group(request);
+        if (!applied) {
+            send_error(client_fd, applied.error());
+            return;
+        }
+        send_ok(client_fd, "server_group_application", protocol::encode(applied.value()));
         return;
     }
 

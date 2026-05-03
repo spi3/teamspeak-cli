@@ -206,6 +206,20 @@ int main() {
     tests::expect_contains(channel_help, "Subcommands:", "channel help should list subcommands");
     tests::expect_contains(channel_help, "ts channel list", "channel help should include examples");
     tests::expect_contains(channel_help, "ts channel clients [id-or-name]", "channel help should include channel clients");
+    tests::expect_contains(channel_help, "rename  Rename a channel", "channel help should include channel rename");
+
+    const std::string server_help = router.render_help({"server"});
+    tests::expect_contains(
+        server_help,
+        "group  Manage server group assignments",
+        "server help should list server group commands"
+    );
+    const std::string server_group_apply_help = router.render_help({"server", "group", "apply"});
+    tests::expect_contains(
+        server_group_apply_help,
+        "--client-db-id <id>  Client database ID to receive the group. (accepted: positive integer)",
+        "server group apply help should describe direct database id targeting"
+    );
 
     const std::string profile_help = router.render_help({"profile"});
     tests::expect_contains(profile_help, "create  Create a config profile", "profile help should list profile create");
@@ -365,6 +379,29 @@ int main() {
     tests::expect(parsed_table_options.ok(), "table option parse should succeed after the command");
     tests::expect(parsed_table_options.value().global.no_headers, "no-headers should be stored globally");
     tests::expect(parsed_table_options.value().global.wide, "wide should be stored globally");
+
+    auto parsed_channel_rename = parse_command(router, {"channel", "rename", "Engineering", "--name", "Platform"});
+    tests::expect(parsed_channel_rename.ok(), "channel rename parse should succeed");
+    tests::expect_eq(
+        parsed_channel_rename.value().options.at("name"),
+        std::string("Platform"),
+        "channel rename should parse the new channel name"
+    );
+
+    auto parsed_server_group_apply = parse_command(
+        router, {"server", "group", "apply", "--group", "Operator", "--client", "alice"}
+    );
+    tests::expect(parsed_server_group_apply.ok(), "server group apply parse should succeed");
+    tests::expect_eq(
+        parsed_server_group_apply.value().options.at("group"),
+        std::string("Operator"),
+        "server group apply should parse the group option"
+    );
+    tests::expect_eq(
+        parsed_server_group_apply.value().options.at("client"),
+        std::string("alice"),
+        "server group apply should parse the client option"
+    );
 
     auto parsed_json_table_options = parse_command(router, {"--json", "channel", "list", "--wide", "--no-headers"});
     tests::expect(parsed_json_table_options.ok(), "json output should accept table options");
@@ -966,6 +1003,26 @@ int main() {
         "no-header channel list table should keep rows"
     );
 
+    auto rename_channel = parse_command(
+        router,
+        {"channel", "rename", "Engineering", "--name", "Platform", "--profile", "mock-local", "--config", config_path.string()}
+    );
+    tests::expect(rename_channel.ok(), "channel rename command parse should succeed");
+    auto rename_channel_result = router.dispatch(rename_channel.value());
+    tests::expect(rename_channel_result.ok(), "channel rename dispatch should succeed");
+    const auto rename_channel_json = output::render(rename_channel_result.value(), output::Format::json);
+    tests::expect_contains(rename_channel_json, "\"id\":\"2\"", "channel rename json should include the channel id");
+    tests::expect_contains(
+        rename_channel_json,
+        "\"name\":\"Platform\"",
+        "channel rename json should include the new channel name"
+    );
+    tests::expect_contains(
+        output::render(rename_channel_result.value(), output::Format::table),
+        "Renamed channel 2 to Platform.",
+        "channel rename table should summarize the rename"
+    );
+
     auto json_client_list = parse_command(
         router, {"client", "list", "--profile", "mock-local", "--config", config_path.string()}
     );
@@ -1005,6 +1062,82 @@ int main() {
         output::render(wide_client_list_result.value(), output::Format::json),
         expected_client_list_json,
         "wide client list json should remain unchanged"
+    );
+
+    auto apply_server_group = parse_command(
+        router,
+        {
+            "server",
+            "group",
+            "apply",
+            "--group",
+            "Operator",
+            "--client",
+            "alice",
+            "--profile",
+            "mock-local",
+            "--config",
+            config_path.string(),
+        }
+    );
+    tests::expect(apply_server_group.ok(), "server group apply command parse should succeed");
+    auto apply_server_group_result = router.dispatch(apply_server_group.value());
+    tests::expect(apply_server_group_result.ok(), "server group apply dispatch should succeed");
+    const auto apply_server_group_json = output::render(apply_server_group_result.value(), output::Format::json);
+    tests::expect_contains(
+        apply_server_group_json,
+        "\"result\":\"applied\"",
+        "server group apply json should report success"
+    );
+    tests::expect_contains(
+        apply_server_group_json,
+        "\"server_group\":{\"id\":\"7\",\"name\":\"Operator\"}",
+        "server group apply json should include the resolved group"
+    );
+    tests::expect_contains(
+        apply_server_group_json,
+        "\"client_database_id\":\"1002\"",
+        "server group apply json should include the client database id"
+    );
+    tests::expect_contains(
+        apply_server_group_json,
+        "\"nickname\":\"alice\"",
+        "server group apply json should include the resolved client"
+    );
+    tests::expect_contains(
+        output::render(apply_server_group_result.value(), output::Format::table),
+        "Applied server group Operator (7) to alice (client database ID 1002).",
+        "server group apply table should summarize the assignment"
+    );
+
+    auto apply_server_group_database_id = parse_command(
+        router,
+        {
+            "server",
+            "group",
+            "apply",
+            "--group",
+            "7",
+            "--client-db-id",
+            "1002",
+            "--profile",
+            "mock-local",
+            "--config",
+            config_path.string(),
+        }
+    );
+    tests::expect(apply_server_group_database_id.ok(), "server group apply database id parse should succeed");
+    auto apply_server_group_database_id_result = router.dispatch(apply_server_group_database_id.value());
+    tests::expect(
+        apply_server_group_database_id_result.ok(),
+        "server group apply should accept a direct client database id"
+    );
+    const auto apply_server_group_database_id_json =
+        output::render(apply_server_group_database_id_result.value(), output::Format::json);
+    tests::expect_contains(
+        apply_server_group_database_id_json,
+        "\"client\":null",
+        "direct database id assignment should use a null client object"
     );
 
     auto create_profile = parse_command(
@@ -1321,6 +1454,38 @@ int main() {
         output::render_error(invalid_result.error(), output::Format::table, false),
         "ts message send --help",
         "invalid message target should suggest the command help"
+    );
+
+    auto invalid_group_target = parse_command(
+        router,
+        {
+            "server",
+            "group",
+            "apply",
+            "--group",
+            "Operator",
+            "--client",
+            "alice",
+            "--client-db-id",
+            "1002",
+            "--profile",
+            "mock-local",
+            "--config",
+            config_path.string(),
+        }
+    );
+    tests::expect(invalid_group_target.ok(), "invalid server group target parse should still succeed");
+    auto invalid_group_target_result = router.dispatch(invalid_group_target.value());
+    tests::expect(!invalid_group_target_result.ok(), "conflicting server group targets should fail during dispatch");
+    tests::expect_eq(
+        invalid_group_target_result.error().exit_code,
+        domain::ExitCode::usage,
+        "conflicting server group target exit code"
+    );
+    tests::expect_contains(
+        output::render_error(invalid_group_target_result.error(), output::Format::table, false),
+        "ts server group apply --help",
+        "invalid server group target should suggest the command help"
     );
 
     const std::string message_send_help = router.render_help({"message", "send"});

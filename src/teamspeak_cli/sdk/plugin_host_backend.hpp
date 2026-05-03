@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "ts3_functions.h"
 
@@ -80,9 +81,13 @@ class PluginHostBackend final
     [[nodiscard]] auto get_client(const domain::Selector& selector) const
         -> domain::Result<domain::Client> override;
     auto join_channel(const domain::Selector& selector) -> domain::Result<void> override;
+    auto rename_channel(const domain::Selector& selector, std::string_view name)
+        -> domain::Result<domain::Channel> override;
     auto set_self_muted(bool muted) -> domain::Result<void> override;
     auto set_self_away(bool away, std::string_view message) -> domain::Result<void> override;
     auto send_message(const domain::MessageRequest& request) -> domain::Result<void> override;
+    auto apply_server_group(const domain::ServerGroupApplicationRequest& request)
+        -> domain::Result<domain::ServerGroupApplication> override;
     auto next_event(std::chrono::milliseconds timeout)
         -> domain::Result<std::optional<domain::Event>> override;
 
@@ -133,6 +138,8 @@ class PluginHostBackend final
         -> domain::Result<std::string>;
     [[nodiscard]] auto client_bool(std::uint64_t server_connection_handler_id, std::uint16_t client_id, std::size_t flag) const
         -> domain::Result<bool>;
+    [[nodiscard]] auto client_u64(std::uint64_t server_connection_handler_id, std::uint16_t client_id, std::size_t flag) const
+        -> domain::Result<std::uint64_t>;
     [[nodiscard]] auto channel_string(std::uint64_t server_connection_handler_id, std::uint64_t channel_id, std::size_t flag) const
         -> domain::Result<std::string>;
     [[nodiscard]] auto channel_bool(std::uint64_t server_connection_handler_id, std::uint64_t channel_id, std::size_t flag) const
@@ -151,6 +158,14 @@ class PluginHostBackend final
         std::uint64_t server_connection_handler_id,
         const domain::Selector& selector
     ) const -> domain::Result<domain::Client>;
+    [[nodiscard]] auto find_server_group_by_selector(
+        std::uint64_t server_connection_handler_id,
+        const domain::Selector& selector
+    ) const -> domain::Result<domain::ServerGroup>;
+    [[nodiscard]] auto resolve_client_database_id(
+        std::uint64_t server_connection_handler_id,
+        const domain::ServerGroupApplicationRequest& request
+    ) const -> domain::Result<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>>;
 
     mutable std::mutex mutex_;
     std::optional<TS3Functions> functions_;

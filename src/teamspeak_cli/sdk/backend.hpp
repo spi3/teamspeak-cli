@@ -47,9 +47,13 @@ class Backend {
     [[nodiscard]] virtual auto get_client(const domain::Selector& selector) const
         -> domain::Result<domain::Client> = 0;
     virtual auto join_channel(const domain::Selector& selector) -> domain::Result<void> = 0;
+    virtual auto rename_channel(const domain::Selector& selector, std::string_view name)
+        -> domain::Result<domain::Channel> = 0;
     virtual auto set_self_muted(bool muted) -> domain::Result<void> = 0;
     virtual auto set_self_away(bool away, std::string_view message) -> domain::Result<void> = 0;
     virtual auto send_message(const domain::MessageRequest& request) -> domain::Result<void> = 0;
+    virtual auto apply_server_group(const domain::ServerGroupApplicationRequest& request)
+        -> domain::Result<domain::ServerGroupApplication> = 0;
     virtual auto next_event(std::chrono::milliseconds timeout)
         -> domain::Result<std::optional<domain::Event>> = 0;
 };

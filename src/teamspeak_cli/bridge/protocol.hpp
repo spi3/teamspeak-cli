@@ -50,6 +50,10 @@ auto encode_clients(const std::vector<domain::Client>& clients) -> std::vector<F
 auto decode_client(const Fields& fields) -> domain::Result<domain::Client>;
 auto decode_clients(const std::vector<Fields>& lines) -> domain::Result<std::vector<domain::Client>>;
 
+auto encode(const domain::ServerGroupApplication& application) -> std::vector<Fields>;
+auto decode_server_group_application(const std::vector<Fields>& lines)
+    -> domain::Result<domain::ServerGroupApplication>;
+
 auto encode_event(const std::optional<domain::Event>& event) -> std::vector<Fields>;
 auto decode_event(const std::vector<Fields>& lines) -> domain::Result<std::optional<domain::Event>>;
 

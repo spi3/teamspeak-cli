@@ -164,6 +164,10 @@ class CountingBackend final : public sdk::Backend {
         return domain::fail(counting_backend_error("join_channel"));
     }
 
+    auto rename_channel(const domain::Selector&, std::string_view) -> domain::Result<domain::Channel> override {
+        return domain::fail<domain::Channel>(counting_backend_error("rename_channel"));
+    }
+
     auto set_self_muted(bool) -> domain::Result<void> override {
         return domain::fail(counting_backend_error("set_self_muted"));
     }
@@ -174,6 +178,11 @@ class CountingBackend final : public sdk::Backend {
 
     auto send_message(const domain::MessageRequest&) -> domain::Result<void> override {
         return domain::fail(counting_backend_error("send_message"));
+    }
+
+    auto apply_server_group(const domain::ServerGroupApplicationRequest&)
+        -> domain::Result<domain::ServerGroupApplication> override {
+        return domain::fail<domain::ServerGroupApplication>(counting_backend_error("apply_server_group"));
     }
 
     auto next_event(std::chrono::milliseconds) -> domain::Result<std::optional<domain::Event>> override {
@@ -260,9 +269,51 @@ int main() {
     tests::expect(clients.ok(), "client list should succeed");
     tests::expect(!clients.value().empty(), "client list should not be empty");
 
+    auto renamed = backend.rename_channel(domain::Selector{"Engineering"}, "Platform");
+    tests::expect(renamed.ok(), "rename channel should succeed");
+    tests::expect_eq(renamed.value().name, std::string("Platform"), "renamed channel should report the new name");
+
+    auto renamed_lookup = backend.get_channel(domain::Selector{"Platform"});
+    tests::expect(renamed_lookup.ok(), "renamed channel should be addressable through the socket bridge");
+    tests::expect_eq(
+        renamed_lookup.value().id.value,
+        renamed.value().id.value,
+        "renamed channel lookup should preserve the channel id"
+    );
+
+    domain::ServerGroupApplicationRequest group_client_request{};
+    group_client_request.group = "Operator";
+    group_client_request.client = "alice";
+    auto applied_group = backend.apply_server_group(group_client_request);
+    tests::expect(applied_group.ok(), "apply server group should succeed for a connected client");
+    tests::expect_eq(
+        applied_group.value().server_group.id.value,
+        std::uint64_t(7),
+        "server group assignment should resolve the group name"
+    );
+    tests::expect(
+        applied_group.value().client.has_value(),
+        "server group assignment should include the resolved connected client"
+    );
+    tests::expect_eq(
+        applied_group.value().client_database_id.value,
+        std::uint64_t(1002),
+        "server group assignment should resolve the connected client's database id"
+    );
+
+    domain::ServerGroupApplicationRequest group_database_request{};
+    group_database_request.group = "7";
+    group_database_request.client_database_id = domain::ClientDatabaseId{1002};
+    auto applied_database_group = backend.apply_server_group(group_database_request);
+    tests::expect(applied_database_group.ok(), "apply server group should accept direct client database ids");
+    tests::expect(
+        !applied_database_group.value().client.has_value(),
+        "direct database id assignment should not invent a connected client"
+    );
+
     auto sent = backend.send_message(domain::MessageRequest{
         .target_kind = domain::MessageTargetKind::channel,
-        .target = "Engineering",
+        .target = "Platform",
         .text = "hello from socket backend",
     });
     tests::expect(sent.ok(), "send message should succeed");

@@ -1,5 +1,6 @@
 #include "teamspeak_cli/sdk/plugin_host_backend.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
@@ -892,6 +893,55 @@ auto PluginHostBackend::join_channel(const domain::Selector& selector) -> domain
     return domain::ok();
 }
 
+auto PluginHostBackend::rename_channel(const domain::Selector& selector, std::string_view name)
+    -> domain::Result<domain::Channel> {
+    auto handler_id = resolve_handler_id(true);
+    if (!handler_id) {
+        return domain::fail<domain::Channel>(handler_id.error());
+    }
+    auto channel = find_channel_by_selector(handler_id.value(), selector);
+    if (!channel) {
+        return domain::fail<domain::Channel>(channel.error());
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail<domain::Channel>(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+
+    if (functions.setChannelVariableAsString == nullptr || functions.flushChannelUpdates == nullptr) {
+        return domain::fail<domain::Channel>(backend_error(
+            "channel_update_unavailable",
+            "TeamSpeak channel update functions are not available in the loaded plugin host"
+        ));
+    }
+
+    const std::string new_name(name);
+    const unsigned int set_error = functions.setChannelVariableAsString(
+        handler_id.value(), channel.value().id.value, CHANNEL_NAME, new_name.c_str()
+    );
+    if (!ts3_call_succeeded(set_error)) {
+        return domain::fail<domain::Channel>(translate_error(set_error, "failed to update TeamSpeak channel name"));
+    }
+
+    const unsigned int flush_error = functions.flushChannelUpdates(
+        handler_id.value(), channel.value().id.value, nullptr
+    );
+    if (!ts3_call_succeeded(flush_error)) {
+        return domain::fail<domain::Channel>(translate_error(flush_error, "failed to flush TeamSpeak channel name update"));
+    }
+
+    auto updated = channel.value();
+    updated.name = new_name;
+    return domain::ok(std::move(updated));
+}
+
 auto PluginHostBackend::set_self_muted(bool muted) -> domain::Result<void> {
     auto handler_id = resolve_handler_id(true);
     if (!handler_id) {
@@ -1013,6 +1063,59 @@ auto PluginHostBackend::send_message(const domain::MessageRequest& request) -> d
         return domain::fail(translate_error(error, "failed to send TeamSpeak text message"));
     }
     return domain::ok();
+}
+
+auto PluginHostBackend::apply_server_group(const domain::ServerGroupApplicationRequest& request)
+    -> domain::Result<domain::ServerGroupApplication> {
+    auto handler_id = resolve_handler_id(true);
+    if (!handler_id) {
+        return domain::fail<domain::ServerGroupApplication>(handler_id.error());
+    }
+
+    auto server_group = find_server_group_by_selector(handler_id.value(), domain::Selector{request.group});
+    if (!server_group) {
+        return domain::fail<domain::ServerGroupApplication>(server_group.error());
+    }
+    auto client_database = resolve_client_database_id(handler_id.value(), request);
+    if (!client_database) {
+        return domain::fail<domain::ServerGroupApplication>(client_database.error());
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail<domain::ServerGroupApplication>(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+
+    if (functions.requestServerGroupAddClient == nullptr) {
+        return domain::fail<domain::ServerGroupApplication>(backend_error(
+            "server_group_update_unavailable",
+            "TeamSpeak server group update functions are not available in the loaded plugin host"
+        ));
+    }
+
+    const unsigned int error = functions.requestServerGroupAddClient(
+        handler_id.value(),
+        server_group.value().id.value,
+        client_database.value().second.value,
+        nullptr
+    );
+    if (!ts3_call_succeeded(error)) {
+        return domain::fail<domain::ServerGroupApplication>(translate_error(
+            error, "failed to apply TeamSpeak server group to client"
+        ));
+    }
+
+    return domain::ok(domain::ServerGroupApplication{
+        .server_group = server_group.value(),
+        .client = std::move(client_database.value().first),
+        .client_database_id = client_database.value().second,
+    });
 }
 
 auto PluginHostBackend::next_event(std::chrono::milliseconds timeout)
@@ -1533,6 +1636,21 @@ auto PluginHostBackend::client_bool(
     return domain::ok(raw_value != 0);
 }
 
+auto PluginHostBackend::client_u64(
+    std::uint64_t server_connection_handler_id,
+    std::uint16_t client_id,
+    std::size_t flag
+) const -> domain::Result<std::uint64_t> {
+    uint64_t raw_value = 0;
+    const unsigned int error = (*functions_).getClientVariableAsUInt64(
+        server_connection_handler_id, static_cast<anyID>(client_id), flag, &raw_value
+    );
+    if (error != ERROR_ok) {
+        return domain::fail<std::uint64_t>(translate_error(error, "failed to query TeamSpeak client integer"));
+    }
+    return domain::ok(raw_value);
+}
+
 auto PluginHostBackend::channel_string(
     std::uint64_t server_connection_handler_id,
     std::uint64_t channel_id,
@@ -1640,6 +1758,116 @@ auto PluginHostBackend::find_client_by_selector(
     }
     return domain::fail<domain::Client>(backend_error(
         "client_not_found", "client not found: " + selector.raw, domain::ExitCode::not_found
+    ));
+}
+
+auto PluginHostBackend::find_server_group_by_selector(
+    std::uint64_t server_connection_handler_id,
+    const domain::Selector& selector
+) const -> domain::Result<domain::ServerGroup> {
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail<domain::ServerGroup>(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+
+    if (const auto maybe_id = util::parse_u64(selector.raw); maybe_id.has_value()) {
+        std::string name;
+        if (functions.getServerGroupNameByID != nullptr) {
+            std::array<char, TS3_MAX_SIZE_GROUP_NAME + 1> buffer{};
+            const unsigned int name_error = functions.getServerGroupNameByID(
+                server_connection_handler_id,
+                static_cast<unsigned int>(*maybe_id),
+                buffer.data(),
+                buffer.size()
+            );
+            if (ts3_call_succeeded(name_error)) {
+                name = buffer.data();
+            }
+        }
+        return domain::ok(domain::ServerGroup{
+            .id = domain::ServerGroupId{*maybe_id},
+            .name = name.empty() ? selector.raw : std::move(name),
+        });
+    }
+
+    if (functions.getServerGroupIDByName == nullptr) {
+        return domain::fail<domain::ServerGroup>(backend_error(
+            "server_group_lookup_unavailable",
+            "TeamSpeak server group lookup by name is not available in the loaded plugin host"
+        ));
+    }
+
+    unsigned int group_id = 0;
+    const unsigned int group_error = functions.getServerGroupIDByName(
+        server_connection_handler_id, selector.raw.c_str(), &group_id
+    );
+    if (group_error != ERROR_ok) {
+        return domain::fail<domain::ServerGroup>(translate_error(
+            group_error, "failed to resolve TeamSpeak server group"
+        ));
+    }
+    return domain::ok(domain::ServerGroup{
+        .id = domain::ServerGroupId{group_id},
+        .name = selector.raw,
+    });
+}
+
+auto PluginHostBackend::resolve_client_database_id(
+    std::uint64_t server_connection_handler_id,
+    const domain::ServerGroupApplicationRequest& request
+) const -> domain::Result<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>> {
+    if (request.client_database_id.has_value()) {
+        return domain::ok(std::make_pair(
+            std::optional<domain::Client>{},
+            *request.client_database_id
+        ));
+    }
+    if (!request.client.has_value()) {
+        return domain::fail<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>>(backend_error(
+            "missing_client",
+            "server group application requires a client or client database id",
+            domain::ExitCode::usage
+        ));
+    }
+
+    TS3Functions functions{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!functions_.has_value()) {
+            return domain::fail<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>>(backend_error(
+                "functions_unavailable", "TeamSpeak plugin host functions are not available"
+            ));
+        }
+        functions = *functions_;
+    }
+    if (functions.getClientVariableAsUInt64 == nullptr) {
+        return domain::fail<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>>(backend_error(
+            "client_database_id_unavailable",
+            "TeamSpeak client database id lookup is not available in the loaded plugin host"
+        ));
+    }
+
+    auto client = find_client_by_selector(server_connection_handler_id, domain::Selector{*request.client});
+    if (!client) {
+        return domain::fail<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>>(client.error());
+    }
+    auto database_id = client_u64(
+        server_connection_handler_id,
+        static_cast<std::uint16_t>(client.value().id.value),
+        CLIENT_DATABASE_ID
+    );
+    if (!database_id) {
+        return domain::fail<std::pair<std::optional<domain::Client>, domain::ClientDatabaseId>>(database_id.error());
+    }
+    return domain::ok(std::make_pair(
+        std::optional<domain::Client>{client.value()},
+        domain::ClientDatabaseId{database_id.value()}
     ));
 }
 

@@ -25,6 +25,16 @@ struct ClientId {
     auto operator<=>(const ClientId&) const = default;
 };
 
+struct ClientDatabaseId {
+    std::uint64_t value = 0;
+    auto operator<=>(const ClientDatabaseId&) const = default;
+};
+
+struct ServerGroupId {
+    std::uint64_t value = 0;
+    auto operator<=>(const ServerGroupId&) const = default;
+};
+
 enum class ConnectionPhase {
     disconnected,
     connecting,
@@ -129,6 +139,11 @@ struct Client {
     bool talking = false;
 };
 
+struct ServerGroup {
+    ServerGroupId id;
+    std::string name;
+};
+
 struct ServerInfo {
     std::string name;
     std::string host;
@@ -149,6 +164,18 @@ struct MessageRequest {
     std::string text;
 };
 
+struct ServerGroupApplicationRequest {
+    std::string group;
+    std::optional<std::string> client;
+    std::optional<ClientDatabaseId> client_database_id;
+};
+
+struct ServerGroupApplication {
+    ServerGroup server_group;
+    std::optional<Client> client;
+    ClientDatabaseId client_database_id;
+};
+
 struct Event {
     std::string type;
     std::string summary;
@@ -165,6 +192,14 @@ inline auto to_string(ChannelId id) -> std::string {
 }
 
 inline auto to_string(ClientId id) -> std::string {
+    return std::to_string(id.value);
+}
+
+inline auto to_string(ClientDatabaseId id) -> std::string {
+    return std::to_string(id.value);
+}
+
+inline auto to_string(ServerGroupId id) -> std::string {
     return std::to_string(id.value);
 }
 

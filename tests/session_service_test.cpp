@@ -112,6 +112,13 @@ class StuckConnectingBackend final : public teamspeak_cli::sdk::Backend {
         ));
     }
 
+    auto rename_channel(const teamspeak_cli::domain::Selector&, std::string_view)
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::Channel> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::Channel>(stub_error(
+            "unsupported", "rename_channel is not used by this test backend"
+        ));
+    }
+
     auto set_self_muted(bool) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "set_self_muted is not used by this test backend"
@@ -127,6 +134,13 @@ class StuckConnectingBackend final : public teamspeak_cli::sdk::Backend {
     auto send_message(const teamspeak_cli::domain::MessageRequest&) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "send_message is not used by this test backend"
+        ));
+    }
+
+    auto apply_server_group(const teamspeak_cli::domain::ServerGroupApplicationRequest&)
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::ServerGroupApplication> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::ServerGroupApplication>(stub_error(
+            "unsupported", "apply_server_group is not used by this test backend"
         ));
     }
 
@@ -256,6 +270,13 @@ class FailedConnectionBackend final : public teamspeak_cli::sdk::Backend {
         ));
     }
 
+    auto rename_channel(const teamspeak_cli::domain::Selector&, std::string_view)
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::Channel> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::Channel>(stub_error(
+            "unsupported", "rename_channel is not used by this test backend"
+        ));
+    }
+
     auto set_self_muted(bool) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "set_self_muted is not used by this test backend"
@@ -271,6 +292,13 @@ class FailedConnectionBackend final : public teamspeak_cli::sdk::Backend {
     auto send_message(const teamspeak_cli::domain::MessageRequest&) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "send_message is not used by this test backend"
+        ));
+    }
+
+    auto apply_server_group(const teamspeak_cli::domain::ServerGroupApplicationRequest&)
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::ServerGroupApplication> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::ServerGroupApplication>(stub_error(
+            "unsupported", "apply_server_group is not used by this test backend"
         ));
     }
 
@@ -389,6 +417,13 @@ class PollingConnectedBackend final : public teamspeak_cli::sdk::Backend {
         ));
     }
 
+    auto rename_channel(const teamspeak_cli::domain::Selector&, std::string_view)
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::Channel> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::Channel>(stub_error(
+            "unsupported", "rename_channel is not used by this test backend"
+        ));
+    }
+
     auto set_self_muted(bool) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "set_self_muted is not used by this test backend"
@@ -404,6 +439,13 @@ class PollingConnectedBackend final : public teamspeak_cli::sdk::Backend {
     auto send_message(const teamspeak_cli::domain::MessageRequest&) -> teamspeak_cli::domain::Result<void> override {
         return teamspeak_cli::domain::fail(stub_error(
             "unsupported", "send_message is not used by this test backend"
+        ));
+    }
+
+    auto apply_server_group(const teamspeak_cli::domain::ServerGroupApplicationRequest&)
+        -> teamspeak_cli::domain::Result<teamspeak_cli::domain::ServerGroupApplication> override {
+        return teamspeak_cli::domain::fail<teamspeak_cli::domain::ServerGroupApplication>(stub_error(
+            "unsupported", "apply_server_group is not used by this test backend"
         ));
     }
 

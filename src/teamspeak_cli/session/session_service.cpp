@@ -245,6 +245,11 @@ auto SessionService::join_channel(const domain::Selector& selector) -> domain::R
     return backend_->join_channel(selector);
 }
 
+auto SessionService::rename_channel(const domain::Selector& selector, std::string_view name)
+    -> domain::Result<domain::Channel> {
+    return backend_->rename_channel(selector, name);
+}
+
 auto SessionService::set_self_muted(bool muted) -> domain::Result<void> {
     return backend_->set_self_muted(muted);
 }
@@ -255,6 +260,11 @@ auto SessionService::set_self_away(bool away, std::string_view message) -> domai
 
 auto SessionService::send_message(const domain::MessageRequest& request) -> domain::Result<void> {
     return backend_->send_message(request);
+}
+
+auto SessionService::apply_server_group(const domain::ServerGroupApplicationRequest& request)
+    -> domain::Result<domain::ServerGroupApplication> {
+    return backend_->apply_server_group(request);
 }
 
 auto SessionService::watch_events(std::size_t count, std::chrono::milliseconds timeout)

@@ -771,6 +771,68 @@ auto decode_clients(const std::vector<Fields>& lines) -> domain::Result<std::vec
     return domain::ok(std::move(clients));
 }
 
+auto encode(const domain::ServerGroupApplication& application) -> std::vector<Fields> {
+    std::vector<Fields> lines{{
+        "server_group_application",
+        std::to_string(application.server_group.id.value),
+        hex_encode(application.server_group.name),
+        std::to_string(application.client_database_id.value),
+        application.client.has_value() ? "1" : "0",
+    }};
+    if (application.client.has_value()) {
+        lines.push_back(encode(*application.client));
+    }
+    return lines;
+}
+
+auto decode_server_group_application(const std::vector<Fields>& lines)
+    -> domain::Result<domain::ServerGroupApplication> {
+    if (lines.empty() || lines.size() > 2 || lines[0].size() != 5 ||
+        lines[0][0] != "server_group_application") {
+        return domain::fail<domain::ServerGroupApplication>(protocol_error(
+            "invalid_server_group_application", "invalid server group application payload"
+        ));
+    }
+
+    auto group_id = parse_required_u64(lines[0][1], "server_group_id");
+    auto group_name = decode_string_field(lines[0], 2, "server_group_name");
+    auto client_database_id = parse_required_u64(lines[0][3], "client_database_id");
+    auto client_present = parse_bool(lines[0][4]);
+    if (!group_id) {
+        return domain::fail<domain::ServerGroupApplication>(group_id.error());
+    }
+    if (!group_name) {
+        return domain::fail<domain::ServerGroupApplication>(group_name.error());
+    }
+    if (!client_database_id) {
+        return domain::fail<domain::ServerGroupApplication>(client_database_id.error());
+    }
+    if (!client_present) {
+        return domain::fail<domain::ServerGroupApplication>(client_present.error());
+    }
+    if ((client_present.value() && lines.size() != 2) || (!client_present.value() && lines.size() != 1)) {
+        return domain::fail<domain::ServerGroupApplication>(protocol_error(
+            "invalid_server_group_application", "server group application client payload mismatch"
+        ));
+    }
+
+    std::optional<domain::Client> client;
+    if (client_present.value()) {
+        auto decoded_client = decode_client(lines[1]);
+        if (!decoded_client) {
+            return domain::fail<domain::ServerGroupApplication>(decoded_client.error());
+        }
+        client = decoded_client.value();
+    }
+
+    return domain::ok(domain::ServerGroupApplication{
+        .server_group =
+            domain::ServerGroup{.id = domain::ServerGroupId{group_id.value()}, .name = group_name.value()},
+        .client = std::move(client),
+        .client_database_id = domain::ClientDatabaseId{client_database_id.value()},
+    });
+}
+
 auto encode_event(const std::optional<domain::Event>& event) -> std::vector<Fields> {
     if (!event.has_value()) {
         return {{"no_event"}};

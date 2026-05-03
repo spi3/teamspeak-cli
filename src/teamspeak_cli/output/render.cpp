@@ -427,6 +427,13 @@ auto maybe_channel(const std::optional<domain::ChannelId>& channel_id) -> ValueH
     return make_string(domain::to_string(*channel_id));
 }
 
+auto maybe_client(const std::optional<domain::Client>& client) -> ValueHolder {
+    if (!client.has_value()) {
+        return ValueHolder{nullptr};
+    }
+    return to_value(*client);
+}
+
 auto error_hints(const domain::Error& error) -> std::vector<std::string> {
     std::vector<std::string> hints;
     constexpr std::string_view kHintPrefix = "hint_";
@@ -740,6 +747,21 @@ auto to_value(const domain::Client& client) -> ValueHolder {
         {"channel_id", maybe_channel(client.channel_id)},
         {"self", make_bool(client.self)},
         {"talking", make_bool(client.talking)},
+    });
+}
+
+auto to_value(const domain::ServerGroup& server_group) -> ValueHolder {
+    return make_object({
+        {"id", make_string(domain::to_string(server_group.id))},
+        {"name", make_string(server_group.name)},
+    });
+}
+
+auto to_value(const domain::ServerGroupApplication& application) -> ValueHolder {
+    return make_object({
+        {"client", maybe_client(application.client)},
+        {"client_database_id", make_string(domain::to_string(application.client_database_id))},
+        {"server_group", to_value(application.server_group)},
     });
 }
 

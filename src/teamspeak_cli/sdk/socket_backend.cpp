@@ -461,6 +461,29 @@ auto SocketBackend::join_channel(const domain::Selector& selector) -> domain::Re
     return expect_type(response.value(), "void");
 }
 
+auto SocketBackend::rename_channel(const domain::Selector& selector, std::string_view name)
+    -> domain::Result<domain::Channel> {
+    auto response = exchange("rename the TeamSpeak channel", {
+        std::string(bridge::protocol::kMagic),
+        "rename_channel",
+        bridge::protocol::hex_encode(selector.raw),
+        bridge::protocol::hex_encode(name),
+    },
+                             command_timeout());
+    if (!response) {
+        return domain::fail<domain::Channel>(response.error());
+    }
+    auto type_check = expect_type(response.value(), "channel");
+    if (!type_check) {
+        return domain::fail<domain::Channel>(type_check.error());
+    }
+    auto decoded = bridge::protocol::decode_channels(response.value().payload);
+    if (!decoded) {
+        return domain::fail<domain::Channel>(decoded.error());
+    }
+    return domain::ok(decoded.value().front());
+}
+
 auto SocketBackend::set_self_muted(bool muted) -> domain::Result<void> {
     auto response = exchange(
         muted ? "mute your TeamSpeak microphone" : "unmute your TeamSpeak microphone",
@@ -507,6 +530,32 @@ auto SocketBackend::send_message(const domain::MessageRequest& request) -> domai
         return domain::fail(response.error());
     }
     return expect_type(response.value(), "void");
+}
+
+auto SocketBackend::apply_server_group(const domain::ServerGroupApplicationRequest& request)
+    -> domain::Result<domain::ServerGroupApplication> {
+    const std::string target_kind = request.client.has_value() ? "client" : "client_database_id";
+    const std::string target =
+        request.client.has_value()
+            ? *request.client
+            : request.client_database_id.has_value() ? domain::to_string(*request.client_database_id)
+                                                     : std::string{};
+    auto response = exchange("apply the TeamSpeak server group", {
+        std::string(bridge::protocol::kMagic),
+        "apply_server_group",
+        bridge::protocol::hex_encode(request.group),
+        target_kind,
+        bridge::protocol::hex_encode(target),
+    },
+                             command_timeout());
+    if (!response) {
+        return domain::fail<domain::ServerGroupApplication>(response.error());
+    }
+    auto type_check = expect_type(response.value(), "server_group_application");
+    if (!type_check) {
+        return domain::fail<domain::ServerGroupApplication>(type_check.error());
+    }
+    return bridge::protocol::decode_server_group_application(response.value().payload);
 }
 
 auto SocketBackend::next_event(std::chrono::milliseconds timeout)

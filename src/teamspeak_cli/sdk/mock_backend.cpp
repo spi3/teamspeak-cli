@@ -91,6 +91,19 @@ MockBackend::MockBackend() {
         domain::Client{.id = {4}, .nickname = "ops-bot", .unique_identity = "sdk-ops-bot", .channel_id = domain::ChannelId{3}},
     };
 
+    server_groups_ = {
+        domain::ServerGroup{.id = {6}, .name = "Server Admin"},
+        domain::ServerGroup{.id = {7}, .name = "Operator"},
+        domain::ServerGroup{.id = {8}, .name = "Guest"},
+    };
+
+    client_database_ids_ = {
+        {domain::ClientId{1}, domain::ClientDatabaseId{1001}},
+        {domain::ClientId{2}, domain::ClientDatabaseId{1002}},
+        {domain::ClientId{3}, domain::ClientDatabaseId{1003}},
+        {domain::ClientId{4}, domain::ClientDatabaseId{1004}},
+    };
+
     state_ = domain::ConnectionState{
         .phase = domain::ConnectionPhase::disconnected,
         .backend = "mock",
@@ -305,6 +318,34 @@ auto MockBackend::join_channel(const domain::Selector& selector) -> domain::Resu
     return domain::ok();
 }
 
+auto MockBackend::rename_channel(const domain::Selector& selector, std::string_view name)
+    -> domain::Result<domain::Channel> {
+    auto channel = find_channel(selector);
+    if (!channel) {
+        return domain::fail<domain::Channel>(channel.error());
+    }
+
+    domain::Channel updated = channel.value();
+    updated.name = std::string(name);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& candidate : channels_) {
+            if (candidate.id == updated.id) {
+                candidate.name = updated.name;
+                updated = candidate;
+                break;
+            }
+        }
+    }
+
+    events_.push(now_event(
+        "channel.renamed",
+        "renamed channel " + domain::to_string(updated.id) + " to " + updated.name,
+        {{"channel_id", domain::to_string(updated.id)}, {"channel_name", updated.name}}
+    ));
+    return domain::ok(std::move(updated));
+}
+
 auto MockBackend::set_self_muted(bool muted) -> domain::Result<void> {
     const auto connected = require_connected();
     if (!connected) {
@@ -359,6 +400,60 @@ auto MockBackend::send_message(const domain::MessageRequest& request) -> domain:
         {{"target_kind", domain::to_string(request.target_kind)}, {"target", request.target}, {"text", request.text}}
     ));
     return domain::ok();
+}
+
+auto MockBackend::apply_server_group(const domain::ServerGroupApplicationRequest& request)
+    -> domain::Result<domain::ServerGroupApplication> {
+    const auto connected = require_connected();
+    if (!connected) {
+        return domain::fail<domain::ServerGroupApplication>(connected.error());
+    }
+
+    auto server_group = find_server_group(domain::Selector{request.group});
+    if (!server_group) {
+        return domain::fail<domain::ServerGroupApplication>(server_group.error());
+    }
+
+    std::optional<domain::Client> client;
+    domain::ClientDatabaseId client_database_id{};
+    if (request.client.has_value()) {
+        auto found_client = find_client(domain::Selector{*request.client});
+        if (!found_client) {
+            return domain::fail<domain::ServerGroupApplication>(found_client.error());
+        }
+        auto database_id = client_database_id_for(found_client.value().id);
+        if (!database_id) {
+            return domain::fail<domain::ServerGroupApplication>(database_id.error());
+        }
+        client = found_client.value();
+        client_database_id = database_id.value();
+    } else if (request.client_database_id.has_value()) {
+        client_database_id = *request.client_database_id;
+    } else {
+        return domain::fail<domain::ServerGroupApplication>(sdk_error(
+            "missing_client", "server group application requires a client or client database id",
+            domain::ExitCode::usage
+        ));
+    }
+
+    events_.push(now_event(
+        "server_group.applied",
+        "applied server group " + server_group.value().name +
+            " to client database id " + domain::to_string(client_database_id),
+        {
+            {"server_group_id", domain::to_string(server_group.value().id)},
+            {"server_group_name", server_group.value().name},
+            {"client_database_id", domain::to_string(client_database_id)},
+            {"client_id", client.has_value() ? domain::to_string(client->id) : std::string{}},
+            {"nickname", client.has_value() ? client->nickname : std::string{}},
+        }
+    ));
+
+    return domain::ok(domain::ServerGroupApplication{
+        .server_group = server_group.value(),
+        .client = std::move(client),
+        .client_database_id = client_database_id,
+    });
 }
 
 auto MockBackend::next_event(std::chrono::milliseconds timeout)
@@ -425,6 +520,40 @@ auto MockBackend::find_client(const domain::Selector& selector) const -> domain:
     return domain::fail<domain::Client>(sdk_error(
         "client_not_found", "client not found: " + selector.raw, domain::ExitCode::not_found
     ));
+}
+
+auto MockBackend::find_server_group(const domain::Selector& selector) const
+    -> domain::Result<domain::ServerGroup> {
+    const auto connected = require_connected();
+    if (!connected) {
+        return domain::fail<domain::ServerGroup>(connected.error());
+    }
+
+    const auto maybe_id = util::parse_u64(selector.raw);
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& server_group : server_groups_) {
+        if ((maybe_id.has_value() && server_group.id.value == *maybe_id) ||
+            util::iequals(server_group.name, selector.raw)) {
+            return domain::ok(server_group);
+        }
+    }
+    return domain::fail<domain::ServerGroup>(sdk_error(
+        "server_group_not_found", "server group not found: " + selector.raw, domain::ExitCode::not_found
+    ));
+}
+
+auto MockBackend::client_database_id_for(domain::ClientId client_id) const
+    -> domain::Result<domain::ClientDatabaseId> {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = client_database_ids_.find(client_id);
+    if (it == client_database_ids_.end()) {
+        return domain::fail<domain::ClientDatabaseId>(sdk_error(
+            "client_database_id_not_found",
+            "client database id not found for client: " + domain::to_string(client_id),
+            domain::ExitCode::not_found
+        ));
+    }
+    return domain::ok(it->second);
 }
 
 void MockBackend::clear_pending_events() {

@@ -73,6 +73,8 @@ auto to_value(const domain::ConnectionState& state) -> ValueHolder;
 auto to_value(const domain::ServerInfo& info) -> ValueHolder;
 auto to_value(const domain::Channel& channel) -> ValueHolder;
 auto to_value(const domain::Client& client) -> ValueHolder;
+auto to_value(const domain::ServerGroup& server_group) -> ValueHolder;
+auto to_value(const domain::ServerGroupApplication& application) -> ValueHolder;
 auto to_value(const domain::Event& event) -> ValueHolder;
 auto to_value(const domain::Profile& profile) -> ValueHolder;
 auto to_value(const std::vector<domain::Channel>& channels) -> ValueHolder;

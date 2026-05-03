@@ -53,9 +53,13 @@ class SessionService {
     [[nodiscard]] auto get_channel(const domain::Selector& selector) const -> domain::Result<domain::Channel>;
     [[nodiscard]] auto get_client(const domain::Selector& selector) const -> domain::Result<domain::Client>;
     auto join_channel(const domain::Selector& selector) -> domain::Result<void>;
+    auto rename_channel(const domain::Selector& selector, std::string_view name)
+        -> domain::Result<domain::Channel>;
     auto set_self_muted(bool muted) -> domain::Result<void>;
     auto set_self_away(bool away, std::string_view message) -> domain::Result<void>;
     auto send_message(const domain::MessageRequest& request) -> domain::Result<void>;
+    auto apply_server_group(const domain::ServerGroupApplicationRequest& request)
+        -> domain::Result<domain::ServerGroupApplication>;
     auto watch_events(std::size_t count, std::chrono::milliseconds timeout)
         -> domain::Result<std::vector<domain::Event>>;
 

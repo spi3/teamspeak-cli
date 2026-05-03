@@ -163,9 +163,9 @@ The CLI is organized into small command groups:
 - `plugin info`
 - `config init`, `config path`, `config view`
 - `profile create`, `profile list`, `profile show`, `profile set`, `profile unset`, `profile delete`, `profile use`
-- `connect`, `disconnect`, `status`, `server info`
+- `connect`, `disconnect`, `status`, `server info`, `server group apply`
 - `daemon start`, `daemon stop`, `daemon status`
-- `channel list`, `channel get`, `channel join`, `channel clients`
+- `channel list`, `channel get`, `channel join`, `channel rename`, `channel clients`
 - `client status`, `client start`, `client inspect-windows`, `client stop`, `client list`, `client get`
 - `message send`, `message inbox`
 - `playback status`, `playback send`
@@ -178,6 +178,8 @@ Examples against the offline backend:
 ./build-mock/ts --profile mock-local status
 ./build-mock/ts --profile mock-local channel list --json
 ./build-mock/ts --profile mock-local channel clients Engineering
+./build-mock/ts --profile mock-local channel rename Engineering --name Platform
+./build-mock/ts --profile mock-local server group apply --group Operator --client alice
 ./build-mock/ts daemon start
 ./build-mock/ts message inbox
 ./build-mock/ts --profile mock-local events watch --count 5
@@ -191,6 +193,8 @@ ts --profile plugin-local plugin info
 ts --profile plugin-local status
 ts --profile plugin-local channel list
 ts --profile plugin-local client list
+ts --profile plugin-local channel rename Engineering --name Platform
+ts --profile plugin-local server group apply --group Operator --client alice
 ts daemon start
 ts message inbox
 ts --profile plugin-local message send --target channel --id Lobby --text "hello"

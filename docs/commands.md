@@ -44,6 +44,7 @@ See [output-format.md](output-format.md) for the stdout/stderr contract, stable 
 - `ts back`
 - `ts status`
 - `ts server info`
+- `ts server group apply --group <id-or-name> (--client <id-or-name>|--client-db-id <id>)`
 
 `ts sdk info` is a compatibility alias for `ts plugin info`.
 
@@ -70,6 +71,7 @@ installs the latest published release from `spi3/teamspeak-cli`; use `--release-
 - `ts channel clients [id-or-name]`
 - `ts channel get <id-or-name>`
 - `ts channel join <id-or-name>`
+- `ts channel rename <id-or-name> --name <name>`
 
 ### Clients
 
@@ -112,6 +114,8 @@ and the boundary between domain events and media bridge frames.
 - `mute` and `unmute` update your own TeamSpeak microphone mute state.
 - `away` sets your own TeamSpeak away status and optionally an away message.
 - `back` clears your own TeamSpeak away status and any away message set through `ts away`.
+- `channel rename` updates a channel name when the active user has permission to edit that channel.
+- `server group apply` adds a server group to a connected client by ID/nickname, or to a direct client database ID.
 - `client status`, `client start`, `client inspect-windows`, and `client stop` inspect, launch, diagnose, and stop the local TeamSpeak client process tracked by `ts`.
 - `update` refreshes the installed `ts` binary, bundled plugin, and managed TeamSpeak client bundle from the official
   published release artifacts.

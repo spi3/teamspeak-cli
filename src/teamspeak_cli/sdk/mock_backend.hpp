@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <mutex>
 #include <thread>
 
@@ -31,9 +32,13 @@ class MockBackend final : public Backend, public bridge::MediaBridgeHost, public
     [[nodiscard]] auto get_client(const domain::Selector& selector) const
         -> domain::Result<domain::Client> override;
     auto join_channel(const domain::Selector& selector) -> domain::Result<void> override;
+    auto rename_channel(const domain::Selector& selector, std::string_view name)
+        -> domain::Result<domain::Channel> override;
     auto set_self_muted(bool muted) -> domain::Result<void> override;
     auto set_self_away(bool away, std::string_view message) -> domain::Result<void> override;
     auto send_message(const domain::MessageRequest& request) -> domain::Result<void> override;
+    auto apply_server_group(const domain::ServerGroupApplicationRequest& request)
+        -> domain::Result<domain::ServerGroupApplication> override;
     auto next_event(std::chrono::milliseconds timeout)
         -> domain::Result<std::optional<domain::Event>> override;
 
@@ -45,6 +50,8 @@ class MockBackend final : public Backend, public bridge::MediaBridgeHost, public
     auto require_connected() const -> domain::Result<void>;
     auto find_channel(const domain::Selector& selector) const -> domain::Result<domain::Channel>;
     auto find_client(const domain::Selector& selector) const -> domain::Result<domain::Client>;
+    auto find_server_group(const domain::Selector& selector) const -> domain::Result<domain::ServerGroup>;
+    auto client_database_id_for(domain::ClientId client_id) const -> domain::Result<domain::ClientDatabaseId>;
     void clear_pending_events();
     void start_event_loop();
     void stop_event_loop();
@@ -53,6 +60,8 @@ class MockBackend final : public Backend, public bridge::MediaBridgeHost, public
     events::EventQueue events_;
     std::vector<domain::Channel> channels_;
     std::vector<domain::Client> clients_;
+    std::vector<domain::ServerGroup> server_groups_;
+    std::map<domain::ClientId, domain::ClientDatabaseId> client_database_ids_;
     domain::ConnectionState state_;
     domain::ServerInfo server_;
     InitOptions options_;

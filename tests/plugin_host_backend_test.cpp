@@ -26,12 +26,23 @@ struct HostState {
     int process_custom_capture_data_calls = 0;
     int start_voice_recording_calls = 0;
     int stop_voice_recording_calls = 0;
+    int set_channel_variable_calls = 0;
+    int flush_channel_updates_calls = 0;
+    int request_server_group_add_client_calls = 0;
     unsigned int register_custom_device_result = ERROR_ok;
     unsigned int open_capture_result = ERROR_ok;
     unsigned int activate_capture_device_result = ERROR_ok;
     unsigned int set_client_self_variable_result = ERROR_ok;
     unsigned int flush_client_self_updates_result = ERROR_ok;
     unsigned int process_custom_capture_data_result = ERROR_ok;
+    unsigned int set_channel_variable_result = ERROR_ok;
+    unsigned int flush_channel_updates_result = ERROR_ok;
+    unsigned int request_server_group_add_client_result = ERROR_ok;
+    std::uint64_t last_channel_update_id = 0;
+    std::size_t last_channel_update_flag = 0;
+    std::string last_channel_update_value;
+    std::uint64_t last_server_group_id = 0;
+    std::uint64_t last_server_group_client_database_id = 0;
     std::string error_message = "fake TeamSpeak error";
     std::vector<std::pair<std::string, std::string>> open_capture_calls;
     std::vector<std::pair<std::size_t, int>> self_variable_updates;
@@ -55,12 +66,23 @@ void reset_host_state() {
     state.process_custom_capture_data_calls = 0;
     state.start_voice_recording_calls = 0;
     state.stop_voice_recording_calls = 0;
+    state.set_channel_variable_calls = 0;
+    state.flush_channel_updates_calls = 0;
+    state.request_server_group_add_client_calls = 0;
     state.register_custom_device_result = ERROR_ok;
     state.open_capture_result = ERROR_ok;
     state.activate_capture_device_result = ERROR_ok;
     state.set_client_self_variable_result = ERROR_ok;
     state.flush_client_self_updates_result = ERROR_ok;
     state.process_custom_capture_data_result = ERROR_ok;
+    state.set_channel_variable_result = ERROR_ok;
+    state.flush_channel_updates_result = ERROR_ok;
+    state.request_server_group_add_client_result = ERROR_ok;
+    state.last_channel_update_id = 0;
+    state.last_channel_update_flag = 0;
+    state.last_channel_update_value.clear();
+    state.last_server_group_id = 0;
+    state.last_server_group_client_database_id = 0;
     state.error_message = "fake TeamSpeak error";
     state.open_capture_calls.clear();
     state.self_variable_updates.clear();
@@ -262,6 +284,112 @@ unsigned int fake_stop_voice_recording(std::uint64_t) {
     return ERROR_ok;
 }
 
+unsigned int fake_get_channel_list(std::uint64_t, std::uint64_t** result) {
+    if (result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    auto* channels = static_cast<std::uint64_t*>(std::malloc(sizeof(std::uint64_t) * 2));
+    channels[0] = 2;
+    channels[1] = 0;
+    *result = channels;
+    return ERROR_ok;
+}
+
+unsigned int fake_get_channel_variable_as_string(
+    std::uint64_t,
+    std::uint64_t channel_id,
+    std::size_t flag,
+    char** result
+) {
+    if (channel_id != 2 || flag != CHANNEL_NAME || result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    *result = duplicate_string("Engineering");
+    return ERROR_ok;
+}
+
+unsigned int fake_get_channel_variable_as_int(
+    std::uint64_t,
+    std::uint64_t channel_id,
+    std::size_t flag,
+    int* result
+) {
+    if (channel_id != 2 || flag != CHANNEL_FLAG_DEFAULT || result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    *result = 0;
+    return ERROR_ok;
+}
+
+unsigned int fake_get_channel_client_list(std::uint64_t, std::uint64_t channel_id, anyID** result) {
+    if (channel_id != 2 || result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    auto* clients = static_cast<anyID*>(std::malloc(sizeof(anyID)));
+    clients[0] = 0;
+    *result = clients;
+    return ERROR_ok;
+}
+
+unsigned int fake_get_parent_channel(std::uint64_t, std::uint64_t channel_id, std::uint64_t* result) {
+    if (channel_id != 2 || result == nullptr) {
+        return ERROR_parameter_invalid;
+    }
+    *result = 0;
+    return ERROR_ok;
+}
+
+unsigned int fake_set_channel_variable_as_string(
+    std::uint64_t,
+    std::uint64_t channel_id,
+    std::size_t flag,
+    const char* value
+) {
+    auto& state = host_state();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    ++state.set_channel_variable_calls;
+    state.last_channel_update_id = channel_id;
+    state.last_channel_update_flag = flag;
+    state.last_channel_update_value = value == nullptr ? "" : value;
+    return state.set_channel_variable_result;
+}
+
+unsigned int fake_flush_channel_updates(std::uint64_t, std::uint64_t channel_id, const char*) {
+    auto& state = host_state();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    ++state.flush_channel_updates_calls;
+    state.last_channel_update_id = channel_id;
+    return state.flush_channel_updates_result;
+}
+
+unsigned int fake_get_server_group_name_by_id(
+    std::uint64_t,
+    unsigned int group_id,
+    char* result,
+    std::size_t max_len
+) {
+    if (group_id != 7 || result == nullptr || max_len == 0) {
+        return ERROR_parameter_invalid;
+    }
+    std::strncpy(result, "Operator", max_len);
+    result[max_len - 1] = '\0';
+    return ERROR_ok;
+}
+
+unsigned int fake_request_server_group_add_client(
+    std::uint64_t,
+    std::uint64_t server_group_id,
+    std::uint64_t client_database_id,
+    const char*
+) {
+    auto& state = host_state();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    ++state.request_server_group_add_client_calls;
+    state.last_server_group_id = server_group_id;
+    state.last_server_group_client_database_id = client_database_id;
+    return state.request_server_group_add_client_result;
+}
+
 class TestMediaBridge final : public teamspeak_cli::bridge::MediaBridge {
   public:
     void arm(std::vector<short> samples) {
@@ -334,6 +462,15 @@ int main() {
     functions.processCustomCaptureData = fake_process_custom_capture_data;
     functions.startVoiceRecording = fake_start_voice_recording;
     functions.stopVoiceRecording = fake_stop_voice_recording;
+    functions.getChannelList = fake_get_channel_list;
+    functions.getChannelVariableAsString = fake_get_channel_variable_as_string;
+    functions.getChannelVariableAsInt = fake_get_channel_variable_as_int;
+    functions.getChannelClientList = fake_get_channel_client_list;
+    functions.getParentChannelOfChannel = fake_get_parent_channel;
+    functions.setChannelVariableAsString = fake_set_channel_variable_as_string;
+    functions.flushChannelUpdates = fake_flush_channel_updates;
+    functions.getServerGroupNameByID = fake_get_server_group_name_by_id;
+    functions.requestServerGroupAddClient = fake_request_server_group_add_client;
 
     backend.set_functions(functions);
     auto initialized = backend.initialize(sdk::InitOptions{});
@@ -367,6 +504,33 @@ int main() {
     tests::expect(
         !initial_info.value().media_diagnostics.captured_voice_edit_attached,
         "media diagnostics should make clear that playback is not attached through captured-voice editing"
+    );
+
+    auto renamed_channel = backend.rename_channel(domain::Selector{"2"}, "Platform");
+    tests::expect(renamed_channel.ok(), "plugin backend should rename a channel through TeamSpeak channel updates");
+    tests::expect_eq(
+        renamed_channel.value().name,
+        std::string("Platform"),
+        "plugin backend should report the requested channel name after rename"
+    );
+
+    domain::ServerGroupApplicationRequest group_database_request{};
+    group_database_request.group = "7";
+    group_database_request.client_database_id = domain::ClientDatabaseId{1002};
+    auto applied_group = backend.apply_server_group(group_database_request);
+    tests::expect(
+        applied_group.ok(),
+        "plugin backend should apply a server group using a direct client database id"
+    );
+    tests::expect_eq(
+        applied_group.value().server_group.name,
+        std::string("Operator"),
+        "plugin backend should report the server group name when available"
+    );
+    tests::expect_eq(
+        applied_group.value().client_database_id.value,
+        std::uint64_t(1002),
+        "plugin backend should preserve the target client database id"
     );
 
     auto media_bridge = std::make_shared<TestMediaBridge>();
@@ -430,6 +594,46 @@ int main() {
         );
         tests::expect_eq(state.start_voice_recording_calls, 0, "custom capture playback should not start TeamSpeak recording");
         tests::expect_eq(state.stop_voice_recording_calls, 0, "custom capture playback should not stop TeamSpeak recording");
+        tests::expect_eq(
+            state.set_channel_variable_calls,
+            1,
+            "channel rename should set one TeamSpeak channel variable"
+        );
+        tests::expect_eq(
+            state.flush_channel_updates_calls,
+            1,
+            "channel rename should flush one TeamSpeak channel update"
+        );
+        tests::expect_eq(
+            state.last_channel_update_id,
+            std::uint64_t(2),
+            "channel rename should target the selected channel id"
+        );
+        tests::expect_eq(
+            state.last_channel_update_flag,
+            static_cast<std::size_t>(CHANNEL_NAME),
+            "channel rename should update the channel name flag"
+        );
+        tests::expect_eq(
+            state.last_channel_update_value,
+            std::string("Platform"),
+            "channel rename should pass the requested new name"
+        );
+        tests::expect_eq(
+            state.request_server_group_add_client_calls,
+            1,
+            "server group application should request one server group membership update"
+        );
+        tests::expect_eq(
+            state.last_server_group_id,
+            std::uint64_t(7),
+            "server group application should target the selected group id"
+        );
+        tests::expect_eq(
+            state.last_server_group_client_database_id,
+            std::uint64_t(1002),
+            "server group application should target the requested client database id"
+        );
         tests::expect(!state.last_capture_samples.empty(), "custom capture playback should submit PCM samples to TeamSpeak");
         tests::expect_eq(state.last_capture_samples[0], static_cast<short>(111), "submitted PCM should match the media bridge");
         tests::expect_eq(state.last_capture_samples[1], static_cast<short>(222), "submitted PCM should preserve ordering");

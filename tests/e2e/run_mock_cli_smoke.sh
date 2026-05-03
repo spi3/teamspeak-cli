@@ -117,10 +117,24 @@ assert_contains "${last_stdout}" 'Lobby'
 run_ts_capture channel_wide channel list --wide --config "${config_path}"
 assert_contains "${last_stdout}" 'Subscribed'
 
+run_ts_capture channel_rename_json --json channel rename Engineering --name Platform --config "${config_path}"
+assert_contains "${last_stdout}" '"id":"2"'
+assert_contains "${last_stdout}" '"name":"Platform"'
+
 client_json="$("${ts_bin}" --json client list --config "${config_path}")"
 printf '%s\n' "${client_json}" | grep -q '"nickname":"terminal"'
 run_ts_capture client_wide client list --wide --config "${config_path}"
 assert_contains "${last_stdout}" 'Unique Identity'
+
+run_ts_capture server_group_apply_json --json server group apply --group Operator --client alice --config "${config_path}"
+assert_contains "${last_stdout}" '"result":"applied"'
+assert_contains "${last_stdout}" '"client_database_id":"1002"'
+assert_contains "${last_stdout}" '"name":"Operator"'
+assert_contains "${last_stdout}" '"nickname":"alice"'
+
+run_ts_capture server_group_apply_db_json --json server group apply --group 7 --client-db-id 1002 --config "${config_path}"
+assert_contains "${last_stdout}" '"result":"applied"'
+assert_contains "${last_stdout}" '"client":null'
 
 events_json="$("${ts_bin}" --json events watch --count 2 --timeout-ms 1500 --config "${config_path}")"
 printf '%s\n' "${events_json}" | grep -q '"type":"'

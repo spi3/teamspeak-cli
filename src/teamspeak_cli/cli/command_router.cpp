@@ -158,6 +158,21 @@ const std::vector<CommandDoc>& command_docs() {
         },
         {{"server"}, "ts server <subcommand>", "Inspect the current server session", {}},
         {{"server", "info"}, "ts server info", "Show server details", {}},
+        {{"server", "group"}, "ts server group <subcommand>", "Manage server group assignments", {}},
+        {
+            {"server", "group", "apply"},
+            "ts server group apply --group <id-or-name> (--client <id-or-name>|--client-db-id <id>)",
+            "Apply a server group to a client",
+            {
+                {"--group <id-or-name>", "Server group ID or name to apply."},
+                {"--client <id-or-name>", "Connected client ID or nickname to receive the group."},
+                {"--client-db-id <id>", "Client database ID to receive the group.", "positive integer"},
+            },
+            {
+                "ts server group apply --group Operator --client alice",
+                "ts server group apply --group 7 --client-db-id 1002",
+            },
+        },
         {{"channel"}, "ts channel <subcommand>", "Inspect and join channels", {}},
         {
             {"channel", "list"},
@@ -170,6 +185,13 @@ const std::vector<CommandDoc>& command_docs() {
         {{"channel", "clients"}, "ts channel clients [id-or-name]", "List clients in one channel or across all channels", {}},
         {{"channel", "get"}, "ts channel get <id-or-name>", "Show one channel", {}},
         {{"channel", "join"}, "ts channel join <id-or-name>", "Join a channel if supported", {}},
+        {
+            {"channel", "rename"},
+            "ts channel rename <id-or-name> --name <name>",
+            "Rename a channel if supported",
+            {{"--name <name>", "New channel name."}},
+            {"ts channel rename Engineering --name Platform"},
+        },
         {{"client"}, "ts client <subcommand>", "Inspect connected clients and manage the local TeamSpeak client", {}},
         {{"client", "status"}, "ts client status", "Show the tracked local TeamSpeak client process status", {}},
         {
@@ -427,6 +449,9 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     if (path == "server info") {
         return "read TeamSpeak server info";
     }
+    if (path == "server group apply") {
+        return "apply the TeamSpeak server group";
+    }
     if (path == "channel list") {
         return "list TeamSpeak channels";
     }
@@ -435,6 +460,9 @@ auto session_action_for_path(std::string_view path) -> std::string_view {
     }
     if (path == "channel join") {
         return "join the TeamSpeak channel";
+    }
+    if (path == "channel rename") {
+        return "rename the TeamSpeak channel";
     }
     if (path == "channel clients") {
         return "list TeamSpeak clients by channel";
@@ -508,6 +536,10 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
 
     if (error.code == "client_not_found") {
         add_error_hint(error, "Run `ts client list` to see available client IDs and nicknames.");
+    }
+
+    if (error.code == "server_group_not_found") {
+        add_error_hint(error, "Use a server group ID, or verify the group name in the TeamSpeak client.");
     }
 
     if (error.code == "profile_not_found") {
@@ -5074,6 +5106,33 @@ auto channel_clients_table(const std::vector<ChannelClientGroup>& groups) -> out
     return table;
 }
 
+auto channel_rename_view(const domain::Channel& channel) -> std::string {
+    return "Renamed channel " + domain::to_string(channel.id) + " to " + channel.name + ".";
+}
+
+auto server_group_application_value(const domain::ServerGroupApplication& application)
+    -> output::ValueHolder {
+    return output::make_object({
+        {"result", output::make_string("applied")},
+        {"server_group", output::to_value(application.server_group)},
+        {"client", application.client.has_value() ? output::to_value(*application.client)
+                                                  : output::ValueHolder{nullptr}},
+        {"client_database_id", output::make_string(domain::to_string(application.client_database_id))},
+    });
+}
+
+auto server_group_application_view(const domain::ServerGroupApplication& application) -> std::string {
+    const std::string group_label =
+        application.server_group.name.empty()
+            ? domain::to_string(application.server_group.id)
+            : application.server_group.name + " (" + domain::to_string(application.server_group.id) + ")";
+    std::string target_label = "client database ID " + domain::to_string(application.client_database_id);
+    if (application.client.has_value()) {
+        target_label = application.client->nickname + " (" + target_label + ")";
+    }
+    return "Applied server group " + group_label + " to " + target_label + ".";
+}
+
 auto resolve_client_launch_socket_path(
     const ParsedCommand& command,
     const config::ConfigStore& store
@@ -5342,6 +5401,8 @@ auto CommandRouter::parse(int argc, char** argv) const -> domain::Result<ParsedC
                 option == "nickname" || option == "identity" || option == "config" ||
                 option == "field" ||
                 option == "target" || option == "id" || option == "text" ||
+                option == "name" || option == "group" || option == "client" ||
+                option == "client-db-id" ||
                 option == "count" || option == "timeout-ms" || option == "poll-ms" ||
                 option == "type" || option == "exec" || option == "message-kind" ||
                 option == "copy-from" || option == "message" || option == "file" ||
@@ -6410,6 +6471,60 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
             });
         }
 
+        if (path == "server group apply") {
+            const auto unexpected = reject_unexpected_positionals(command, 0);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            auto group = require_option(command, "group");
+            if (!group) {
+                return domain::fail<output::CommandOutput>(group.error());
+            }
+
+            const bool has_client = command.options.contains("client");
+            const bool has_client_database_id = command.options.contains("client-db-id");
+            if (has_client == has_client_database_id) {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "invalid_server_group_target",
+                    "provide exactly one of --client or --client-db-id"
+                ));
+            }
+
+            domain::ServerGroupApplicationRequest request{};
+            request.group = group.value();
+            if (has_client) {
+                auto client = require_option(command, "client");
+                if (!client) {
+                    return domain::fail<output::CommandOutput>(client.error());
+                }
+                request.client = client.value();
+            } else {
+                auto client_database_id = require_option(command, "client-db-id");
+                if (!client_database_id) {
+                    return domain::fail<output::CommandOutput>(client_database_id.error());
+                }
+                const auto parsed = util::parse_u64(client_database_id.value());
+                if (!parsed.has_value() || *parsed == 0) {
+                    return domain::fail<output::CommandOutput>(cli_error(
+                        "invalid_client_database_id",
+                        "--client-db-id must be a positive integer"
+                    ));
+                }
+                request.client_database_id = domain::ClientDatabaseId{*parsed};
+            }
+
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto applied = session.apply_server_group(request);
+                if (!applied) {
+                    return domain::fail<output::CommandOutput>(applied.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = server_group_application_value(applied.value()),
+                    .human = server_group_application_view(applied.value()),
+                });
+            });
+        }
+
         if (path == "channel list") {
             return with_session(command, config_store_, backend_factory_, [](auto& session, const auto&) {
                 auto channels = session.list_channels();
@@ -6496,6 +6611,38 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 return domain::ok(output::CommandOutput{
                     .data = output::to_value(state.value()),
                     .human = output::server_view(state.value()),
+                });
+            });
+        }
+
+        if (path == "channel rename") {
+            auto selector = require_positional(command, 0, "id-or-name");
+            if (!selector) {
+                return domain::fail<output::CommandOutput>(selector.error());
+            }
+            const auto unexpected = reject_unexpected_positionals(command, 1);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            auto name = require_option(command, "name");
+            if (!name) {
+                return domain::fail<output::CommandOutput>(name.error());
+            }
+            if (util::trim(name.value()).empty()) {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "invalid_channel_name",
+                    "--name must not be empty"
+                ));
+            }
+
+            return with_session(command, config_store_, backend_factory_, [&](auto& session, const auto&) {
+                auto channel = session.rename_channel(domain::Selector{selector.value()}, name.value());
+                if (!channel) {
+                    return domain::fail<output::CommandOutput>(channel.error());
+                }
+                return domain::ok(output::CommandOutput{
+                    .data = output::to_value(channel.value()),
+                    .human = channel_rename_view(channel.value()),
                 });
             });
         }

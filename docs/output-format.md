@@ -107,7 +107,7 @@ Used by `ts status`, and nested under `state` in `ts connect` and `ts disconnect
 
 ### Channel
 
-Used by `ts channel list` and nested under `channel` in `ts channel clients`.
+Used by `ts channel list`, `ts channel rename`, and nested under `channel` in `ts channel clients`.
 
 | Field | Type | Nullable | Stability | Notes |
 | --- | --- | --- | --- | --- |
@@ -120,7 +120,7 @@ Used by `ts channel list` and nested under `channel` in `ts channel clients`.
 
 ### Client
 
-Used by `ts client list` and nested under `clients` in `ts channel clients`.
+Used by `ts client list`, nested under `clients` in `ts channel clients`, and nested under `client` in `ts server group apply`.
 
 | Field | Type | Nullable | Stability | Notes |
 | --- | --- | --- | --- | --- |
@@ -130,6 +130,15 @@ Used by `ts client list` and nested under `clients` in `ts channel clients`.
 | `self` | boolean | no | stable | Whether the client is the local user. |
 | `talking` | boolean | no | best-effort | Current speaking state when available. |
 | `unique_identity` | string | no | best-effort | TeamSpeak unique identity; may be empty if unavailable. |
+
+### Server Group
+
+Used by `ts server group apply`.
+
+| Field | Type | Nullable | Stability | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | no | stable | Server group ID encoded as a string. |
+| `name` | string | no | best-effort | Server group display name, or the ID string when a name is unavailable. |
 
 ### Event
 
@@ -230,6 +239,10 @@ Top-level type: object.
 
 Top-level type: array. Each item is a [Channel](#channel).
 
+### `ts channel rename`
+
+Top-level type: object. Shape: [Channel](#channel).
+
 ### `ts channel clients`
 
 Without an argument, top-level type is an array of channel-client groups. With `id-or-name`, top-level type is one channel-client group object.
@@ -238,6 +251,17 @@ Without an argument, top-level type is an array of channel-client groups. With `
 | --- | --- | --- | --- | --- |
 | `channel` | object | no | stable | See [Channel](#channel). |
 | `clients` | array | no | stable | Array of [Client](#client) objects. Empty channels use `[]`. |
+
+### `ts server group apply`
+
+Top-level type: object.
+
+| Field | Type | Nullable | Stability | Notes |
+| --- | --- | --- | --- | --- |
+| `client` | object or null | yes | stable | See [Client](#client). `null` when `--client-db-id` is used directly. |
+| `client_database_id` | string | no | stable | TeamSpeak client database ID encoded as a string. |
+| `result` | string | no | stable | Always `applied` on success. |
+| `server_group` | object | no | stable | See [Server Group](#server-group). |
 
 ### `ts client list`
 
