@@ -136,7 +136,13 @@ const std::vector<CommandDoc>& command_docs() {
             {{"--release-tag <tag>", "Install a specific GitHub release tag instead of the latest release.", {}, "latest release"}},
             {"ts update", "ts update --release-tag v1.2.3"},
         },
-        {{"connect"}, "ts connect", "Open a TeamSpeak server connection and wait for completion", {}},
+        {
+            {"connect"},
+            "ts connect [--timeout-ms N]",
+            "Open a TeamSpeak server connection and wait for completion",
+            {{"--timeout-ms <N>", "How long to wait before reporting connect timeout.", "integer milliseconds", "15000"}},
+            {"ts connect", "ts connect --timeout-ms 5000"},
+        },
         {{"disconnect"}, "ts disconnect", "Ask the TeamSpeak client plugin to close the current connection", {}},
         {{"mute"}, "ts mute", "Mute your TeamSpeak microphone", {}},
         {{"unmute"}, "ts unmute", "Unmute your TeamSpeak microphone", {}},
@@ -602,7 +608,10 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
     }
 
     if (path == "client inspect-windows" && error.code == "xdotool_not_found") {
-        add_error_hint(error, "Install xdotool or set `TS_CLIENT_XDOTOOL` to a usable xdotool binary.");
+        add_error_hint(
+            error,
+            "Install xdotool (set `TS_CLIENT_XDOTOOL`) or xwininfo (set `TS_CLIENT_XWININFO`) to inspect windows."
+        );
     }
 
     if (path == "client start" &&
@@ -1592,6 +1601,18 @@ auto resolve_xdotool_paths() -> std::optional<XdotoolPaths> {
     };
 }
 
+auto resolve_xwininfo_path() -> std::optional<std::filesystem::path> {
+    if (const char* explicit_xwininfo = std::getenv("TS_CLIENT_XWININFO");
+        explicit_xwininfo != nullptr && *explicit_xwininfo != '\0') {
+        const std::filesystem::path explicit_path(explicit_xwininfo);
+        if (is_executable_file(explicit_path)) {
+            return explicit_path;
+        }
+        return std::nullopt;
+    }
+    return find_executable_on_path("xwininfo");
+}
+
 auto managed_xvfb_root_for_path(const std::filesystem::path& xvfb_path) -> std::optional<std::filesystem::path> {
     const auto bin_dir = xvfb_path.parent_path();
     if (bin_dir.filename() != "bin") {
@@ -2049,6 +2070,52 @@ auto xdotool_run(const XdotoolPaths& xdotool, std::string_view display, const st
     argv.push_back(xdotool.binary_path.string());
     argv.insert(argv.end(), args.begin(), args.end());
     (void)run_command_capture_stdout(argv, xdotool_env(xdotool, display));
+}
+
+auto xwininfo_tree_windows(const std::filesystem::path& xwininfo, std::string_view display)
+    -> std::vector<ClientWindowInfo> {
+    const auto lines = split_output_lines(run_command_capture_stdout(
+        {xwininfo.string(), "-root", "-tree", "-display", std::string(display)}
+    ));
+    std::vector<ClientWindowInfo> windows;
+    windows.reserve(lines.size());
+    for (const auto& line : lines) {
+        const auto trimmed = util::trim(line);
+        const auto id_end = trimmed.find(' ');
+        if (id_end == std::string::npos) {
+            continue;
+        }
+
+        const auto id = util::trim(trimmed.substr(0, id_end));
+        if (id.empty() || id.rfind("0x", 0) != 0) {
+            continue;
+        }
+
+        const auto title_begin = trimmed.find('"');
+        if (title_begin == std::string::npos) {
+            continue;
+        }
+        const auto title_end = trimmed.find('"', title_begin + 1);
+        if (title_end == std::string::npos) {
+            continue;
+        }
+
+        const std::string title = trimmed.substr(title_begin + 1, title_end - title_begin - 1);
+        if (title.empty() || title == "TeamSpeak 3") {
+            continue;
+        }
+        if (title.find("TeamSpeak") == std::string::npos && title.find("ts3client") == std::string::npos &&
+            line.find("TeamSpeak") == std::string::npos && line.find("ts3client") == std::string::npos) {
+            continue;
+        }
+        if (std::any_of(windows.begin(), windows.end(), [&](const auto& existing) {
+                return existing.id == id;
+            })) {
+            continue;
+        }
+        windows.push_back(ClientWindowInfo{.id = std::string(id), .title = title});
+    }
+    return windows;
 }
 
 auto xdotool_window_size(const XdotoolPaths& xdotool, std::string_view display, std::string_view window_id)
@@ -2903,31 +2970,39 @@ auto inspect_client_windows() -> domain::Result<ClientWindowInspection> {
     }
 
     const auto xdotool = resolve_xdotool_paths();
-    if (!xdotool.has_value()) {
+    if (xdotool.has_value()) {
+        ClientWindowInspection inspection{
+            .display = display.value(),
+            .windows = {},
+        };
+        for (const auto& window_id : xdotool_visible_window_ids(*xdotool, inspection.display)) {
+            if (std::any_of(inspection.windows.begin(), inspection.windows.end(), [&](const auto& window) {
+                    return window.id == window_id;
+                })) {
+                continue;
+            }
+            inspection.windows.push_back(ClientWindowInfo{
+                .id = window_id,
+                .title = xdotool_window_name(*xdotool, inspection.display, window_id).value_or("-"),
+            });
+        }
+        return domain::ok(std::move(inspection));
+    }
+
+    const auto xwininfo = resolve_xwininfo_path();
+    if (!xwininfo.has_value()) {
         return domain::fail<ClientWindowInspection>(client_error(
             "xdotool_not_found",
-            "xdotool is required to inspect visible TeamSpeak windows; install xdotool or set TS_CLIENT_XDOTOOL",
+            "Either xdotool or xwininfo is required to inspect visible TeamSpeak windows; install a tool or set TS_CLIENT_XDOTOOL/TS_CLIENT_XWININFO",
             domain::ExitCode::not_found
         ));
     }
 
-    ClientWindowInspection inspection{
+    const auto windows = xwininfo_tree_windows(*xwininfo, display.value());
+    return domain::ok(ClientWindowInspection{
         .display = display.value(),
-        .windows = {},
-    };
-    for (const auto& window_id : xdotool_visible_window_ids(*xdotool, inspection.display)) {
-        if (std::any_of(inspection.windows.begin(), inspection.windows.end(), [&](const auto& window) {
-                return window.id == window_id;
-            })) {
-            continue;
-        }
-        inspection.windows.push_back(ClientWindowInfo{
-            .id = window_id,
-            .title = xdotool_window_name(*xdotool, inspection.display, window_id).value_or("-"),
-        });
-    }
-
-    return domain::ok(std::move(inspection));
+        .windows = windows,
+    });
 }
 
 auto client_window_value(const ClientWindowInfo& window) -> output::ValueHolder {
@@ -3022,6 +3097,9 @@ auto connect_timeout_diagnostics(const domain::Profile& profile) -> ConnectTimeo
         diagnostics.hints.push_back(
             "Resolve the visible TeamSpeak window before retrying: " + util::join(titles, ", ") + "."
         );
+        for (const auto& title : titles) {
+            diagnostics.hints.push_back("TeamSpeak client is blocked by modal dialog: " + title);
+        }
         if (std::find(titles.begin(), titles.end(), "License agreement") != titles.end()) {
             diagnostics.hints.push_back(
                 "If you accept the TeamSpeak license terms, rerun `ts client start --accept-license` or set `TS_CLIENT_ACCEPT_LICENSE=1` for first-run automation."
@@ -6286,9 +6364,16 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 if (stream_progress) {
                     progress(connect_start_message(resolved.profile));
                 }
+                const auto timeout = parse_timeout_ms(
+                    command.options,
+                    std::chrono::duration_cast<std::chrono::milliseconds>(kConnectCompletionTimeout).count()
+                );
+                if (!timeout) {
+                    return domain::fail<output::CommandOutput>(timeout.error());
+                }
                 auto connected = session.connect_and_wait(
                     build_connect_request(resolved.profile),
-                    kConnectCompletionTimeout,
+                    timeout.value(),
                     stream_progress ? session::ConnectEventCallback([&](const domain::Event& event) {
                         progress(output::connect_progress_message(event));
                     })
