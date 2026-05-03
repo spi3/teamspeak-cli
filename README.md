@@ -161,12 +161,12 @@ The CLI is organized into small command groups:
 - `version`
 - `update`
 - `plugin info`
-- `config init`, `config view`
-- `profile list`, `profile use`
+- `config init`, `config path`, `config view`
+- `profile create`, `profile list`, `profile show`, `profile set`, `profile unset`, `profile delete`, `profile use`
 - `connect`, `disconnect`, `status`, `server info`
 - `daemon start`, `daemon stop`, `daemon status`
 - `channel list`, `channel get`, `channel join`, `channel clients`
-- `client status`, `client start`, `client stop`, `client list`, `client get`
+- `client status`, `client start`, `client inspect-windows`, `client stop`, `client list`, `client get`
 - `message send`, `message inbox`
 - `playback status`, `playback send`
 - `events watch`, `events hook add`, `events hook list`, `events hook remove`
@@ -244,9 +244,12 @@ See [docs/output-format.md](docs/output-format.md) for the stdout/stderr and mac
 
 `ts` uses an INI config file.
 
-- default path: `~/.config/ts/config.ini`
-- override per command with `--config /path/to/config.ini`
+- path precedence: `--config /path/to/config.ini`, then `TS_CONFIG_PATH`, then `$XDG_CONFIG_HOME/ts/config.ini` or the default `~/.config/ts/config.ini`
+- inspect the resolved path with `ts config path`
 - initialize a starter file with `ts config init`
+
+Config files can include `server_password=` and `channel_password=` values. Treat them as private; `ts` writes config
+files with owner-only permissions on Unix. Profile list/show output redacts or omits secret values.
 
 The starter config ships with two profiles:
 
@@ -256,9 +259,14 @@ The starter config ships with two profiles:
 Useful profile commands:
 
 ```bash
+ts config path
 ts config init
 ts config view
 ts profile list
+ts profile show plugin-local
+ts profile set plugin-local nickname terminal
+ts profile unset plugin-local default_channel
+ts profile delete old-profile
 ts profile use mock-local
 ```
 
@@ -405,6 +413,13 @@ If headless launch fails:
 - on Debian/Ubuntu, make sure `pulseaudio-utils` and either `pulseaudio` or `pipewire-pulse` are installed if the launcher reports that audio preflight is unavailable
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
+
+If headless `ts connect` times out while `ts plugin info` is responsive:
+
+- run `ts client inspect-windows` to list visible TeamSpeak dialogs on the tracked X11 display
+- complete any required TeamSpeak license or identity setup before retrying `ts connect`
+- use `ts client start --accept-license` or `TS_CLIENT_ACCEPT_LICENSE=1` only if you accept the TeamSpeak license terms and want first-run headless automation to click the license dialog
+- use `ts client logs` alongside the window list when the display cannot be inspected
 
 If `ts client start` succeeds in a headless non-interactive session but the TeamSpeak client disappears again when that
 session ends:

@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <span>
 #include <sstream>
@@ -92,6 +93,7 @@ const std::vector<CommandDoc>& command_docs() {
             {"ts config init", "ts config init --config ./teamspeak.ini --force"},
         },
         {{"config", "view"}, "ts config view", "Render the current config", {}},
+        {{"config", "path"}, "ts config path", "Print the resolved config path", {}},
         {{"profile"}, "ts profile <subcommand>", "Manage config profiles", {}},
         {
             {"profile", "create"},
@@ -104,6 +106,28 @@ const std::vector<CommandDoc>& command_docs() {
             {"ts profile create qa --copy-from default --activate"},
         },
         {{"profile", "list"}, "ts profile list", "List config profiles", {}},
+        {{"profile", "show"}, "ts profile show [name]", "Show a config profile", {}},
+        {
+            {"profile", "set"},
+            "ts profile set <name> <key> <value>",
+            "Set a profile field",
+            {},
+            {"ts profile set qa nickname terminal", "ts profile set qa port 9987"},
+        },
+        {
+            {"profile", "unset"},
+            "ts profile unset <name> <key>",
+            "Clear an optional profile field",
+            {},
+            {"ts profile unset qa server_password", "ts profile unset qa control_socket_path"},
+        },
+        {
+            {"profile", "delete"},
+            "ts profile delete <name> [--activate <other>]",
+            "Delete a config profile",
+            {{"--activate <other>", "Set another profile active when deleting the active profile."}},
+            {"ts profile delete qa", "ts profile delete qa --activate plugin-local"},
+        },
         {{"profile", "use"}, "ts profile use <name>", "Set the active default profile", {}},
         {
             {"update"},
@@ -148,7 +172,21 @@ const std::vector<CommandDoc>& command_docs() {
         {{"channel", "join"}, "ts channel join <id-or-name>", "Join a channel if supported", {}},
         {{"client"}, "ts client <subcommand>", "Inspect connected clients and manage the local TeamSpeak client", {}},
         {{"client", "status"}, "ts client status", "Show the tracked local TeamSpeak client process status", {}},
-        {{"client", "start"}, "ts client start", "Launch the local TeamSpeak client process", {}},
+        {
+            {"client", "start"},
+            "ts client start [--accept-license]",
+            "Launch the local TeamSpeak client process",
+            {{"--accept-license", "In headless mode, explicitly accept the TeamSpeak license dialog if it appears."}},
+            {"ts client start", "ts client start --accept-license"},
+        },
+        {
+            {"client", "inspect-windows"},
+            "ts client inspect-windows",
+            "List visible X11 windows on the TeamSpeak client display",
+            {},
+            {"ts client inspect-windows", "ts client inspect-windows --json"},
+            {"JSON output is an object with the inspected display and visible window titles."},
+        },
         {
             {"client", "stop"},
             "ts client stop [--force]",
@@ -524,6 +562,17 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
         add_error_hint(error, "Install Xvfb or set `TS_CLIENT_HEADLESS=0`, then rerun `ts client start`.");
     }
 
+    if (path == "client inspect-windows" && error.code == "display_not_found") {
+        add_error_hint(
+            error,
+            "Run `ts client start` first, or set `DISPLAY`/`TS_CLIENT_HEADLESS_DISPLAY` to the X11 display to inspect."
+        );
+    }
+
+    if (path == "client inspect-windows" && error.code == "xdotool_not_found") {
+        add_error_hint(error, "Install xdotool or set `TS_CLIENT_XDOTOOL` to a usable xdotool binary.");
+    }
+
     if (path == "client start" &&
         (error.code == "systemd_unavailable" || error.code == "systemd_user_unavailable" ||
          error.code == "systemd_launch_failed")) {
@@ -601,6 +650,23 @@ struct ClientHeadlessLaunch {
 struct XdotoolPaths {
     std::filesystem::path binary_path;
     std::string library_path;
+};
+
+struct ClientWindowInfo {
+    std::string id;
+    std::string title;
+};
+
+struct ClientWindowInspection {
+    std::string display;
+    std::vector<ClientWindowInfo> windows;
+};
+
+struct ConnectTimeoutDiagnostics {
+    std::string display;
+    std::vector<ClientWindowInfo> windows;
+    std::string inspection_error;
+    std::vector<std::string> hints;
 };
 
 struct DiscoveredClientProcess {
@@ -1924,6 +1990,26 @@ auto xdotool_window_ids(const XdotoolPaths& xdotool, std::string_view display, s
     ));
 }
 
+auto xdotool_visible_window_ids(const XdotoolPaths& xdotool, std::string_view display)
+    -> std::vector<std::string> {
+    return split_output_lines(run_command_capture_stdout(
+        {xdotool.binary_path.string(), "search", "--onlyvisible", "--name", "."},
+        xdotool_env(xdotool, display)
+    ));
+}
+
+auto xdotool_window_name(const XdotoolPaths& xdotool, std::string_view display, std::string_view window_id)
+    -> std::optional<std::string> {
+    auto names = split_output_lines(run_command_capture_stdout(
+        {xdotool.binary_path.string(), "getwindowname", std::string(window_id)},
+        xdotool_env(xdotool, display)
+    ));
+    if (names.empty()) {
+        return std::nullopt;
+    }
+    return names.front();
+}
+
 auto xdotool_run(const XdotoolPaths& xdotool, std::string_view display, const std::vector<std::string>& args)
     -> void {
     std::vector<std::string> argv;
@@ -1933,11 +2019,8 @@ auto xdotool_run(const XdotoolPaths& xdotool, std::string_view display, const st
     (void)run_command_capture_stdout(argv, xdotool_env(xdotool, display));
 }
 
-auto xdotool_window_size(
-    const XdotoolPaths& xdotool,
-    std::string_view display,
-    std::string_view window_id
-) -> std::optional<std::pair<int, int>> {
+auto xdotool_window_size(const XdotoolPaths& xdotool, std::string_view display, std::string_view window_id)
+    -> std::optional<std::pair<int, int>> {
     const auto geometry_lines = split_output_lines(run_command_capture_stdout(
         {xdotool.binary_path.string(), "getwindowgeometry", "--shell", std::string(window_id)},
         xdotool_env(xdotool, display)
@@ -1969,7 +2052,38 @@ auto xdotool_window_size(
     return std::make_pair(width, height);
 }
 
-void dismiss_headless_client_dialogs(const ClientHeadlessLaunch& headless_launch, pid_t client_pid) {
+auto accept_headless_license_dialog(
+    const XdotoolPaths& xdotool,
+    const ClientHeadlessLaunch& headless_launch
+) -> bool {
+    bool handled_window = false;
+    for (const auto& window_id : xdotool_window_ids(xdotool, headless_launch.display, "License agreement")) {
+        xdotool_run(xdotool, headless_launch.display, {"key", "--window", window_id, "End"});
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        int click_x = 573;
+        int click_y = 676;
+        if (const auto geometry = xdotool_window_size(xdotool, headless_launch.display, window_id);
+            geometry.has_value()) {
+            click_x = geometry->first == 740 ? click_x : geometry->first * 77 / 100;
+            click_y = geometry->second == 700 ? click_y : geometry->second * 97 / 100;
+        }
+        xdotool_run(
+            xdotool,
+            headless_launch.display,
+            {"mousemove", "--window", window_id, std::to_string(click_x), std::to_string(click_y), "click", "1"}
+        );
+        handled_window = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    }
+    return handled_window;
+}
+
+void dismiss_headless_client_dialogs(
+    const ClientHeadlessLaunch& headless_launch,
+    pid_t client_pid,
+    bool accept_license
+) {
     const auto xdotool = resolve_xdotool_paths();
     if (!xdotool.has_value()) {
         return;
@@ -1989,24 +2103,8 @@ void dismiss_headless_client_dialogs(const ClientHeadlessLaunch& headless_launch
         }
 
         bool handled_window = false;
-        for (const auto& window_id : xdotool_window_ids(*xdotool, headless_launch.display, "License agreement")) {
-            xdotool_run(*xdotool, headless_launch.display, {"key", "--window", window_id, "End"});
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-            int click_x = 573;
-            int click_y = 676;
-            if (const auto geometry = xdotool_window_size(*xdotool, headless_launch.display, window_id);
-                geometry.has_value()) {
-                click_x = geometry->first == 740 ? click_x : geometry->first * 77 / 100;
-                click_y = geometry->second == 700 ? click_y : geometry->second * 97 / 100;
-            }
-            xdotool_run(
-                *xdotool,
-                headless_launch.display,
-                {"mousemove", "--window", window_id, std::to_string(click_x), std::to_string(click_y), "click", "1"}
-            );
-            handled_window = true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(700));
+        if (accept_license) {
+            handled_window = accept_headless_license_dialog(*xdotool, headless_launch);
         }
 
         for (const auto title : escape_titles) {
@@ -2150,6 +2248,23 @@ auto resolve_client_headless_mode() -> bool {
     const char* wayland_display = std::getenv("WAYLAND_DISPLAY");
     return (display == nullptr || *display == '\0') &&
            (wayland_display == nullptr || *wayland_display == '\0');
+}
+
+auto client_should_accept_license(const ParsedCommand& command) -> bool {
+    if (command.flags.contains("accept-license")) {
+        return true;
+    }
+
+    if (const char* raw = std::getenv("TS_CLIENT_ACCEPT_LICENSE"); raw != nullptr && *raw != '\0') {
+        if (const auto parsed = util::parse_bool(raw); parsed.has_value()) {
+            return *parsed;
+        }
+        const auto normalized = normalize_boolean_env(raw);
+        return normalized == "true" || normalized == "yes" || normalized == "on" ||
+               normalized == "enabled" || normalized == "accept";
+    }
+
+    return false;
 }
 
 auto x11_socket_path_for_display(std::string_view display) -> std::optional<std::filesystem::path> {
@@ -2652,6 +2767,271 @@ auto discover_running_client_process() -> std::optional<DiscoveredClientProcess>
         return std::nullopt;
     }
     return best_match;
+}
+
+auto read_proc_environ_value(pid_t pid, std::string_view key) -> std::optional<std::string> {
+    if (pid <= 0) {
+        return std::nullopt;
+    }
+
+    std::ifstream input("/proc/" + std::to_string(pid) + "/environ", std::ios::binary);
+    if (!input) {
+        return std::nullopt;
+    }
+
+    const std::string contents(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>()
+    );
+    std::size_t offset = 0;
+    while (offset < contents.size()) {
+        const auto end = contents.find('\0', offset);
+        const auto entry = contents.substr(
+            offset,
+            end == std::string::npos ? std::string::npos : end - offset
+        );
+        const auto separator = entry.find('=');
+        if (separator != std::string::npos && entry.substr(0, separator) == key) {
+            const auto value = entry.substr(separator + 1);
+            if (!value.empty()) {
+                return value;
+            }
+            return std::nullopt;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        offset = end + 1;
+    }
+
+    return std::nullopt;
+}
+
+auto environment_value(std::string_view key) -> std::optional<std::string> {
+    const std::string key_string(key);
+    if (const char* value = std::getenv(key_string.c_str()); value != nullptr && *value != '\0') {
+        return std::string(value);
+    }
+    return std::nullopt;
+}
+
+auto tracked_client_pid_from_state(const ClientStatePaths& paths) -> std::optional<pid_t> {
+    if (const auto unit_name = read_client_unit_file(paths.unit_file); unit_name.has_value()) {
+        if (const auto systemd_paths = resolve_client_systemd_paths(); systemd_paths.has_value()) {
+            if (const auto unit_status = read_client_systemd_unit_status(*systemd_paths, *unit_name);
+                unit_status.has_value()) {
+                const bool unit_active =
+                    unit_status->active_state == "active" || unit_status->active_state == "activating";
+                if (unit_active && unit_status->main_pid > 0 && process_is_running(unit_status->main_pid)) {
+                    return unit_status->main_pid;
+                }
+            }
+        }
+    }
+
+    if (const auto pid = read_pid_file(paths.pid_file); pid.has_value() && process_is_running(*pid)) {
+        return *pid;
+    }
+
+    if (const auto discovered = discover_running_client_process(); discovered.has_value()) {
+        return discovered->pid;
+    }
+
+    return std::nullopt;
+}
+
+auto resolve_client_window_display() -> domain::Result<std::string> {
+    if (auto state_paths = resolve_client_state_paths(); state_paths) {
+        if (const auto pid = tracked_client_pid_from_state(state_paths.value()); pid.has_value()) {
+            if (const auto display = read_proc_environ_value(*pid, "DISPLAY"); display.has_value()) {
+                return domain::ok(*display);
+            }
+        }
+    }
+
+    if (const auto display = environment_value("DISPLAY"); display.has_value()) {
+        return domain::ok(*display);
+    }
+
+    if (const auto display = environment_value("TS_CLIENT_HEADLESS_DISPLAY"); display.has_value()) {
+        return domain::ok(*display);
+    }
+
+    return domain::fail<std::string>(client_error(
+        "display_not_found",
+        "could not determine the TeamSpeak client X11 display to inspect",
+        domain::ExitCode::not_found
+    ));
+}
+
+auto inspect_client_windows() -> domain::Result<ClientWindowInspection> {
+    auto display = resolve_client_window_display();
+    if (!display) {
+        return domain::fail<ClientWindowInspection>(display.error());
+    }
+
+    const auto xdotool = resolve_xdotool_paths();
+    if (!xdotool.has_value()) {
+        return domain::fail<ClientWindowInspection>(client_error(
+            "xdotool_not_found",
+            "xdotool is required to inspect visible TeamSpeak windows; install xdotool or set TS_CLIENT_XDOTOOL",
+            domain::ExitCode::not_found
+        ));
+    }
+
+    ClientWindowInspection inspection{
+        .display = display.value(),
+        .windows = {},
+    };
+    for (const auto& window_id : xdotool_visible_window_ids(*xdotool, inspection.display)) {
+        if (std::any_of(inspection.windows.begin(), inspection.windows.end(), [&](const auto& window) {
+                return window.id == window_id;
+            })) {
+            continue;
+        }
+        inspection.windows.push_back(ClientWindowInfo{
+            .id = window_id,
+            .title = xdotool_window_name(*xdotool, inspection.display, window_id).value_or("-"),
+        });
+    }
+
+    return domain::ok(std::move(inspection));
+}
+
+auto client_window_value(const ClientWindowInfo& window) -> output::ValueHolder {
+    return output::make_object({
+        {"id", output::make_string(window.id)},
+        {"title", output::make_string(window.title)},
+    });
+}
+
+auto client_windows_value(const std::vector<ClientWindowInfo>& windows) -> output::ValueHolder {
+    std::vector<output::ValueHolder> values;
+    values.reserve(windows.size());
+    for (const auto& window : windows) {
+        values.push_back(client_window_value(window));
+    }
+    return output::make_array(std::move(values));
+}
+
+auto string_array_value(const std::vector<std::string>& values) -> output::ValueHolder {
+    std::vector<output::ValueHolder> output_values;
+    output_values.reserve(values.size());
+    for (const auto& value : values) {
+        output_values.push_back(output::make_string(value));
+    }
+    return output::make_array(std::move(output_values));
+}
+
+auto client_windows_human(const ClientWindowInspection& inspection) -> std::string {
+    std::ostringstream out;
+    if (inspection.windows.empty()) {
+        out << "No visible X11 windows were found on DISPLAY " << inspection.display << '.';
+    } else {
+        out << "Visible X11 windows on DISPLAY " << inspection.display << '.';
+    }
+    out << "\n\nWindow Context\n";
+    output::Table table{{"WindowID", "Title"}, {}};
+    for (const auto& window : inspection.windows) {
+        table.rows.push_back({window.id, window.title});
+    }
+    out << output::render(output::CommandOutput{
+        .data = client_windows_value(inspection.windows),
+        .human = table,
+    }, output::Format::table);
+    return out.str();
+}
+
+auto client_windows_output(const ClientWindowInspection& inspection) -> output::CommandOutput {
+    return output::CommandOutput{
+        .data = output::make_object({
+            {"display", output::make_string(inspection.display)},
+            {"windows", client_windows_value(inspection.windows)},
+        }),
+        .human = client_windows_human(inspection),
+    };
+}
+
+auto unique_window_titles(const std::vector<ClientWindowInfo>& windows) -> std::vector<std::string> {
+    std::vector<std::string> titles;
+    for (const auto& window : windows) {
+        if (window.title.empty() || window.title == "-") {
+            continue;
+        }
+        if (std::find(titles.begin(), titles.end(), window.title) == titles.end()) {
+            titles.push_back(window.title);
+        }
+    }
+    return titles;
+}
+
+auto connect_timeout_diagnostics(const domain::Profile& profile) -> ConnectTimeoutDiagnostics {
+    ConnectTimeoutDiagnostics diagnostics;
+    if (!util::iequals(profile.backend, "plugin")) {
+        return diagnostics;
+    }
+
+    diagnostics.hints.push_back("Run `ts plugin info` to confirm the plugin bridge is responsive.");
+    diagnostics.hints.push_back("Run `ts client inspect-windows` to inspect visible TeamSpeak dialogs.");
+
+    auto inspection = inspect_client_windows();
+    if (!inspection) {
+        diagnostics.inspection_error = inspection.error().message;
+        diagnostics.hints.push_back(
+            "If this is a managed headless session, inspect the Xvfb display for blocking TeamSpeak dialogs."
+        );
+        return diagnostics;
+    }
+
+    diagnostics.display = inspection.value().display;
+    diagnostics.windows = std::move(inspection.value().windows);
+    const auto titles = unique_window_titles(diagnostics.windows);
+    if (!titles.empty()) {
+        diagnostics.hints.push_back(
+            "Resolve the visible TeamSpeak window before retrying: " + util::join(titles, ", ") + "."
+        );
+        if (std::find(titles.begin(), titles.end(), "License agreement") != titles.end()) {
+            diagnostics.hints.push_back(
+                "If you accept the TeamSpeak license terms, rerun `ts client start --accept-license` or set `TS_CLIENT_ACCEPT_LICENSE=1` for first-run automation."
+            );
+        }
+    }
+
+    return diagnostics;
+}
+
+auto connect_timeout_diagnostics_value(const ConnectTimeoutDiagnostics& diagnostics) -> output::ValueHolder {
+    return output::make_object({
+        {"display", output::make_string(diagnostics.display)},
+        {"visible_windows", client_windows_value(diagnostics.windows)},
+        {"inspection_error", output::make_string(diagnostics.inspection_error)},
+    });
+}
+
+auto append_connect_timeout_human_diagnostics(std::string human, const ConnectTimeoutDiagnostics& diagnostics)
+    -> std::string {
+    if (!diagnostics.windows.empty()) {
+        human += "\n\nVisible TeamSpeak Windows\n";
+        const auto titles = unique_window_titles(diagnostics.windows);
+        for (const auto& title : titles) {
+            human += "- " + title + "\n";
+        }
+        if (!titles.empty()) {
+            human.pop_back();
+        }
+    } else if (!diagnostics.inspection_error.empty()) {
+        human += "\n\nWindow Inspection\n";
+        human += diagnostics.inspection_error;
+    }
+
+    if (!diagnostics.hints.empty()) {
+        human += "\n\nNext steps:";
+        for (std::size_t index = 0; index < diagnostics.hints.size(); ++index) {
+            human += "\n" + std::to_string(index + 1) + ". " + diagnostics.hints[index];
+        }
+    }
+
+    return human;
 }
 
 auto write_pid_file(const std::filesystem::path& pid_file, pid_t pid) -> domain::Result<void> {
@@ -3397,6 +3777,7 @@ auto start_client_process(
     if (!headless_launch) {
         return domain::fail<output::CommandOutput>(headless_launch.error());
     }
+    const bool accept_license = client_should_accept_license(command);
 
     auto launch_preflight = preflight_client_launch_runtime(paths.value());
     if (!launch_preflight) {
@@ -3410,6 +3791,11 @@ auto start_client_process(
                 "No GUI display was detected, so the TeamSpeak client will start headlessly on DISPLAY " +
                 headless_launch.value()->display + "."
             );
+            if (accept_license) {
+                progress(
+                    "License auto-accept was explicitly requested for the headless TeamSpeak first-run dialog."
+                );
+            }
         }
     }
 
@@ -3528,7 +3914,7 @@ auto start_client_process(
     }
 
     if (headless_launch.value().has_value()) {
-        dismiss_headless_client_dialogs(*headless_launch.value(), launched.value().pid);
+        dismiss_headless_client_dialogs(*headless_launch.value(), launched.value().pid, accept_license);
     }
 
     if (progress) {
@@ -3805,12 +4191,307 @@ auto require_option(const ParsedCommand& command, const std::string& key) -> dom
     return domain::ok(it->second);
 }
 
+auto reject_unexpected_positionals(const ParsedCommand& command, std::size_t expected_count)
+    -> domain::Result<void> {
+    if (command.positionals.size() <= expected_count) {
+        return domain::ok();
+    }
+    return domain::fail(cli_error(
+        "unexpected_argument", "unexpected argument: " + command.positionals[expected_count]
+    ));
+}
+
+auto resolve_config_path(const config::ConfigStore& store, const ParsedCommand& command)
+    -> std::filesystem::path {
+    return command.global.config_path.empty() ? store.default_path() : command.global.config_path;
+}
+
+auto profile_display_value(const std::string& value) -> std::string {
+    return value.empty() ? "-" : value;
+}
+
+auto profile_details(const domain::Profile& profile, const std::string& active_profile) -> output::Details {
+    return output::Details{{
+        {"Name", profile.name},
+        {"Backend", profile.backend},
+        {"Host", profile.host},
+        {"Port", std::to_string(profile.port)},
+        {"Nickname", profile.nickname},
+        {"Identity", profile_display_value(profile.identity)},
+        {"DefaultChannel", profile_display_value(profile.default_channel)},
+        {"ControlSocketPath", profile_display_value(profile.control_socket_path)},
+        {"Active", profile.name == active_profile ? "yes" : "no"},
+    }};
+}
+
+auto profile_result_object(
+    const std::filesystem::path& config_path,
+    const std::string& active_profile,
+    const domain::Profile& profile
+) -> output::ValueHolder {
+    return output::make_object({
+        {"path", output::make_string(config_path.string())},
+        {"active_profile", output::make_string(active_profile)},
+        {"profile", output::to_value(profile)},
+    });
+}
+
+auto require_profile_string_value(const std::string& key, const std::string& value) -> domain::Result<void> {
+    if (!value.empty()) {
+        return domain::ok();
+    }
+    return domain::fail(cli_error(
+        "invalid_profile_value", "profile field cannot be empty: " + key
+    ));
+}
+
+auto unknown_profile_key_error(const std::string& key) -> domain::Error {
+    return cli_error("unknown_profile_key", "unknown profile key: " + key);
+}
+
+auto router_config_error(std::string code, std::string message) -> domain::Error {
+    return domain::make_error("config", std::move(code), std::move(message), domain::ExitCode::config);
+}
+
+auto apply_profile_list_root_key(domain::AppConfig& config, const std::string& key, const std::string& value)
+    -> domain::Result<void> {
+    if (key == "version") {
+        const auto parsed = util::parse_u64(value);
+        if (!parsed.has_value()) {
+            return domain::fail(router_config_error("invalid_version", "invalid config version"));
+        }
+        if (*parsed > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+            return domain::fail(router_config_error("unsupported_version", "unsupported config version: " + value));
+        }
+        config.version = static_cast<int>(*parsed);
+        return domain::ok();
+    }
+    if (key == "active_profile") {
+        config.active_profile = value;
+        return domain::ok();
+    }
+    return domain::fail(router_config_error("unknown_key", "unknown config key: " + key));
+}
+
+auto apply_profile_list_profile_key(domain::Profile& profile, const std::string& key, const std::string& value)
+    -> domain::Result<void> {
+    if (key == "backend") {
+        profile.backend = util::iequals(value, "fake") ? "mock" : value;
+    } else if (key == "host") {
+        profile.host = value;
+    } else if (key == "port") {
+        const auto parsed = util::parse_u16(value);
+        if (!parsed.has_value()) {
+            return domain::fail(router_config_error(
+                "invalid_port", "invalid port in profile " + profile.name
+            ));
+        }
+        profile.port = *parsed;
+    } else if (key == "nickname") {
+        profile.nickname = value;
+    } else if (key == "identity") {
+        profile.identity = value;
+    } else if (key == "server_password") {
+        profile.server_password = value;
+    } else if (key == "channel_password") {
+        profile.channel_password = value;
+    } else if (key == "default_channel") {
+        profile.default_channel = value;
+    } else if (key == "control_socket_path") {
+        profile.control_socket_path = value;
+    } else if (key == "headless_audio" || key == "sdk_resources_dir" || key == "sdk_library_dir") {
+        return domain::ok();
+    } else {
+        return domain::fail(router_config_error(
+            "unknown_profile_key", "unknown profile key in profile " + profile.name + ": " + key
+        ));
+    }
+    return domain::ok();
+}
+
+auto load_config_without_active_resolution(const config::ConfigStore& store, const std::filesystem::path& config_path)
+    -> domain::Result<domain::AppConfig> {
+    auto loaded = store.load_or_default(config_path);
+    if (loaded || loaded.error().code != "invalid_active_profile") {
+        return loaded;
+    }
+
+    std::ifstream input(config_path);
+    if (!input) {
+        return domain::fail<domain::AppConfig>(router_config_error(
+            "missing_config", "config file not found: " + config_path.string()
+        ));
+    }
+
+    domain::AppConfig config = store.default_config();
+    config.profiles.clear();
+
+    domain::Profile* current_profile = nullptr;
+    std::string line;
+    std::size_t line_number = 0;
+
+    while (std::getline(input, line)) {
+        ++line_number;
+        std::string trimmed = util::trim(line);
+        if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ';') {
+            continue;
+        }
+
+        if (trimmed.front() == '[' && trimmed.back() == ']') {
+            const std::string section = trimmed.substr(1, trimmed.size() - 2);
+            const std::string prefix = "profile.";
+            if (section.rfind(prefix, 0) != 0 || section.size() == prefix.size()) {
+                return domain::fail<domain::AppConfig>(router_config_error(
+                    "invalid_section",
+                    "invalid section on line " + std::to_string(line_number) + ": " + section
+                ));
+            }
+            config.profiles.push_back(domain::Profile{
+                .name = section.substr(prefix.size()),
+                .backend = "mock",
+                .host = "127.0.0.1",
+                .port = 9987,
+                .nickname = "terminal",
+                .identity = "",
+                .server_password = "",
+                .channel_password = "",
+                .default_channel = "Lobby",
+                .control_socket_path = "",
+            });
+            current_profile = &config.profiles.back();
+            continue;
+        }
+
+        const auto separator = trimmed.find('=');
+        if (separator == std::string::npos) {
+            return domain::fail<domain::AppConfig>(router_config_error(
+                "invalid_line", "expected key=value on line " + std::to_string(line_number)
+            ));
+        }
+
+        const std::string key = util::trim(trimmed.substr(0, separator));
+        const std::string value = util::trim(trimmed.substr(separator + 1));
+        const auto applied = current_profile == nullptr
+                                 ? apply_profile_list_root_key(config, key, value)
+                                 : apply_profile_list_profile_key(*current_profile, key, value);
+        if (!applied) {
+            return domain::fail<domain::AppConfig>(applied.error());
+        }
+    }
+
+    if (input.bad()) {
+        return domain::fail<domain::AppConfig>(router_config_error(
+            "read_failed", "failed to read config file: " + config_path.string()
+        ));
+    }
+
+    if (config.profiles.empty()) {
+        config = store.default_config();
+    }
+
+    return domain::ok(std::move(config));
+}
+
+auto set_profile_field(domain::Profile& profile, const std::string& key, const std::string& value)
+    -> domain::Result<void> {
+    if (key == "backend") {
+        const auto valid = require_profile_string_value(key, value);
+        if (!valid) {
+            return domain::fail(valid.error());
+        }
+        profile.backend = util::iequals(value, "fake") ? "mock" : value;
+        return domain::ok();
+    }
+    if (key == "host") {
+        const auto valid = require_profile_string_value(key, value);
+        if (!valid) {
+            return domain::fail(valid.error());
+        }
+        profile.host = value;
+        return domain::ok();
+    }
+    if (key == "port") {
+        const auto parsed = util::parse_u16(value);
+        if (!parsed.has_value() || *parsed == 0) {
+            return domain::fail(cli_error("invalid_port", "invalid port: " + value));
+        }
+        profile.port = *parsed;
+        return domain::ok();
+    }
+    if (key == "nickname") {
+        const auto valid = require_profile_string_value(key, value);
+        if (!valid) {
+            return domain::fail(valid.error());
+        }
+        profile.nickname = value;
+        return domain::ok();
+    }
+    if (key == "identity") {
+        profile.identity = value;
+        return domain::ok();
+    }
+    if (key == "server_password") {
+        profile.server_password = value;
+        return domain::ok();
+    }
+    if (key == "channel_password") {
+        profile.channel_password = value;
+        return domain::ok();
+    }
+    if (key == "default_channel") {
+        profile.default_channel = value;
+        return domain::ok();
+    }
+    if (key == "control_socket_path") {
+        profile.control_socket_path = value;
+        return domain::ok();
+    }
+
+    return domain::fail(unknown_profile_key_error(key));
+}
+
+auto unset_profile_field(domain::Profile& profile, const std::string& key) -> domain::Result<void> {
+    if (key == "identity") {
+        profile.identity.clear();
+        return domain::ok();
+    }
+    if (key == "server_password") {
+        profile.server_password.clear();
+        return domain::ok();
+    }
+    if (key == "channel_password") {
+        profile.channel_password.clear();
+        return domain::ok();
+    }
+    if (key == "default_channel") {
+        profile.default_channel.clear();
+        return domain::ok();
+    }
+    if (key == "control_socket_path") {
+        profile.control_socket_path.clear();
+        return domain::ok();
+    }
+
+    if (key == "backend" || key == "host" || key == "port" || key == "nickname") {
+        return domain::fail(cli_error(
+            "required_profile_field", "cannot unset required profile field: " + key
+        ));
+    }
+
+    return domain::fail(unknown_profile_key_error(key));
+}
+
+auto profile_name_exists(const domain::AppConfig& config, const std::string& name) -> bool {
+    return std::any_of(config.profiles.begin(), config.profiles.end(), [&](const auto& profile) {
+        return profile.name == name;
+    });
+}
+
 auto load_profile(
     const config::ConfigStore& store,
     const ParsedCommand& command
 ) -> domain::Result<ResolvedProfile> {
-    const auto config_path =
-        command.global.config_path.empty() ? store.default_path() : command.global.config_path;
+    const auto config_path = resolve_config_path(store, command);
     auto loaded = store.load_or_default(config_path);
     if (!loaded) {
         return domain::fail<ResolvedProfile>(loaded.error());
@@ -4808,8 +5489,7 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
 
         if (path == "config init") {
             const bool force = command.flags.contains("force");
-            const auto config_path =
-                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
+            const auto config_path = resolve_config_path(config_store_, command);
             auto config = config_store_.init(config_path, force);
             if (!config) {
                 return domain::fail<output::CommandOutput>(config.error());
@@ -4824,9 +5504,8 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
         }
 
         if (path == "config view") {
-            const auto config_path =
-                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
-            auto loaded = config_store_.load_or_default(config_path);
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = load_config_without_active_resolution(config_store_, config_path);
             if (!loaded) {
                 return domain::fail<output::CommandOutput>(loaded.error());
             }
@@ -4840,16 +5519,57 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
             });
         }
 
+        if (path == "config path") {
+            const auto unexpected = reject_unexpected_positionals(command, 0);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            const auto config_path = resolve_config_path(config_store_, command);
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"path", output::make_string(config_path.string())},
+                }),
+                .human = config_path.string(),
+            });
+        }
+
         if (path == "profile list") {
-            auto resolved = load_profile(config_store_, command);
-            if (!resolved) {
-                return domain::fail<output::CommandOutput>(resolved.error());
+            const auto unexpected = reject_unexpected_positionals(command, 0);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = load_config_without_active_resolution(config_store_, config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
             }
             return domain::ok(output::CommandOutput{
-                .data = output::to_value(resolved.value().config.profiles),
-                .human = output::profile_table(
-                    resolved.value().config.profiles, resolved.value().config.active_profile
-                ),
+                .data = output::to_value(loaded.value().profiles),
+                .human = output::profile_table(loaded.value().profiles, loaded.value().active_profile),
+            });
+        }
+
+        if (path == "profile show") {
+            const auto unexpected = reject_unexpected_positionals(command, 1);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = load_config_without_active_resolution(config_store_, config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+            const std::string profile_name =
+                !command.positionals.empty()
+                    ? command.positionals.front()
+                    : (!command.global.profile.empty() ? command.global.profile : loaded.value().active_profile);
+            auto found = config_store_.find_profile(loaded.value(), profile_name);
+            if (!found) {
+                return domain::fail<output::CommandOutput>(found.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::to_value(*found.value()),
+                .human = profile_details(*found.value(), loaded.value().active_profile),
             });
         }
 
@@ -4858,8 +5578,7 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
             if (!name) {
                 return domain::fail<output::CommandOutput>(name.error());
             }
-            const auto config_path =
-                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
+            const auto config_path = resolve_config_path(config_store_, command);
             auto loaded = config_store_.load_or_default(config_path);
             if (!loaded) {
                 return domain::fail<output::CommandOutput>(loaded.error());
@@ -4907,14 +5626,188 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
             });
         }
 
+        if (path == "profile set") {
+            auto name = require_positional(command, 0, "name");
+            if (!name) {
+                return domain::fail<output::CommandOutput>(name.error());
+            }
+            auto key = require_positional(command, 1, "key");
+            if (!key) {
+                return domain::fail<output::CommandOutput>(key.error());
+            }
+            auto value = require_positional(command, 2, "value");
+            if (!value) {
+                return domain::fail<output::CommandOutput>(value.error());
+            }
+            const auto unexpected = reject_unexpected_positionals(command, 3);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = load_config_without_active_resolution(config_store_, config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+            auto found = config_store_.find_profile(loaded.value(), name.value());
+            if (!found) {
+                return domain::fail<output::CommandOutput>(found.error());
+            }
+            const auto updated = set_profile_field(*found.value(), key.value(), value.value());
+            if (!updated) {
+                return domain::fail<output::CommandOutput>(updated.error());
+            }
+            const auto saved = config_store_.save(config_path, loaded.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = profile_result_object(config_path, loaded.value().active_profile, *found.value()),
+                .human = std::string("set " + key.value() + " for profile " + found.value()->name),
+            });
+        }
+
+        if (path == "profile unset") {
+            auto name = require_positional(command, 0, "name");
+            if (!name) {
+                return domain::fail<output::CommandOutput>(name.error());
+            }
+            auto key = require_positional(command, 1, "key");
+            if (!key) {
+                return domain::fail<output::CommandOutput>(key.error());
+            }
+            const auto unexpected = reject_unexpected_positionals(command, 2);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = config_store_.load_or_default(config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+            auto found = config_store_.find_profile(loaded.value(), name.value());
+            if (!found) {
+                return domain::fail<output::CommandOutput>(found.error());
+            }
+            const auto updated = unset_profile_field(*found.value(), key.value());
+            if (!updated) {
+                return domain::fail<output::CommandOutput>(updated.error());
+            }
+            const auto saved = config_store_.save(config_path, loaded.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+            return domain::ok(output::CommandOutput{
+                .data = profile_result_object(config_path, loaded.value().active_profile, *found.value()),
+                .human = std::string("unset " + key.value() + " for profile " + found.value()->name),
+            });
+        }
+
+        if (path == "profile delete") {
+            auto name = require_positional(command, 0, "name");
+            if (!name) {
+                return domain::fail<output::CommandOutput>(name.error());
+            }
+
+            std::optional<std::string> activate_name;
+            if (command.flags.contains("activate")) {
+                auto activation = require_positional(command, 1, "other");
+                if (!activation) {
+                    return domain::fail<output::CommandOutput>(activation.error());
+                }
+                activate_name = activation.value();
+                const auto unexpected = reject_unexpected_positionals(command, 2);
+                if (!unexpected) {
+                    return domain::fail<output::CommandOutput>(unexpected.error());
+                }
+            } else {
+                const auto unexpected = reject_unexpected_positionals(command, 1);
+                if (!unexpected) {
+                    return domain::fail<output::CommandOutput>(unexpected.error());
+                }
+            }
+
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = config_store_.load_or_default(config_path);
+            if (!loaded) {
+                return domain::fail<output::CommandOutput>(loaded.error());
+            }
+            auto found = config_store_.find_profile(loaded.value(), name.value());
+            if (!found) {
+                return domain::fail<output::CommandOutput>(found.error());
+            }
+            if (loaded.value().profiles.size() <= 1) {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "last_profile", "cannot delete the only profile"
+                ));
+            }
+
+            const bool deleting_active = loaded.value().active_profile == name.value();
+            if (activate_name.has_value()) {
+                if (activate_name.value() == name.value()) {
+                    return domain::fail<output::CommandOutput>(cli_error(
+                        "invalid_active_profile", "cannot activate the profile being deleted: " + name.value()
+                    ));
+                }
+                auto replacement = config_store_.find_profile(loaded.value(), activate_name.value());
+                if (!replacement) {
+                    return domain::fail<output::CommandOutput>(replacement.error());
+                }
+                loaded.value().active_profile = replacement.value()->name;
+            } else if (deleting_active) {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "active_profile_delete",
+                    "cannot delete the active profile: " + name.value() + "; use --activate <other>"
+                ));
+            } else if (!profile_name_exists(loaded.value(), loaded.value().active_profile)) {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "dangling_active_profile",
+                    "active profile is invalid; use --activate <other> before deleting profiles"
+                ));
+            }
+
+            const domain::Profile deleted = *found.value();
+            loaded.value().profiles.erase(
+                std::remove_if(
+                    loaded.value().profiles.begin(),
+                    loaded.value().profiles.end(),
+                    [&](const domain::Profile& profile) { return profile.name == name.value(); }
+                ),
+                loaded.value().profiles.end()
+            );
+
+            if (!profile_name_exists(loaded.value(), loaded.value().active_profile)) {
+                return domain::fail<output::CommandOutput>(cli_error(
+                    "dangling_active_profile", "active profile would not match an existing profile"
+                ));
+            }
+
+            const auto saved = config_store_.save(config_path, loaded.value());
+            if (!saved) {
+                return domain::fail<output::CommandOutput>(saved.error());
+            }
+            std::string message = "deleted profile " + deleted.name;
+            if (activate_name.has_value()) {
+                message += " and set active profile to " + loaded.value().active_profile;
+            }
+            return domain::ok(output::CommandOutput{
+                .data = output::make_object({
+                    {"path", output::make_string(config_path.string())},
+                    {"active_profile", output::make_string(loaded.value().active_profile)},
+                    {"deleted_profile", output::to_value(deleted)},
+                }),
+                .human = std::move(message),
+            });
+        }
+
         if (path == "profile use") {
             auto name = require_positional(command, 0, "name");
             if (!name) {
                 return domain::fail<output::CommandOutput>(name.error());
             }
-            const auto config_path =
-                command.global.config_path.empty() ? config_store_.default_path() : command.global.config_path;
-            auto loaded = config_store_.load_or_default(config_path);
+            const auto config_path = resolve_config_path(config_store_, command);
+            auto loaded = load_config_without_active_resolution(config_store_, config_path);
             if (!loaded) {
                 return domain::fail<output::CommandOutput>(loaded.error());
             }
@@ -5348,23 +6241,35 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                     : connected.value().timed_out ? "timeout" : "failed";
                 const auto exit_code = connected.value().connected ? domain::ExitCode::ok
                                                                    : domain::ExitCode::connection;
+                const auto diagnostics = connected.value().timed_out
+                                             ? connect_timeout_diagnostics(resolved.profile)
+                                             : ConnectTimeoutDiagnostics{};
+                std::map<std::string, output::ValueHolder> data{
+                    {"result", output::make_string(result_name)},
+                    {"connected", output::make_bool(connected.value().connected)},
+                    {"timed_out", output::make_bool(connected.value().timed_out)},
+                    {"timeout_ms", output::make_int(connected.value().timeout.count())},
+                    {"state", output::to_value(connected.value().state)},
+                    {"lifecycle", output::to_value(connected.value().lifecycle)},
+                };
+                if (!diagnostics.hints.empty()) {
+                    data.emplace("hints", string_array_value(diagnostics.hints));
+                    data.emplace("diagnostics", connect_timeout_diagnostics_value(diagnostics));
+                }
+                auto human = output::connect_view(
+                    connected.value().state,
+                    connected.value().lifecycle,
+                    connected.value().connected,
+                    connected.value().timed_out,
+                    connected.value().timeout,
+                    !stream_progress
+                );
+                if (!diagnostics.hints.empty()) {
+                    human = append_connect_timeout_human_diagnostics(std::move(human), diagnostics);
+                }
                 return domain::ok(output::CommandOutput{
-                    .data = output::make_object({
-                        {"result", output::make_string(result_name)},
-                        {"connected", output::make_bool(connected.value().connected)},
-                        {"timed_out", output::make_bool(connected.value().timed_out)},
-                        {"timeout_ms", output::make_int(connected.value().timeout.count())},
-                        {"state", output::to_value(connected.value().state)},
-                        {"lifecycle", output::to_value(connected.value().lifecycle)},
-                    }),
-                    .human = output::connect_view(
-                        connected.value().state,
-                        connected.value().lifecycle,
-                        connected.value().connected,
-                        connected.value().timed_out,
-                        connected.value().timeout,
-                        !stream_progress
-                    ),
+                    .data = output::make_object(std::move(data)),
+                    .human = std::move(human),
                     .exit_code = exit_code,
                 });
             });
@@ -5605,6 +6510,18 @@ auto CommandRouter::dispatch(const ParsedCommand& command, const ProgressSink& p
                 config_store_,
                 command.global.format == output::Format::table ? progress : ProgressSink{}
             );
+        }
+
+        if (path == "client inspect-windows") {
+            const auto unexpected = reject_unexpected_positionals(command, 0);
+            if (!unexpected) {
+                return domain::fail<output::CommandOutput>(unexpected.error());
+            }
+            auto inspection = inspect_client_windows();
+            if (!inspection) {
+                return domain::fail<output::CommandOutput>(inspection.error());
+            }
+            return domain::ok(client_windows_output(inspection.value()));
         }
 
         if (path == "client stop") {

@@ -59,6 +59,32 @@ printf '%s\n' "${version_output}" | grep -q '^ts '
 profile_output="$("${ts_bin}" profile list --config "${config_path}")"
 printf '%s\n' "${profile_output}" | grep -q 'mock-local'
 
+config_path_output="$("${ts_bin}" config path --config "${config_path}")"
+[[ "${config_path_output}" == *"${config_path}"* ]]
+
+run_ts_capture profile_show_json --json profile show mock-local --config "${config_path}"
+assert_contains "${last_stdout}" '"name":"mock-local"'
+assert_contains "${last_stdout}" '"backend":"mock"'
+assert_contains "${last_stdout}" '"host":"127.0.0.1"'
+assert_contains "${last_stdout}" '"port":9987'
+assert_contains "${last_stdout}" '"default_channel":"Lobby"'
+assert_not_contains "${last_stdout}" 'server_password'
+assert_not_contains "${last_stdout}" 'channel_password'
+
+"${ts_bin}" profile create smoke-edit --copy-from mock-local --config "${config_path}" >/dev/null
+"${ts_bin}" profile set smoke-edit host voice.example.com --config "${config_path}" >/dev/null
+"${ts_bin}" profile set smoke-edit port 10001 --config "${config_path}" >/dev/null
+"${ts_bin}" profile set smoke-edit default_channel Engineering --config "${config_path}" >/dev/null
+run_ts_capture profile_show_set_json --json profile show smoke-edit --config "${config_path}"
+assert_contains "${last_stdout}" '"name":"smoke-edit"'
+assert_contains "${last_stdout}" '"host":"voice.example.com"'
+assert_contains "${last_stdout}" '"port":10001'
+assert_contains "${last_stdout}" '"default_channel":"Engineering"'
+"${ts_bin}" profile unset smoke-edit default_channel --config "${config_path}" >/dev/null
+run_ts_capture profile_show_unset_json --json profile show smoke-edit --config "${config_path}"
+assert_contains "${last_stdout}" '"default_channel":""'
+assert_not_contains "${last_stdout}" 'Engineering'
+
 status_json="$("${ts_bin}" --json status --config "${config_path}")"
 printf '%s\n' "${status_json}" | grep -q '"backend":"mock"'
 printf '%s\n' "${status_json}" | grep -q '"phase":"connected"'

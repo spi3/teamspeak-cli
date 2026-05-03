@@ -20,6 +20,9 @@ Every command accepts these global flags:
 
 `--json` is shorthand for `--output json`. `--field <path>` extracts one scalar value from JSON output after the command runs; paths are dot-separated object keys, such as `phase` or `media_diagnostics.transmit_path_ready`. `--output ndjson` is accepted only by `ts events watch` and prints one event object per line. `--no-headers` removes table header rows, and `--wide` adds extra columns for supported table commands. Table controls do not change JSON, YAML, NDJSON, or `--field` output.
 
+Config path precedence is `--config`, then `TS_CONFIG_PATH`, then `$XDG_CONFIG_HOME/ts/config.ini` or the default
+`~/.config/ts/config.ini`. Use `ts config path` to print the resolved path.
+
 See [output-format.md](output-format.md) for the stdout/stderr contract, stable JSON automation guarantees, and JSON examples.
 
 ## Command Groups
@@ -51,9 +54,14 @@ installs the latest published release from `spi3/teamspeak-cli`; use `--release-
 ### Config And Profiles
 
 - `ts config init [--force]`
+- `ts config path`
 - `ts config view`
 - `ts profile create <name> [--copy-from <name>] [--activate]`
 - `ts profile list`
+- `ts profile show [name]`
+- `ts profile set <name> <key> <value>`
+- `ts profile unset <name> <key>`
+- `ts profile delete <name> [--activate <other>]`
 - `ts profile use <name>`
 
 ### Channels
@@ -66,7 +74,8 @@ installs the latest published release from `spi3/teamspeak-cli`; use `--release-
 ### Clients
 
 - `ts client status`
-- `ts client start`
+- `ts client start [--accept-license]`
+- `ts client inspect-windows`
 - `ts client stop [--force]`
 - `ts client logs [--count N]`
 - `ts client list`
@@ -103,7 +112,7 @@ and the boundary between domain events and media bridge frames.
 - `mute` and `unmute` update your own TeamSpeak microphone mute state.
 - `away` sets your own TeamSpeak away status and optionally an away message.
 - `back` clears your own TeamSpeak away status and any away message set through `ts away`.
-- `client start` and `client stop` inspect, launch, and stop the local TeamSpeak client process tracked by `ts`.
+- `client status`, `client start`, `client inspect-windows`, and `client stop` inspect, launch, diagnose, and stop the local TeamSpeak client process tracked by `ts`.
 - `update` refreshes the installed `ts` binary, bundled plugin, and managed TeamSpeak client bundle from the official
   published release artifacts.
 - `client logs` shows the tracked launcher log plus the most recent files under `~/.ts3client/logs`.
@@ -141,10 +150,17 @@ Table output is human-oriented and is not stable for parsing. Use `--json` for s
 - `ts profile create <name>` clones the active profile by default
 - `ts profile create <name> --copy-from <source>` clones a specific existing profile instead
 - `ts profile create <name> --activate` also sets the new profile as the default
+- `ts profile show [name]` shows one profile, defaulting to the active profile
+- `ts profile set <name> <key> <value>` updates an editable profile key
+- `ts profile unset <name> <key>` clears an editable profile key
+- editable profile keys are `backend`, `host`, `port`, `nickname`, `identity`, `server_password`, `channel_password`, `default_channel`, and `control_socket_path`; only optional keys can be unset
+- `ts profile delete <name>` removes a profile from the selected config; use `--activate <other>` when deleting the active profile
 - `ts profile use <name>` sets the default profile without creating a new one
 - the `plugin` backend expects the TeamSpeak client plugin bridge to already be running
 - the selected profile can be overridden with `--profile`
 - `--server`, `--nickname`, and `--identity` override the active profile for one command
+- profile list/show output redacts or omits secret values such as `server_password` and `channel_password`
+- config files can contain passwords; treat them as private. On Unix, `ts` writes config files with owner-only permissions.
 
 Socket path resolution for the plugin backend is:
 
@@ -182,6 +198,7 @@ The plugin media socket resolves in this order:
 - `TS_CLIENT_HEADLESS_DISPLAY` to choose a specific display such as `:140`
 - `TS_CLIENT_XDOTOOL` to point at a specific `xdotool` binary used to dismiss known onboarding dialogs
 - `TS_CLIENT_XDOTOOL_LIBRARY_PATH` to point at the companion runtime libraries for that `xdotool` binary
+- `TS_CLIENT_ACCEPT_LICENSE=1` to explicitly accept the TeamSpeak license dialog during first-run headless automation
 - `TS_CLIENT_SYSTEMD_RUN=0|1|auto` to disable, force, or auto-detect the transient user `systemd-run` launch path
 - `TS3_CLIENT_LDCONFIG` to point the runtime preflight at a specific `ldconfig` binary
 - `TS3CLIENT_SKIP_AUDIO_PREFLIGHT=1` to skip the wrapper's PulseAudio/PipeWire metadata and routing preflight entirely
@@ -198,9 +215,13 @@ packages when `/usr/bin/xkbcomp` or the standard XKB data directory is missing. 
 PulseAudio-compatible audio control is available for media routing by installing `pulseaudio-utils` and, when neither
 `pulseaudio` nor `pipewire-pulse` is present, `pulseaudio`.
 
-On the first headless TeamSpeak launch, hidden onboarding dialogs can still block the plugin bridge. `ts client start`
-tries to dismiss known license and identity dialogs with `xdotool` when available. If a headless session still wedges,
-complete the TeamSpeak license and initial identity setup once on a visible display before relying on headless mode.
+On the first headless TeamSpeak launch, hidden onboarding dialogs can still block progress even when the plugin bridge is
+responsive. `ts client start` tries to dismiss known nonessential startup dialogs with `xdotool` when available, but it
+does not silently accept the TeamSpeak license agreement. Use `ts client start --accept-license`, or set
+`TS_CLIENT_ACCEPT_LICENSE=1`, only when you have accepted the TeamSpeak license terms and want first-run headless
+automation to click that dialog. If `ts connect` times out, it reports visible windows from the managed display when
+they can be inspected. Run `ts client inspect-windows` to list visible X11 window titles on the tracked TeamSpeak
+display, then complete or explicitly automate required license or identity setup before retrying.
 
 The installed `ts3client` wrapper also inspects the current PulseAudio/PipeWire defaults before launch. When the
 default capture source is an output monitor such as `auto_null.monitor`, the wrapper provisions dedicated

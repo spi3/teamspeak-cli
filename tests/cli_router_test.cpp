@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -118,6 +120,10 @@ auto normalize_json_timestamps(std::string value) -> std::string {
     return value;
 }
 
+void expect_not_contains(std::string_view haystack, std::string_view needle, const std::string& message) {
+    teamspeak_cli::tests::expect(haystack.find(needle) == std::string_view::npos, message);
+}
+
 }  // namespace
 
 int main() {
@@ -211,6 +217,16 @@ int main() {
 
     const std::string client_help = router.render_help({"client"});
     tests::expect_contains(client_help, "logs  Show recent TeamSpeak client logs", "client help should list client logs");
+    tests::expect_contains(
+        client_help,
+        "inspect-windows  List visible X11 windows",
+        "client help should list window inspection"
+    );
+    tests::expect_contains(
+        router.render_help({"client", "start"}),
+        "--accept-license",
+        "client start help should document explicit license acceptance"
+    );
     tests::expect_contains(
         client_help,
         "ts client logs [--count N]",
@@ -510,6 +526,363 @@ int main() {
     auto init_result = router.dispatch(init.value());
     tests::expect(init_result.ok(), "config init dispatch should succeed");
     tests::expect(fs::exists(config_path), "config init should write a config file");
+
+    auto config_path_command = parse_command(router, {"config", "path", "--config", config_path.string()});
+    tests::expect(config_path_command.ok(), "config path parse should succeed");
+    auto config_path_result = router.dispatch(config_path_command.value());
+    tests::expect(config_path_result.ok(), "config path dispatch should succeed");
+    tests::expect_contains(
+        output::render(config_path_result.value(), output::Format::json),
+        "\"path\":\"" + config_path.string() + "\"",
+        "config path json should return the selected config path"
+    );
+    tests::expect_contains(
+        output::render(config_path_result.value(), output::Format::table),
+        config_path.string(),
+        "config path table output should render the selected config path"
+    );
+
+    {
+        const fs::path invalid_active_config_path = temp_dir / "invalid-active-config.ini";
+        {
+            std::ofstream invalid_active_config(invalid_active_config_path, std::ios::trunc);
+            invalid_active_config
+                << "version=1\n"
+                << "active_profile=missing-default\n\n"
+                << "[profile.mock-local]\n"
+                << "backend=mock\n"
+                << "host=127.0.0.1\n"
+                << "port=9987\n\n"
+                << "[profile.plugin-local]\n"
+                << "backend=plugin\n"
+                << "host=127.0.0.1\n"
+                << "port=9987\n";
+            invalid_active_config.close();
+            tests::expect(
+                static_cast<bool>(invalid_active_config), "invalid active profile fixture should write"
+            );
+        }
+
+        auto view_invalid_active =
+            parse_command(router, {"config", "view", "--config", invalid_active_config_path.string()});
+        tests::expect(view_invalid_active.ok(), "config view with invalid active parse should succeed");
+        auto view_invalid_active_result = router.dispatch(view_invalid_active.value());
+        tests::expect(
+            view_invalid_active_result.ok(),
+            "config view should succeed even when active_profile is invalid"
+        );
+        tests::expect_contains(
+            output::render(view_invalid_active_result.value(), output::Format::table),
+            "mock-local",
+            "config view should still include profiles when active_profile is invalid"
+        );
+
+        auto list_invalid_active =
+            parse_command(router, {"profile", "list", "--config", invalid_active_config_path.string()});
+        tests::expect(list_invalid_active.ok(), "profile list with invalid active parse should succeed");
+        auto list_invalid_active_result = router.dispatch(list_invalid_active.value());
+        tests::expect(
+            list_invalid_active_result.ok(),
+            "profile list should succeed even when active_profile is invalid"
+        );
+        const auto list_invalid_active_json =
+            output::render(list_invalid_active_result.value(), output::Format::json);
+        tests::expect_contains(
+            list_invalid_active_json,
+            "\"name\":\"mock-local\"",
+            "profile list should still include mock-local when active_profile is invalid"
+        );
+        tests::expect_contains(
+            list_invalid_active_json,
+            "\"name\":\"plugin-local\"",
+            "profile list should still include plugin-local when active_profile is invalid"
+        );
+        const auto list_invalid_active_table =
+            output::render(list_invalid_active_result.value(), output::Format::table);
+        tests::expect_contains(
+            list_invalid_active_table,
+            "mock-local",
+            "profile list table should include mock-local when active_profile is invalid"
+        );
+        tests::expect_contains(
+            list_invalid_active_table,
+            "plugin-local",
+            "profile list table should include plugin-local when active_profile is invalid"
+        );
+
+        auto repair_invalid_active =
+            parse_command(router, {"profile", "use", "plugin-local", "--config", invalid_active_config_path.string()});
+        tests::expect(repair_invalid_active.ok(), "profile use should parse for invalid active repair");
+        auto repair_invalid_active_result = router.dispatch(repair_invalid_active.value());
+        tests::expect(repair_invalid_active_result.ok(), "profile use should repair invalid active_profile");
+        auto repaired_invalid_active = config_store.load(invalid_active_config_path);
+        tests::expect(repaired_invalid_active.ok(), "repaired invalid active config should load normally");
+        tests::expect_eq(
+            repaired_invalid_active.value().active_profile,
+            std::string("plugin-local"),
+            "profile use should persist the repaired active profile"
+        );
+    }
+
+    {
+        const fs::path profile_show_config_path = temp_dir / "profile-show-config.ini";
+        auto profile_show_config = config_store.default_config();
+        auto mock_profile_for_show = config_store.find_profile(profile_show_config, "mock-local");
+        tests::expect(mock_profile_for_show.ok(), "mock-local profile should exist before profile show test");
+        mock_profile_for_show.value()->server_password = "server-secret-for-show-test";
+        mock_profile_for_show.value()->channel_password = "channel-secret-for-show-test";
+        mock_profile_for_show.value()->control_socket_path = (temp_dir / "mock-control.sock").string();
+        auto saved_for_show = config_store.save(profile_show_config_path, profile_show_config);
+        tests::expect(saved_for_show.ok(), "profile show fixture should save");
+
+        auto show_profile =
+            parse_command(router, {"profile", "show", "mock-local", "--config", profile_show_config_path.string()});
+        tests::expect(show_profile.ok(), "profile show parse should succeed");
+        auto show_profile_result = router.dispatch(show_profile.value());
+        tests::expect(show_profile_result.ok(), "profile show dispatch should succeed");
+        const auto show_profile_json = output::render(show_profile_result.value(), output::Format::json);
+        tests::expect_contains(show_profile_json, "\"name\":\"mock-local\"", "profile show json should include name");
+        tests::expect_contains(show_profile_json, "\"backend\":\"mock\"", "profile show json should include backend");
+        tests::expect_contains(show_profile_json, "\"host\":\"127.0.0.1\"", "profile show json should include host");
+        tests::expect_contains(show_profile_json, "\"port\":9987", "profile show json should include port");
+        tests::expect_contains(
+            show_profile_json,
+            "\"nickname\":\"terminal\"",
+            "profile show json should include nickname"
+        );
+        tests::expect_contains(
+            show_profile_json,
+            "\"identity\":\"mock-local-identity\"",
+            "profile show json should include identity"
+        );
+        tests::expect_contains(
+            show_profile_json,
+            "\"default_channel\":\"Lobby\"",
+            "profile show json should include default channel"
+        );
+        tests::expect_contains(
+            show_profile_json,
+            "\"control_socket_path\":\"" + (temp_dir / "mock-control.sock").string() + "\"",
+            "profile show json should include control socket path"
+        );
+        expect_not_contains(
+            show_profile_json,
+            "server_password",
+            "profile show json should not expose server password fields"
+        );
+        expect_not_contains(
+            show_profile_json,
+            "channel_password",
+            "profile show json should not expose channel password fields"
+        );
+        expect_not_contains(
+            show_profile_json,
+            "server-secret-for-show-test",
+            "profile show json should not expose the server password value"
+        );
+        expect_not_contains(
+            show_profile_json,
+            "channel-secret-for-show-test",
+            "profile show json should not expose the channel password value"
+        );
+
+        const auto show_profile_table = output::render(show_profile_result.value(), output::Format::table);
+        tests::expect_contains(show_profile_table, "mock-local", "profile show table should include profile name");
+        tests::expect_contains(show_profile_table, "127.0.0.1", "profile show table should include host");
+        tests::expect_contains(show_profile_table, "Lobby", "profile show table should include default channel");
+        expect_not_contains(
+            show_profile_table,
+            "server-secret-for-show-test",
+            "profile show table should not expose the server password value"
+        );
+        expect_not_contains(
+            show_profile_table,
+            "channel-secret-for-show-test",
+            "profile show table should not expose the channel password value"
+        );
+    }
+
+    {
+        const fs::path profile_edit_config_path = temp_dir / "profile-edit-config.ini";
+        auto saved_profile_edit_config = config_store.save(profile_edit_config_path, config_store.default_config());
+        tests::expect(saved_profile_edit_config.ok(), "profile edit fixture should save");
+
+        auto set_profile_host = parse_command(
+            router,
+            {"profile", "set", "mock-local", "host", "voice.example.com", "--config", profile_edit_config_path.string()}
+        );
+        tests::expect(set_profile_host.ok(), "profile set host parse should succeed");
+        auto set_profile_host_result = router.dispatch(set_profile_host.value());
+        tests::expect(set_profile_host_result.ok(), "profile set host dispatch should succeed");
+
+        auto set_profile_port = parse_command(
+            router, {"profile", "set", "mock-local", "port", "10001", "--config", profile_edit_config_path.string()}
+        );
+        tests::expect(set_profile_port.ok(), "profile set port parse should succeed");
+        auto set_profile_port_result = router.dispatch(set_profile_port.value());
+        tests::expect(set_profile_port_result.ok(), "profile set port dispatch should succeed");
+
+        auto set_profile_channel = parse_command(
+            router,
+            {"profile",
+             "set",
+             "mock-local",
+             "default_channel",
+             "Engineering",
+             "--config",
+             profile_edit_config_path.string()}
+        );
+        tests::expect(set_profile_channel.ok(), "profile set default_channel parse should succeed");
+        auto set_profile_channel_result = router.dispatch(set_profile_channel.value());
+        tests::expect(set_profile_channel_result.ok(), "profile set default_channel dispatch should succeed");
+
+        auto loaded_after_profile_set = config_store.load(profile_edit_config_path);
+        tests::expect(loaded_after_profile_set.ok(), "config should load after profile set commands");
+        auto mock_profile_after_set = config_store.find_profile(loaded_after_profile_set.value(), "mock-local");
+        tests::expect(mock_profile_after_set.ok(), "mock-local should exist after profile set commands");
+        tests::expect_eq(
+            mock_profile_after_set.value()->host,
+            std::string("voice.example.com"),
+            "profile set host should persist the host"
+        );
+        tests::expect_eq(
+            mock_profile_after_set.value()->port,
+            std::uint16_t(10001),
+            "profile set port should parse and persist the port"
+        );
+        tests::expect_eq(
+            mock_profile_after_set.value()->default_channel,
+            std::string("Engineering"),
+            "profile set default_channel should persist a string field"
+        );
+
+        auto unset_profile_channel = parse_command(
+            router,
+            {"profile", "unset", "mock-local", "default_channel", "--config", profile_edit_config_path.string()}
+        );
+        tests::expect(unset_profile_channel.ok(), "profile unset default_channel parse should succeed");
+        auto unset_profile_channel_result = router.dispatch(unset_profile_channel.value());
+        tests::expect(unset_profile_channel_result.ok(), "profile unset default_channel dispatch should succeed");
+
+        auto loaded_after_profile_unset = config_store.load(profile_edit_config_path);
+        tests::expect(loaded_after_profile_unset.ok(), "config should load after profile unset command");
+        auto mock_profile_after_unset = config_store.find_profile(loaded_after_profile_unset.value(), "mock-local");
+        tests::expect(mock_profile_after_unset.ok(), "mock-local should exist after profile unset command");
+        tests::expect_eq(
+            mock_profile_after_unset.value()->default_channel,
+            std::string(),
+            "profile unset default_channel should clear the value"
+        );
+    }
+
+    {
+        const fs::path delete_config_path = temp_dir / "delete-profile-config.ini";
+        auto delete_config = config_store.default_config();
+        auto saved_delete_config = config_store.save(delete_config_path, delete_config);
+        tests::expect(saved_delete_config.ok(), "delete profile fixture should save");
+
+        auto delete_non_active =
+            parse_command(router, {"profile", "delete", "mock-local", "--config", delete_config_path.string()});
+        tests::expect(delete_non_active.ok(), "profile delete non-active parse should succeed");
+        auto delete_non_active_result = router.dispatch(delete_non_active.value());
+        tests::expect(delete_non_active_result.ok(), "profile delete should remove a non-active profile");
+        auto loaded_after_delete = config_store.load(delete_config_path);
+        tests::expect(loaded_after_delete.ok(), "config should load after profile delete");
+        tests::expect(
+            !config_store.find_profile(loaded_after_delete.value(), "mock-local").ok(),
+            "profile delete should remove the non-active profile"
+        );
+        tests::expect(
+            config_store.find_profile(loaded_after_delete.value(), "plugin-local").ok(),
+            "profile delete should keep the active profile"
+        );
+    }
+
+    {
+        const fs::path active_delete_config_path = temp_dir / "delete-active-profile-config.ini";
+        auto replace_active_delete_config = config_store.default_config();
+        replace_active_delete_config.active_profile = "mock-local";
+        auto saved_replace_active_delete_config =
+            config_store.save(active_delete_config_path, replace_active_delete_config);
+        tests::expect(
+            saved_replace_active_delete_config.ok(), "active delete replacement fixture should save"
+        );
+
+        auto delete_active_with_replacement = parse_command(
+            router,
+            {
+                "profile",
+                "delete",
+                "mock-local",
+                "--activate",
+                "plugin-local",
+                "--config",
+                active_delete_config_path.string(),
+            }
+        );
+        tests::expect(
+            delete_active_with_replacement.ok(), "profile delete active with replacement parse should succeed"
+        );
+        auto delete_active_with_replacement_result = router.dispatch(delete_active_with_replacement.value());
+        tests::expect(
+            delete_active_with_replacement_result.ok(),
+            "profile delete should remove active profile when a replacement is supplied"
+        );
+        auto loaded_after_active_replacement_delete = config_store.load(active_delete_config_path);
+        tests::expect(
+            loaded_after_active_replacement_delete.ok(),
+            "config should load after active profile delete with replacement"
+        );
+        tests::expect_eq(
+            loaded_after_active_replacement_delete.value().active_profile,
+            std::string("plugin-local"),
+            "profile delete --activate should persist the replacement active profile"
+        );
+        tests::expect(
+            !config_store.find_profile(loaded_after_active_replacement_delete.value(), "mock-local").ok(),
+            "profile delete --activate should remove the old active profile"
+        );
+
+        const fs::path single_active_delete_config_path = temp_dir / "delete-single-active-profile-config.ini";
+        domain::AppConfig active_delete_config{
+            .version = 1,
+            .active_profile = "solo",
+            .profiles =
+                {
+                    domain::Profile{
+                        .name = "solo",
+                        .backend = "mock",
+                        .host = "127.0.0.1",
+                        .port = 9987,
+                        .nickname = "terminal",
+                        .identity = "solo-identity",
+                        .server_password = "",
+                        .channel_password = "",
+                        .default_channel = "Lobby",
+                        .control_socket_path = "",
+                    },
+                },
+        };
+        auto saved_active_delete_config =
+            config_store.save(single_active_delete_config_path, active_delete_config);
+        tests::expect(saved_active_delete_config.ok(), "active delete profile fixture should save");
+
+        auto delete_active = parse_command(
+            router, {"profile", "delete", "solo", "--config", single_active_delete_config_path.string()}
+        );
+        tests::expect(delete_active.ok(), "profile delete active parse should succeed");
+        auto delete_active_result = router.dispatch(delete_active.value());
+        tests::expect(
+            !delete_active_result.ok(),
+            "profile delete should fail for the active profile without a safe replacement"
+        );
+        auto loaded_after_active_delete = config_store.load(single_active_delete_config_path);
+        tests::expect(loaded_after_active_delete.ok(), "config should load after failed active profile delete");
+        tests::expect(
+            config_store.find_profile(loaded_after_active_delete.value(), "solo").ok(),
+            "failed active profile delete should leave the profile intact"
+        );
+    }
 
     auto json_status = parse_command(
         router, {"status", "--profile", "mock-local", "--config", config_path.string()}
@@ -1485,6 +1858,11 @@ int main() {
             xdotool << "shift || true\n";
             xdotool << "case \"${command}\" in\n";
             xdotool << "  search)\n";
+            xdotool << "    if [[ \"$*\" == *'--onlyvisible --name .'* ]]; then\n";
+            xdotool << "      phase=\"$(cat \"${phase_path}\" 2>/dev/null || printf 'license')\"\n";
+            xdotool << "      if [[ \"${phase}\" == 'license' ]]; then printf 'headless-license\\n'; fi\n";
+            xdotool << "      exit 0\n";
+            xdotool << "    fi\n";
             xdotool << "    title=\"${!#}\"\n";
             xdotool << "    phase=\"$(cat \"${phase_path}\" 2>/dev/null || printf 'license')\"\n";
             xdotool << "    case \"${title}:${phase}\" in\n";
@@ -1492,6 +1870,9 @@ int main() {
             xdotool << "      'Warning:warning') printf 'headless-warning\\n' ;;\n";
             xdotool << "      'Identities:identities') printf 'headless-identities\\n' ;;\n";
             xdotool << "    esac\n";
+            xdotool << "    ;;\n";
+            xdotool << "  getwindowname)\n";
+            xdotool << "    if [[ \"${1:-}\" == 'headless-license' ]]; then printf 'License agreement\\n'; fi\n";
             xdotool << "    ;;\n";
             xdotool << "  getwindowgeometry)\n";
             xdotool << "    printf 'WIDTH=740\\nHEIGHT=700\\n'\n";
@@ -1547,19 +1928,78 @@ int main() {
             "search --name Warning",
             "headless client start should look for the first-run warning dialog"
         );
+        tests::expect(
+            xdotool_log.find("mousemove --window headless-license") == std::string::npos,
+            "headless client start should not silently accept the license dialog"
+        );
+
+        auto inspect_windows = parse_command(router, {"client", "inspect-windows"});
+        tests::expect(inspect_windows.ok(), "client inspect-windows parse should succeed");
+        auto inspect_windows_result = router.dispatch(inspect_windows.value());
+        tests::expect(inspect_windows_result.ok(), "client inspect-windows dispatch should succeed");
+        const auto inspect_windows_json = output::render(inspect_windows_result.value(), output::Format::json);
         tests::expect_contains(
-            xdotool_log,
-            "key --window headless-warning Escape",
-            "headless client start should dismiss the first-run warning dialog"
+            inspect_windows_json,
+            "\"display\":\":169\"",
+            "client inspect-windows should report the inspected display"
         );
         tests::expect_contains(
-            xdotool_log,
-            "key --window headless-identities Escape",
-            "headless client start should continue dismissing the identities dialog"
+            inspect_windows_json,
+            "\"title\":\"License agreement\"",
+            "client inspect-windows should report visible TeamSpeak dialog titles"
         );
 
         auto headless_stop_result = router.dispatch(client_stop.value());
         tests::expect(headless_stop_result.ok(), "headless client stop should succeed");
+
+        {
+            std::ofstream phase(fake_xdotool_phase_path, std::ios::trunc);
+            phase << "license\n";
+        }
+        {
+            std::ofstream log(fake_xdotool_log_path, std::ios::trunc);
+        }
+
+        auto accept_license_start =
+            parse_command(router, {"client", "start", "--accept-license", "--config", config_path.string()});
+        tests::expect(accept_license_start.ok(), "client start --accept-license parse should succeed");
+        std::vector<std::string> accept_license_progress;
+        auto accept_license_start_result =
+            router.dispatch(accept_license_start.value(), [&](std::string_view message) {
+                accept_license_progress.emplace_back(message);
+            });
+        tests::expect(accept_license_start_result.ok(), "headless accept-license client start should succeed");
+        tests::expect(
+            std::any_of(
+                accept_license_progress.begin(),
+                accept_license_progress.end(),
+                [](const std::string& message) { return message.find("License auto-accept") != std::string::npos; }
+            ),
+            "client start --accept-license should report the explicit license automation request"
+        );
+        std::ifstream accept_xdotool_log_input(fake_xdotool_log_path);
+        const std::string accept_xdotool_log(
+            (std::istreambuf_iterator<char>(accept_xdotool_log_input)),
+            std::istreambuf_iterator<char>()
+        );
+        tests::expect_contains(
+            accept_xdotool_log,
+            "mousemove --window headless-license",
+            "client start --accept-license should click the license dialog"
+        );
+        tests::expect_contains(
+            accept_xdotool_log,
+            "key --window headless-warning Escape",
+            "client start --accept-license should continue dismissing nonessential startup dialogs"
+        );
+        tests::expect_contains(
+            accept_xdotool_log,
+            "key --window headless-identities Escape",
+            "client start --accept-license should continue through the identities dialog"
+        );
+
+        auto accept_license_stop_result = router.dispatch(client_stop.value());
+        tests::expect(accept_license_stop_result.ok(), "headless accept-license client stop should succeed");
         fs::remove(fake_x11_socket_path, socket_cleanup_ec);
     }
     {

@@ -243,6 +243,15 @@ Without an argument, top-level type is an array of channel-client groups. With `
 
 Top-level type: array. Each item is a [Client](#client).
 
+### `ts client inspect-windows`
+
+Top-level type: object.
+
+| Field | Type | Nullable | Stability | Notes |
+| --- | --- | --- | --- | --- |
+| `display` | string | no | best-effort | X11 display that was inspected. |
+| `windows` | array | no | best-effort | Visible windows as `{id,title}` objects. |
+
 ### `ts connect`
 
 Top-level type: object.
@@ -250,6 +259,8 @@ Top-level type: object.
 | Field | Type | Nullable | Stability | Notes |
 | --- | --- | --- | --- | --- |
 | `connected` | boolean | no | stable | Whether the connection reached `connected`. |
+| `diagnostics` | object | omitted when empty | best-effort | Headless window diagnostics on plugin connect timeout. |
+| `hints` | array of strings | omitted when empty | best-effort | Actionable next steps on plugin connect timeout. |
 | `lifecycle` | array | no | stable | Array of [Event](#event) objects collected while waiting. |
 | `result` | string | no | stable | `connected`, `timeout`, or `failed`. |
 | `state` | object | no | stable | Final [Connection State](#connection-state). |
