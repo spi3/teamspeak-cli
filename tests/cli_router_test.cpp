@@ -246,6 +246,12 @@ int main() {
         "ts client logs [--count N]",
         "client help should include the client logs example"
     );
+    const std::string connect_help = router.render_help({"connect"});
+    tests::expect_contains(
+        connect_help,
+        "--timeout-ms <N>  How long to wait before reporting connect timeout. (accepted: integer milliseconds; default: 15000)",
+        "connect help should describe timeout option"
+    );
 
     const std::string playback_help = router.render_help({"playback"});
     tests::expect_contains(
@@ -346,6 +352,13 @@ int main() {
         parsed_ndjson.value().global.format,
         output::Format::ndjson,
         "events watch should accept ndjson output"
+    );
+    auto parsed_connect_timeout = parse_command(router, {"connect", "--timeout-ms", "250"});
+    tests::expect(parsed_connect_timeout.ok(), "connect parse should accept timeout-ms");
+    tests::expect_eq(
+        parsed_connect_timeout.value().options.at("timeout-ms"),
+        std::string("250"),
+        "connect parse should record timeout-ms"
     );
 
     auto unsupported_ndjson = parse_command(router, {"status", "--output", "ndjson"});
@@ -1261,6 +1274,34 @@ int main() {
         connect_table.find("What Happened") == std::string::npos,
         "connect table should not repeat streamed lifecycle narration"
     );
+    auto connect_with_custom_timeout = parse_command(
+        router,
+        {
+            "--profile",
+            "mock-local",
+            "--config",
+            config_path.string(),
+            "--server",
+            "voice.example.com:9987",
+            "--nickname",
+            "cli-tester",
+            "connect",
+            "--timeout-ms",
+            "250",
+        }
+    );
+    tests::expect(connect_with_custom_timeout.ok(), "connect parse should accept custom timeout");
+    auto connect_with_custom_timeout_result = router.dispatch(connect_with_custom_timeout.value());
+    tests::expect(connect_with_custom_timeout_result.ok(), "connect with custom timeout should succeed");
+    const auto connect_with_custom_timeout_json = output::render(
+        connect_with_custom_timeout_result.value(),
+        output::Format::json
+    );
+    tests::expect_contains(
+        connect_with_custom_timeout_json,
+        "\"timeout_ms\":250",
+        "connect with custom timeout should report the configured timeout"
+    );
 
     auto expect_connect_server = [&](const std::string& server_value, const std::string& expected_target) {
         auto connect = parse_command(
@@ -2113,6 +2154,44 @@ int main() {
             "\"title\":\"License agreement\"",
             "client inspect-windows should report visible TeamSpeak dialog titles"
         );
+        const fs::path fallback_bin_dir = temp_dir / "headless-fallback-bin";
+        const fs::path fallback_xwininfo_path = fallback_bin_dir / "xwininfo";
+        {
+            std::error_code create_ec;
+            fs::create_directories(fallback_bin_dir, create_ec);
+            std::ofstream fallback_xwininfo(fallback_xwininfo_path, std::ios::trunc);
+            fallback_xwininfo << "#!/bin/sh\n";
+            fallback_xwininfo << "if [ \"${1:-}\" = \"-root\" ] && [ \"${2:-}\" = \"-tree\" ] && [ \"${3:-}\" = \"-display\" ]; then\n";
+            fallback_xwininfo << "  echo '    0x2a00001 \"License agreement\": (\"ts3client_linux_amd64\" \"TeamSpeak 3\")'\n";
+            fallback_xwininfo << "  echo '    0x2a00002 \"Identities\": (\"ts3client_linux_amd64\" \"TeamSpeak 3\")'\n";
+            fallback_xwininfo << "fi\n";
+        }
+        fs::permissions(
+            fallback_xwininfo_path,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+            fs::perm_options::replace
+        );
+        {
+            EnvGuard fake_xdotool_missing_env("TS_CLIENT_XDOTOOL", "");
+            EnvGuard fake_xwininfo_env("TS_CLIENT_XWININFO", fallback_xwininfo_path.string());
+            EnvGuard fake_path_env("PATH", fallback_bin_dir.string());
+            auto fallback_inspect_windows = parse_command(router, {"client", "inspect-windows"});
+            tests::expect(fallback_inspect_windows.ok(), "client inspect-windows should parse without xdotool");
+            auto fallback_inspect_windows_result = router.dispatch(fallback_inspect_windows.value());
+            tests::expect(fallback_inspect_windows_result.ok(), "client inspect-windows should parse via xwininfo");
+            const auto fallback_inspect_windows_json =
+                output::render(fallback_inspect_windows_result.value(), output::Format::json);
+            tests::expect_contains(
+                fallback_inspect_windows_json,
+                "\"title\":\"License agreement\"",
+                "client inspect-windows should include fallback license dialog title"
+            );
+            tests::expect_contains(
+                fallback_inspect_windows_json,
+                "\"title\":\"Identities\"",
+                "client inspect-windows should include fallback identity dialog title"
+            );
+        }
 
         auto headless_stop_result = router.dispatch(client_stop.value());
         tests::expect(headless_stop_result.ok(), "headless client stop should succeed");
