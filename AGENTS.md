@@ -50,7 +50,7 @@ Prefer the mock path for most new coverage because it is deterministic and exerc
 
 ## Commit & Pull Request Guidelines
 
-Use concise, imperative commit messages such as `Add socket bridge error hint` or `Document TeamSpeak-backed build path`. Keep pull requests focused and include:
+Follow the branch naming and branch process in [CONTRIBUTING.md](CONTRIBUTING.md#branch-naming). Use concise, imperative commit messages such as `Add socket bridge error hint` or `Document TeamSpeak-backed build path`. Keep pull requests focused and include:
 
 - a short summary of behavior changes
 - test evidence or a note explaining why tests were not run

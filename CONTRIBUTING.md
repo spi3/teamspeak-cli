@@ -37,6 +37,37 @@ Common commands:
 
 If you use raw CMake, remember that plugin builds are opt-in with `-DTS_ENABLE_TS3_PLUGIN=ON`.
 
+## Branch Naming
+
+Create branches from the latest main branch and keep each branch focused on one change.
+Use lowercase, hyphen-separated names in this format:
+
+```text
+<type>/<short-description>
+```
+
+Standard branch types:
+
+- `feature/`: new user-facing behavior or capabilities
+- `fix/`: bug fixes
+- `docs/`: documentation-only changes
+- `test/`: test-only changes
+- `refactor/`: internal code changes without intended behavior changes
+- `chore/`: maintenance, dependency, or tooling updates
+
+Examples:
+
+- `feature/socket-bridge-retry`
+- `fix/config-path-resolution`
+- `docs/install-troubleshooting`
+
+Branch process:
+
+- start from the current main branch before beginning work
+- keep unrelated fixes, cleanup, and experiments on separate branches
+- rebase or merge main before opening a pull request when your branch is stale
+- delete merged branches after the pull request lands
+
 ## Testing Expectations
 
 Choose the narrowest test surface that proves the change.
