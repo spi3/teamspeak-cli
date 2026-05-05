@@ -43,12 +43,12 @@ disconnecting a running media consumer.
 For one-shot outbound playback, prefer the native command instead of opening the media socket directly:
 
 ```bash
-ts --profile plugin-local playback send --file ./message.wav
+ts --profile plugin-local playback send --file ./message.mp3
 ```
 
 The helper resolves the media socket through `ts plugin info`, validates that the active profile uses the plugin backend, sends `playback.start`, streams `playback.chunk` frames with pacing, sends `playback.stop`, and waits for `playback.stopped`.
 
-The current helper accepts WAV files that already match the V1 playback format: PCM signed 16-bit little-endian, 48000 Hz, mono. Use `--clear` to send `playback.clear` before starting new playback.
+The helper accepts MP3 input through `ffmpeg`, and WAV files that already match the V1 playback format: PCM signed 16-bit little-endian, 48000 Hz, mono. Use `--clear` to send `playback.clear` before starting new playback.
 
 `playback send` confirms that the media bridge accepted and drained queued samples. Use `playback status` to distinguish
 that local queue success from the plugin's current transmit-path state:

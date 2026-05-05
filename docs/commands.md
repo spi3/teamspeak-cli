@@ -90,7 +90,7 @@ installs the latest published release from `spi3/teamspeak-cli`; use `--release-
 - `ts message send --target <client|channel> --id <id-or-name> --text "<message>"`
 - `ts message inbox [--count N]`
 - `ts playback status`
-- `ts playback send --file <wav> [--clear] [--timeout-ms N]`
+- `ts playback send --file <wav|mp3> [--clear] [--timeout-ms N]`
 - `ts events watch [--count N] [--timeout-ms N] [--output ndjson]`
 - `ts events hook add --type <event-type> --exec <command> [--message-kind <client|channel|server>]`
 - `ts events hook list`
@@ -127,7 +127,7 @@ and the boundary between domain events and media bridge frames.
 - `daemon stop` only stops the local watcher process. It does not disconnect the TeamSpeak client from the current server.
 - `message inbox` reads the daemon-managed message journal, so it can show captured messages even when no `ts` command is actively watching events.
 - `playback status` reports effective TeamSpeak capture/playback bindings, PulseAudio/PipeWire launch overrides, media queue counters, dropped chunks, and whether injected playback is attached to the custom capture transmit path.
-- `playback send` streams a WAV file through the plugin media bridge and waits for the bridge to drain the queued playback before returning.
+- `playback send` streams a WAV or MP3 file through the plugin media bridge and waits for the bridge to drain the queued playback before returning.
 - the daemon hook matcher is generic, but the daemon-managed inbox currently journals only `message.received` events.
 
 ## Progress Streaming
@@ -183,7 +183,7 @@ The plugin media socket resolves in this order:
 
 `ts plugin info` reports the control socket path, media socket path, media transport, accepted playback format, and the same media diagnostics shown by `ts playback status`.
 
-`ts playback send --file message.wav` is the first-class CLI wrapper around playback injection. The current version is deliberately strict: the file must already be WAV PCM signed 16-bit little-endian, 48000 Hz, mono. Use `--clear` to interrupt any active bridge playback before sending the file, and `--timeout-ms N` to bound the total send and drain wait.
+`ts playback send --file message.mp3` is the first-class CLI wrapper around playback injection. WAV input must already be PCM signed 16-bit little-endian, 48000 Hz, mono. MP3 input is decoded with `ffmpeg` and converted to that bridge format before streaming. Use `--clear` to interrupt any active bridge playback before sending the file, and `--timeout-ms N` to bound the total send and drain wait.
 
 ## Client Process Management
 
@@ -221,6 +221,7 @@ Headless `Xvfb` also needs system XKB support. The installers install the Debian
 packages when `/usr/bin/xkbcomp` or the standard XKB data directory is missing. The installers also ensure
 PulseAudio-compatible audio control is available for media routing by installing `pulseaudio-utils` and, when neither
 `pulseaudio` nor `pipewire-pulse` is present, `pulseaudio`.
+MP3 playback injection uses `ffmpeg`; the project installers install it when it is missing.
 
 On the first headless TeamSpeak launch, hidden onboarding dialogs can still block progress even when the plugin bridge is
 responsive. `ts client start` tries to dismiss known nonessential startup dialogs with `xdotool` when available, but it

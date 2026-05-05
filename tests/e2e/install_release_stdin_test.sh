@@ -82,6 +82,12 @@ set -euo pipefail
 EOF
 chmod +x "${fake_audio_bin_dir}/pipewire-pulse"
 
+cat >"${fake_audio_bin_dir}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+EOF
+chmod +x "${fake_audio_bin_dir}/ffmpeg"
+
 cat >"${release_archive_dir}/bin/ts" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

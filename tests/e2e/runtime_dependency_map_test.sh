@@ -27,6 +27,9 @@ mapfile -t xvfb_system_packages < <(ts3_runtime_xvfb_system_dependency_packages)
 mapfile -t pulseaudio_system_packages < <(ts3_runtime_pulseaudio_system_dependency_packages)
 [[ "${pulseaudio_system_packages[*]}" == "pulseaudio-utils pulseaudio" ]]
 
+mapfile -t ffmpeg_system_packages < <(ts3_runtime_ffmpeg_system_dependency_packages)
+[[ "${ffmpeg_system_packages[*]}" == "ffmpeg" ]]
+
 mapfile -t missing_xvfb_system_packages < <(
   ts3_runtime_missing_xvfb_system_dependency_packages_for_paths \
     "${tmp_dir}/missing-xkbcomp" \
@@ -41,6 +44,12 @@ mapfile -t missing_pulseaudio_system_packages < <(
     "${tmp_dir}/missing-pipewire-pulse"
 )
 [[ "${missing_pulseaudio_system_packages[*]}" == "pulseaudio-utils pulseaudio" ]]
+
+mapfile -t missing_ffmpeg_system_packages < <(
+  ts3_runtime_missing_ffmpeg_system_dependency_packages_for_paths \
+    "${tmp_dir}/missing-ffmpeg"
+)
+[[ "${missing_ffmpeg_system_packages[*]}" == "ffmpeg" ]]
 
 xkbcomp_fixture="${tmp_dir}/xkbcomp"
 xkb_data_fixture="${tmp_dir}/xkb"
@@ -84,6 +93,15 @@ mapfile -t missing_pulseaudio_system_packages < <(
     "${tmp_dir}/missing-pipewire-pulse"
 )
 [[ "${missing_pulseaudio_system_packages[*]}" == "" ]]
+
+ffmpeg_fixture="${tmp_dir}/ffmpeg"
+touch "${ffmpeg_fixture}"
+chmod +x "${ffmpeg_fixture}"
+mapfile -t missing_ffmpeg_system_packages < <(
+  ts3_runtime_missing_ffmpeg_system_dependency_packages_for_paths \
+    "${ffmpeg_fixture}"
+)
+[[ "${missing_ffmpeg_system_packages[*]}" == "" ]]
 
 pulseaudio_mock_path="${tmp_dir}/pulseaudio-mock-path"
 mkdir -p "${pulseaudio_mock_path}"

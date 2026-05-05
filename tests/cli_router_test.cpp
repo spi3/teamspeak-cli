@@ -269,12 +269,12 @@ int main() {
     );
     tests::expect_contains(
         playback_help,
-        "send  Send a WAV file through the plugin media bridge",
+        "send  Send a WAV or MP3 file through the plugin media bridge",
         "playback help should list playback send"
     );
     tests::expect_contains(
         playback_help,
-        "ts playback send --file <wav> [--clear] [--timeout-ms N]",
+        "ts playback send --file <wav|mp3> [--clear] [--timeout-ms N]",
         "playback help should include the playback send example"
     );
 

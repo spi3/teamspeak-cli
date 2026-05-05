@@ -76,6 +76,33 @@ printf '%s\n' "${playback_json}" | grep -q '"result":"sent"'
 printf '%s\n' "${playback_json}" | grep -q '"frames_sent":480'
 printf '%s\n' "${playback_json}" | grep -q '"stop_reason":"drained"'
 
+fake_decoder_dir="${tmp_dir}/fake-decoder-bin"
+mkdir -p "${fake_decoder_dir}"
+cat >"${fake_decoder_dir}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+count=0
+while [[ "${count}" -lt 480 ]]; do
+  printf '\001\000'
+  count=$((count + 1))
+done
+EOF
+chmod +x "${fake_decoder_dir}/ffmpeg"
+
+playback_mp3="${tmp_dir}/message.mp3"
+printf 'ID3\003\000\000\000\000\000\000fake-mp3' >"${playback_mp3}"
+
+playback_mp3_json="$(
+  PATH="${fake_decoder_dir}:${PATH}" "${ts_bin}" --json playback send \
+    --file "${playback_mp3}" \
+    --timeout-ms 5000 \
+    --config "${config_path}"
+)"
+printf '%s\n' "${playback_mp3_json}" | grep -q '"result":"sent"'
+printf '%s\n' "${playback_mp3_json}" | grep -q '"frames_sent":480'
+printf '%s\n' "${playback_mp3_json}" | grep -q '"stop_reason":"drained"'
+
 client_json="$("${ts_bin}" --json client list --config "${config_path}")"
 printf '%s\n' "${client_json}" | grep -q '"nickname":"terminal"'
 

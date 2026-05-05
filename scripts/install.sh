@@ -297,6 +297,7 @@ ts3_runtime_resolve_client_runtime_library_path "${client_source_dir}"
 ts3_runtime_resolve_xdotool >/dev/null
 ts3_runtime_resolve_xvfb >/dev/null
 ts3_runtime_prepare_pulseaudio_runtime
+ts3_runtime_ensure_ffmpeg_system_dependencies
 write_install_marker "${managed_dir}" "managed-dir"
 
 configure_and_build

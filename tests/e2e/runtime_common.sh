@@ -1087,6 +1087,69 @@ ts3_runtime_ensure_pulseaudio_system_dependencies() {
   fi
 }
 
+ts3_runtime_ffmpeg_system_dependency_packages() {
+  printf '%s\n' "ffmpeg"
+}
+
+ts3_runtime_missing_ffmpeg_system_dependency_packages_for_paths() {
+  local ffmpeg_path="$1"
+
+  if [[ ! -x "${ffmpeg_path}" ]]; then
+    printf '%s\n' "ffmpeg"
+  fi
+}
+
+ts3_runtime_missing_ffmpeg_system_dependency_packages() {
+  local ffmpeg_path=""
+
+  ffmpeg_path="$(command -v ffmpeg || true)"
+
+  ts3_runtime_missing_ffmpeg_system_dependency_packages_for_paths "${ffmpeg_path}"
+}
+
+ts3_runtime_install_ffmpeg_system_dependency_packages() {
+  local packages=("$@")
+
+  [[ "${#packages[@]}" -gt 0 ]] || return 0
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    ts3_runtime_die \
+      "missing MP3 playback support (${packages[*]}). Install packages that provide ffmpeg; on Debian/Ubuntu: sudo apt-get install -y ${packages[*]}"
+  fi
+
+  ts3_runtime_log "installing MP3 playback packages: ${packages[*]}"
+  if [[ "$(id -u)" == "0" ]]; then
+    apt-get update || ts3_runtime_die "failed to refresh apt package metadata"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || \
+      ts3_runtime_die "failed to install MP3 playback packages: ${packages[*]}"
+    return 0
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    ts3_runtime_die \
+      "missing MP3 playback support (${packages[*]}), and sudo is unavailable. Install with: sudo apt-get install -y ${packages[*]}"
+  fi
+
+  sudo apt-get update || ts3_runtime_die "failed to refresh apt package metadata"
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || \
+    ts3_runtime_die "failed to install MP3 playback packages: ${packages[*]}"
+}
+
+ts3_runtime_ensure_ffmpeg_system_dependencies() {
+  local packages=()
+
+  mapfile -t packages < <(ts3_runtime_missing_ffmpeg_system_dependency_packages)
+  [[ "${#packages[@]}" -eq 0 ]] && return 0
+
+  ts3_runtime_install_ffmpeg_system_dependency_packages "${packages[@]}"
+
+  mapfile -t packages < <(ts3_runtime_missing_ffmpeg_system_dependency_packages)
+  if [[ "${#packages[@]}" -ne 0 ]]; then
+    ts3_runtime_die \
+      "MP3 playback support is still incomplete after package installation: ${packages[*]}"
+  fi
+}
+
 ts3_runtime_prepare_pulseaudio_runtime() {
   if [[ "${TS3_RUNTIME_MOCK_PULSEAUDIO:-0}" == "1" ]]; then
     ts3_runtime_log "using mocked PulseAudio-compatible audio runtime"

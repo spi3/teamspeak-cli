@@ -278,14 +278,21 @@ const std::vector<CommandDoc>& command_docs() {
         {{"playback", "status"}, "ts playback status", "Show media playback and audio routing diagnostics", {}},
         {
             {"playback", "send"},
-            "ts playback send --file <wav> [--clear] [--timeout-ms N]",
-            "Send a WAV file through the plugin media bridge",
+            "ts playback send --file <wav|mp3> [--clear] [--timeout-ms N]",
+            "Send a WAV or MP3 file through the plugin media bridge",
             {
-                {"--file <wav>", "WAV file to send through the media bridge.", "pcm_s16le, 48000 Hz, mono WAV"},
+                {
+                    "--file <wav|mp3>",
+                    "Audio file to send through the media bridge.",
+                    "WAV pcm_s16le 48000 Hz mono, or MP3",
+                },
                 {"--clear", "Clear queued playback before sending the file."},
                 {"--timeout-ms <N>", "How long to wait for the media bridge operation.", "integer milliseconds", "60000"},
             },
-            {"ts playback send --file ./prompt.wav", "ts playback send --file ./prompt.wav --clear --timeout-ms 10000"},
+            {
+                "ts playback send --file ./prompt.mp3",
+                "ts playback send --file ./prompt.wav --clear --timeout-ms 10000",
+            },
         },
         {{"events"}, "ts events <subcommand>", "Watch backend domain events", {}},
         {
@@ -536,7 +543,25 @@ auto contextualize_error(const ParsedCommand& command, domain::Error error) -> d
     }
 
     if (path == "playback send" && error.code == "unsupported_audio_format") {
-        add_error_hint(error, "Use a WAV file encoded as pcm_s16le at 48000 Hz mono.");
+        add_error_hint(
+            error,
+            "Use an MP3 file, or a WAV file encoded as pcm_s16le at 48000 Hz mono."
+        );
+    }
+
+    if (path == "playback send" && error.code == "mp3_decoder_unavailable") {
+        add_error_hint(error, "Install ffmpeg, then retry MP3 playback.");
+        add_error_hint(
+            error,
+            "Use a WAV file encoded as pcm_s16le at 48000 Hz mono if ffmpeg is unavailable."
+        );
+    }
+
+    if (path == "playback send" && error.code == "mp3_decode_failed") {
+        add_error_hint(
+            error,
+            "Verify the MP3 file is readable, or convert it to a supported WAV file before retrying."
+        );
     }
 
     if (error.code == "channel_not_found") {

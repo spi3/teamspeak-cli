@@ -523,6 +523,12 @@ fi
 if declare -F ts3_runtime_prepare_pulseaudio_runtime >/dev/null; then
   ts3_runtime_prepare_pulseaudio_runtime
 fi
+if declare -F ts3_runtime_ensure_ffmpeg_system_dependencies >/dev/null; then
+  ts3_runtime_ensure_ffmpeg_system_dependencies
+else
+  command -v ffmpeg >/dev/null 2>&1 || \
+    die "ffmpeg is required for MP3 playback, but this release's runtime support cannot install it automatically"
+fi
 write_install_marker "${managed_dir}" "managed-dir"
 
 extract_release_archive

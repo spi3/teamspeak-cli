@@ -95,6 +95,7 @@ That installer:
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
 - resolves `Xvfb` for headless client launches, bootstrapping it into the managed cache when needed
 - installs PulseAudio-compatible audio tooling for safe headless/media routing when it is missing
+- installs `ffmpeg` for MP3 playback injection when it is missing
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
@@ -145,6 +146,7 @@ By default the local-checkout installer:
 - installs `~/.local/bin/ts3client` as a wrapper launcher for the installed client
 - resolves `Xvfb` for headless client launches, bootstrapping it into the managed cache when needed
 - installs PulseAudio-compatible audio tooling for safe headless/media routing when it is missing
+- installs `ffmpeg` for MP3 playback injection when it is missing
 - installs `~/.local/bin/ts-uninstall`
 - initializes `~/.config/ts/config.ini` when that file does not already exist
 
@@ -200,7 +202,7 @@ ts daemon start
 ts message inbox
 ts --profile plugin-local message send --target channel --id Lobby --text "hello"
 ts --profile plugin-local playback status
-ts --profile plugin-local playback send --file ./message.wav
+ts --profile plugin-local playback send --file ./message.mp3
 ```
 
 To connect through the real client:
@@ -416,8 +418,12 @@ If headless launch fails:
 - rerun the installer so it can resolve or bootstrap `Xvfb`
 - on Debian/Ubuntu, make sure `x11-xkb-utils` and `xkb-data` are installed if `/usr/bin/xkbcomp` or XKB data is missing
 - on Debian/Ubuntu, make sure `pulseaudio-utils` and either `pulseaudio` or `pipewire-pulse` are installed if the launcher reports that audio preflight is unavailable
+- on Debian/Ubuntu, make sure `ffmpeg` is installed if MP3 playback decoding is unavailable
 - or set `TS_CLIENT_HEADLESS=0` to force a GUI launch on an existing display
 - or set `TS_CLIENT_XVFB` and `TS_CLIENT_HEADLESS_DISPLAY` explicitly
+
+If `ts playback send --file message.mp3` reports that MP3 decoding is unavailable, install `ffmpeg` or send a WAV file
+encoded as PCM signed 16-bit little-endian, 48000 Hz, mono.
 
 If headless `ts connect` times out while `ts plugin info` is responsive:
 

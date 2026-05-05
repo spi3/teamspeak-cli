@@ -3,10 +3,16 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cctype>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <fcntl.h>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <string_view>
+#include <sys/wait.h>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -34,6 +40,11 @@ struct AudioPayload {
 struct MediaFrame {
     protocol::Fields fields;
     std::string type;
+};
+
+enum class AudioFileKind {
+    wav,
+    mp3,
 };
 
 class FileDescriptor {
@@ -183,8 +194,74 @@ auto invalid_wav(std::string message) -> domain::Error {
     return media_client_error("invalid_wav", std::move(message), domain::ExitCode::usage);
 }
 
-auto unsupported_wav(std::string message) -> domain::Error {
-    return media_client_error("unsupported_audio_format", std::move(message), domain::ExitCode::usage);
+auto unsupported_audio_format(std::string message) -> domain::Error {
+    return media_client_error(
+        "unsupported_audio_format",
+        std::move(message),
+        domain::ExitCode::usage
+    );
+}
+
+auto invalid_mp3(std::string message) -> domain::Error {
+    return media_client_error("invalid_mp3", std::move(message), domain::ExitCode::usage);
+}
+
+auto lower_ascii(std::string value) -> std::string {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+auto is_wav_header(const std::array<char, 12>& header, std::streamsize bytes_read) -> bool {
+    return bytes_read >= static_cast<std::streamsize>(header.size()) &&
+           std::memcmp(header.data(), "RIFF", 4) == 0 &&
+           std::memcmp(header.data() + 8, "WAVE", 4) == 0;
+}
+
+auto is_mp3_header(const std::array<char, 12>& header, std::streamsize bytes_read) -> bool {
+    if (bytes_read >= 3 && std::memcmp(header.data(), "ID3", 3) == 0) {
+        return true;
+    }
+    if (bytes_read >= 2) {
+        const auto first = static_cast<unsigned char>(header[0]);
+        const auto second = static_cast<unsigned char>(header[1]);
+        return first == 0xFFU && (second & 0xE0U) == 0xE0U;
+    }
+    return false;
+}
+
+auto detect_audio_file_kind(const std::filesystem::path& path) -> domain::Result<AudioFileKind> {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return domain::fail<AudioFileKind>(media_client_error(
+            "file_open_failed",
+            "failed to open playback file: " + path.string(),
+            domain::ExitCode::not_found
+        ));
+    }
+
+    std::array<char, 12> header{};
+    input.read(header.data(), static_cast<std::streamsize>(header.size()));
+    if (input.bad()) {
+        return domain::fail<AudioFileKind>(media_client_error(
+            "file_read_failed",
+            "failed to read playback file: " + path.string(),
+            domain::ExitCode::usage
+        ));
+    }
+
+    const auto extension = lower_ascii(path.extension().string());
+    if (is_wav_header(header, input.gcount()) || extension == ".wav") {
+        return domain::ok(AudioFileKind::wav);
+    }
+    if (is_mp3_header(header, input.gcount()) || extension == ".mp3") {
+        return domain::ok(AudioFileKind::mp3);
+    }
+
+    return domain::fail<AudioFileKind>(unsupported_audio_format(
+        "playback file must be a WAV file containing pcm_s16le @ 48000 Hz mono, or an MP3 file"
+    ));
 }
 
 auto read_wav_payload(const std::filesystem::path& path) -> domain::Result<AudioPayload> {
@@ -275,7 +352,7 @@ auto read_wav_payload(const std::filesystem::path& path) -> domain::Result<Audio
     }
     if (audio_format != 1U || channels != static_cast<std::uint16_t>(kMediaPlaybackChannels) ||
         sample_rate != static_cast<std::uint32_t>(kMediaSampleRate) || bits_per_sample != 16U) {
-        return domain::fail<AudioPayload>(unsupported_wav(
+        return domain::fail<AudioPayload>(unsupported_audio_format(
             "playback WAV must be pcm_s16le @ 48000 Hz mono"
         ));
     }
@@ -287,6 +364,206 @@ auto read_wav_payload(const std::filesystem::path& path) -> domain::Result<Audio
 
     payload.frames = payload.pcm.size() / sizeof(short);
     return domain::ok(std::move(payload));
+}
+
+auto is_executable_file(const std::filesystem::path& path) -> bool {
+    return !path.empty() && ::access(path.c_str(), X_OK) == 0;
+}
+
+auto find_executable_on_path(std::string_view executable_name)
+    -> std::optional<std::filesystem::path> {
+    const char* path_env = std::getenv("PATH");
+    if (path_env == nullptr || *path_env == '\0') {
+        return std::nullopt;
+    }
+
+    for (const auto& entry : util::split(path_env, ':')) {
+        const auto candidate =
+            (entry.empty() ? std::filesystem::current_path() : std::filesystem::path(entry)) /
+            std::string(executable_name);
+        if (is_executable_file(candidate)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+auto resolve_mp3_decoder() -> domain::Result<std::filesystem::path> {
+    if (const auto ffmpeg = find_executable_on_path("ffmpeg"); ffmpeg.has_value()) {
+        return domain::ok(*ffmpeg);
+    }
+
+    return domain::fail<std::filesystem::path>(media_client_error(
+        "mp3_decoder_unavailable",
+        "MP3 playback requires ffmpeg on PATH",
+        domain::ExitCode::unsupported
+    ));
+}
+
+auto wait_for_decoder(pid_t child_pid) -> domain::Result<int> {
+    int status = 0;
+    while (::waitpid(child_pid, &status, 0) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        return domain::fail<int>(media_client_error(
+            "mp3_decoder_wait_failed",
+            "failed to wait for MP3 decoder: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    if (WIFEXITED(status)) {
+        return domain::ok(WEXITSTATUS(status));
+    }
+    if (WIFSIGNALED(status)) {
+        return domain::ok(128 + WTERMSIG(status));
+    }
+    return domain::ok(127);
+}
+
+auto read_mp3_payload(const std::filesystem::path& path) -> domain::Result<AudioPayload> {
+    auto decoder = resolve_mp3_decoder();
+    if (!decoder) {
+        return domain::fail<AudioPayload>(decoder.error());
+    }
+
+    int pipe_fds[2] = {-1, -1};
+    if (::pipe(pipe_fds) != 0) {
+        return domain::fail<AudioPayload>(media_client_error(
+            "mp3_decoder_pipe_failed",
+            "failed to open MP3 decoder pipe: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    FileDescriptor read_fd(pipe_fds[0]);
+    FileDescriptor write_fd(pipe_fds[1]);
+
+    const std::vector<std::string> argv = {
+        decoder.value().string(),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        path.string(),
+        "-vn",
+        "-acodec",
+        "pcm_s16le",
+        "-f",
+        "s16le",
+        "-ac",
+        "1",
+        "-ar",
+        std::to_string(kMediaSampleRate),
+        "pipe:1",
+    };
+
+    const pid_t child_pid = ::fork();
+    if (child_pid < 0) {
+        return domain::fail<AudioPayload>(media_client_error(
+            "mp3_decoder_fork_failed",
+            "failed to fork MP3 decoder: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        ));
+    }
+
+    if (child_pid == 0) {
+        ::close(read_fd.get());
+        const int devnull_fd = ::open("/dev/null", O_WRONLY);
+        if (devnull_fd < 0 || ::dup2(write_fd.get(), STDOUT_FILENO) == -1 ||
+            ::dup2(devnull_fd, STDERR_FILENO) == -1) {
+            if (devnull_fd >= 0) {
+                ::close(devnull_fd);
+            }
+            _exit(127);
+        }
+        ::close(write_fd.get());
+        ::close(devnull_fd);
+
+        std::vector<char*> raw_argv;
+        raw_argv.reserve(argv.size() + 1);
+        for (const auto& argument : argv) {
+            raw_argv.push_back(const_cast<char*>(argument.c_str()));
+        }
+        raw_argv.push_back(nullptr);
+
+        ::execv(argv.front().c_str(), raw_argv.data());
+        _exit(127);
+    }
+
+    write_fd = FileDescriptor();
+
+    AudioPayload payload;
+    std::array<char, 4096> buffer{};
+    while (true) {
+        const auto bytes_read = ::read(read_fd.get(), buffer.data(), buffer.size());
+        if (bytes_read > 0) {
+            const auto size = static_cast<std::size_t>(bytes_read);
+            payload.pcm.insert(payload.pcm.end(), buffer.data(), buffer.data() + size);
+            continue;
+        }
+        if (bytes_read == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        const auto read_error = media_client_error(
+            "mp3_decoder_read_failed",
+            "failed to read MP3 decoder output: " + std::string(std::strerror(errno)),
+            domain::ExitCode::internal
+        );
+        (void)wait_for_decoder(child_pid);
+        return domain::fail<AudioPayload>(read_error);
+    }
+
+    read_fd = FileDescriptor();
+
+    auto exit_code = wait_for_decoder(child_pid);
+    if (!exit_code) {
+        return domain::fail<AudioPayload>(exit_code.error());
+    }
+    if (exit_code.value() != 0) {
+        auto error = media_client_error(
+            "mp3_decode_failed",
+            "ffmpeg failed to decode MP3 playback file: " + path.string(),
+            domain::ExitCode::usage
+        );
+        error.details.emplace("decoder", decoder.value().string());
+        error.details.emplace("exit_code", std::to_string(exit_code.value()));
+        return domain::fail<AudioPayload>(std::move(error));
+    }
+    if (payload.pcm.empty()) {
+        return domain::fail<AudioPayload>(invalid_mp3("MP3 file did not decode to audio samples"));
+    }
+    if ((payload.pcm.size() % sizeof(short)) != 0U) {
+        return domain::fail<AudioPayload>(media_client_error(
+            "mp3_decode_failed",
+            "ffmpeg produced unaligned PCM output for MP3 playback file: " + path.string(),
+            domain::ExitCode::internal
+        ));
+    }
+
+    payload.frames = payload.pcm.size() / sizeof(short);
+    return domain::ok(std::move(payload));
+}
+
+auto read_audio_payload(const std::filesystem::path& path) -> domain::Result<AudioPayload> {
+    auto kind = detect_audio_file_kind(path);
+    if (!kind) {
+        return domain::fail<AudioPayload>(kind.error());
+    }
+    switch (kind.value()) {
+        case AudioFileKind::wav:
+            return read_wav_payload(path);
+        case AudioFileKind::mp3:
+            return read_mp3_payload(path);
+    }
+    return domain::fail<AudioPayload>(unsupported_audio_format(
+        "playback file must be a WAV file containing pcm_s16le @ 48000 Hz mono, or an MP3 file"
+    ));
 }
 
 auto connect_media_socket(
@@ -643,7 +920,7 @@ auto send_playback_file(const PlaybackSendRequest& request) -> domain::Result<Pl
         ));
     }
 
-    auto audio = read_wav_payload(request.file_path);
+    auto audio = read_audio_payload(request.file_path);
     if (!audio) {
         return domain::fail<PlaybackSendResult>(audio.error());
     }
